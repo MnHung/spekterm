@@ -210,10 +210,15 @@ function LoadedChange({
         )}
       </div>
 
+      {/*
+        The hairline is an inset shadow, not a border the tabs overlap with `-mb-px`: a horizontal
+        scroller computes `overflow-y` to `auto` too, and that 1px overhang made it a 1px vertical
+        scroller with a scrollbar of its own. The inset shadow paints under the tabs' underline.
+      */}
       <nav
         aria-label={t('openspec.changeArtifact')}
         role="tablist"
-        className="mt-3 flex shrink-0 overflow-x-auto border-b border-hairline px-2"
+        className="mt-3 flex shrink-0 overflow-x-auto overflow-y-hidden px-2 shadow-[inset_0_-1px_0_var(--color-hairline)]"
       >
         {artifacts.map((artifact, index) => {
           const selected = artifact.id === active?.id
@@ -230,7 +235,7 @@ function LoadedChange({
               aria-selected={selected}
               aria-controls={panelId}
               onClick={() => choose(artifact.id, active?.id)}
-              className={`-mb-px shrink-0 border-b-2 px-3 py-[6px] text-xs transition-colors ${
+              className={`shrink-0 border-b-2 px-3 py-[6px] text-xs transition-colors ${
                 selected
                   ? 'border-accent font-bold text-accent'
                   : 'border-transparent text-ink-dim hover:text-ink'
