@@ -10,10 +10,10 @@
   "footer.source": "GitHub 原始碼",
   "header.switchTo": "前往 {product}",
   "landing.download": "下載",
-  "landing.downloadNote": "來自 GitHub 上最新的發佈版本：Linux 用 AppImage，Apple Silicon 的 Mac 用 .dmg。",
+  "landing.downloadNote": "來自 GitHub 上最新的發佈版本：Linux 用 AppImage。Apple Silicon 的 Mac 用的 .dmg 還在測試中，尚未發佈。",
   "landing.early": "仍在早期、持續開發中 —— 難免有粗糙的地方。",
   "landing.illustrative": "截圖內容為示意範例。",
-  "landing.platforms": "目前提供 Linux（x86_64）與 Apple Silicon 的 macOS 版本，Windows 與 Intel Mac 尚未支援。",
+  "landing.platforms": "目前提供 Linux（x86_64）版本。Apple Silicon 的 macOS 版正在測試中；Windows 與 Intel Mac 尚未支援。",
   "social.imageAlt": "spekterm —— 規格就在 agent 旁邊",
   "social.spekImageAlt": "spek —— OpenSpec 檢視器"
 }

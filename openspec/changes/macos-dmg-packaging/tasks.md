@@ -332,6 +332,10 @@
   "not run" is not acceptable for this run.
 - [ ] 6.3 Ask before uploading the AppImage and the dmg to the GitHub release. Then commit the `site/`
   changes, and ask before pushing them (the push deploys the website).
+  - The website and the READMEs went out early (commit a164f26) and now say the macOS build is "in
+    testing". At release, turn that back into "available": the README status, requirements and macOS
+    install note; the site's `landing.platforms` / `landing.downloadNote`, the docs index, the install
+    page (its intro, requirements and "In testing" note) and the FAQ, in both languages.
 - [ ] 6.4 Dogfood on the Mac, results recorded under this task:
   - download the released dmg in a browser; confirm the "unidentified developer" path and Open Anyway,
     with the unsealed build as the "damaged" control;

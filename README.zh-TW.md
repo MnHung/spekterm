@@ -11,8 +11,8 @@
 
 ![spekterm：Claude Code session 以對話檢視呈現，旁邊的側欄顯示它正在做的 OpenSpec change 的 tasks](site/src/assets/screenshots/zh-TW/hero.png)
 
-> **現況：** 早期版本。目前提供 Linux（x86_64）與 Apple Silicon 的 macOS 版本；Windows 與 Intel Mac
-> 尚未支援。還沒有自動更新，macOS 版也沒有經過 Apple 公證（它以 ad hoc 方式簽章 —— 見 [macOS](#macos)）。
+> **現況：** 早期版本。目前提供 Linux（x86_64）版本。Apple Silicon 的 macOS 版正在測試中、尚未發佈
+> （見 [macOS](#macos)）；Windows 與 Intel Mac 尚未支援。還沒有自動更新。
 
 ## 為什麼
 
@@ -38,7 +38,7 @@ spec —— 並且在 agent 寫入磁碟時跟著更新。
 - Linux x64，並安裝 `libfuse2`（執行 AppImage 需要；Ubuntu 22.04 起預設不再安裝）。
   少了它，AppImage 會以 `dlopen(): error loading libfuse.so.2` 失敗；可改為不經 FUSE 執行：
   `./Spekterm-<version>.AppImage --appimage-extract-and-run`。
-- 或是 Apple Silicon 的 macOS 12（Monterey）以上。已在 macOS 13（Ventura）上測試。
+- 或是 macOS 版發佈之後（目前測試中），Apple Silicon 的 macOS 12（Monterey）以上。
 - [Claude Code](https://code.claude.com/docs)（`claude` 在 `PATH` 上），用於 agent session。spekterm
   執行的是真正的 CLI、用你自己的訂閱 —— 從不要求 API key。
 
@@ -56,6 +56,9 @@ chmod +x Spekterm-<version>.AppImage
 spekterm 的資料放在 `~/.config/Spekterm`。
 
 ### macOS
+
+> **測試中。** macOS 版還沒有放上 Releases 頁面。以下步驟是給它發佈之後用的；在那之前，可以自己在 Mac 上
+> 建置 —— 見[在 macOS 上](#在-macos-上)。
 
 從 [Releases 頁面](https://github.com/spekhq/spekterm/releases)下載最新的 `Spekterm-<version>-arm64.dmg`，
 打開它，把 **Spekterm** 拖進 **應用程式**（Applications）。這就是安裝；macOS 上沒有 `install:desktop`。

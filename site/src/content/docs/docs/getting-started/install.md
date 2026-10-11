@@ -1,20 +1,20 @@
 ---
 title: Install
-description: Download spekterm for Linux (an AppImage) or for macOS on Apple Silicon (a dmg), and start it.
+description: Download spekterm for Linux (an AppImage) and start it. A macOS build for Apple Silicon is in testing.
 sidebar:
   order: 1
 ---
 
 spekterm has builds for Linux on x86_64, distributed as an AppImage (one file that runs without installing
-anything system-wide), and for macOS on Apple Silicon, distributed as a disk image (`.dmg`). Windows and
-Intel Macs are not supported yet.
+anything system-wide). A build for macOS on Apple Silicon, distributed as a disk image (`.dmg`), is in
+testing and not released yet. Windows and Intel Macs are not supported yet.
 
 ## Requirements
 
 - **Linux on x86_64.** The AppImage needs `libfuse2` to run. Ubuntu 22.04 and later no longer install it
   by default — see [If the AppImage does not start](#if-the-appimage-does-not-start).
-- **macOS 12 (Monterey) or later on a Mac with Apple Silicon.** It has been tested on macOS 13 (Ventura).
-  See [Install on macOS](#install-on-macos).
+- **macOS 12 (Monterey) or later on a Mac with Apple Silicon**, once the macOS build is released — it is
+  in testing. See [Install on macOS](#install-on-macos).
 - **Claude Code** for agent sessions: the `claude` command must be on your `PATH`. spekterm runs the real
   CLI with your own login and subscription; it never asks for an API key. Shell sessions work without it.
 - **OpenSpec** is optional. The side panel reads the `openspec/` directory of your repositories directly;
@@ -78,6 +78,10 @@ This command applies to Linux. On macOS there is nothing to add: dragging spekte
 installs it.
 
 ## Install on macOS
+
+:::note[In testing]
+The macOS build is not on the releases page yet. The steps below describe it as it will ship.
+:::
 
 1. Open the [latest release](https://github.com/spekhq/spekterm/releases/latest) and download
    `Spekterm-<version>-arm64.dmg`.

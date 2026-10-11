@@ -12,9 +12,9 @@ without opening an IDE.
 
 ![spekterm: a Claude Code session in the conversation view, next to the side panel showing the tasks of the OpenSpec change it is working on](site/src/assets/screenshots/en/hero.png)
 
-> **Status:** early. Builds are available for Linux (x86_64) and for macOS on Apple Silicon; Windows and
-> Intel Macs are not supported yet. Auto-update is not available yet, and the macOS build is not notarized
-> by Apple (it is signed ad hoc — see [macOS](#macos)).
+> **Status:** early. Builds are available for Linux (x86_64). A macOS build for Apple Silicon is in testing
+> and not released yet (see [macOS](#macos)); Windows and Intel Macs are not supported yet. Auto-update is not
+> available yet.
 
 ## Why
 
@@ -43,7 +43,7 @@ Everything is described in the [documentation](https://spekterm.com/docs/), incl
 - Linux x64 with `libfuse2` (needed to run AppImages; Ubuntu 22.04+ no longer installs it by default).
   Without it the AppImage fails with `dlopen(): error loading libfuse.so.2`; run it without FUSE instead:
   `./Spekterm-<version>.AppImage --appimage-extract-and-run`.
-- Or macOS 12 (Monterey) or later on Apple Silicon. Tested on macOS 13 (Ventura).
+- Or, once the macOS build is released (it is in testing), macOS 12 (Monterey) or later on Apple Silicon.
 - [Claude Code](https://code.claude.com/docs) (`claude` on your `PATH`) for agent sessions. spekterm runs
   the real CLI with your own subscription — it never asks for an API key.
 
@@ -62,6 +62,9 @@ chmod +x Spekterm-<version>.AppImage
 spekterm keeps its data in `~/.config/Spekterm`.
 
 ### macOS
+
+> **In testing.** The macOS build is not on the Releases page yet. The steps below are for when it is; until
+> then, you can build it yourself on a Mac — see [On macOS](#on-macos).
 
 Download the latest `Spekterm-<version>-arm64.dmg` from the
 [Releases page](https://github.com/spekhq/spekterm/releases), open it, and drag **Spekterm** to

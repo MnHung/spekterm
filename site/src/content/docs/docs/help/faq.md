@@ -27,9 +27,9 @@ panel's OpenSpec view simply has nothing to show in a folder without an `openspe
 
 ## Does it work on macOS or Windows?
 
-macOS, yes: there is a build for Macs with Apple Silicon, running macOS 12 (Monterey) or later. It is not
-notarized by Apple, so the first launch needs one extra step, and a few features are limited on macOS —
-see [Install on macOS](/docs/getting-started/install/#install-on-macos). Windows and Intel Macs are not
+macOS soon: a build for Macs with Apple Silicon, running macOS 12 (Monterey) or later, is in testing and
+not released yet. It will not be notarized by Apple, so the first launch will need one extra step, and a
+few features are limited on macOS — see [Install on macOS](/docs/getting-started/install/#install-on-macos). Windows and Intel Macs are not
 supported yet.
 
 ## Is my code sent anywhere?

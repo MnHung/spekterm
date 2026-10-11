@@ -1,18 +1,18 @@
 ---
 title: 安裝
-description: 下載 Linux 版（AppImage）或 Apple Silicon 的 macOS 版（dmg）的 spekterm，然後啟動它。
+description: 下載 Linux 版（AppImage）的 spekterm，然後啟動它。Apple Silicon 的 macOS 版正在測試中。
 sidebar:
   order: 1
 ---
 
 spekterm 提供 x86_64 的 Linux 版本，以 AppImage 發佈（一個檔案就能執行，不必在系統裡安裝任何東西）；
-也提供 Apple Silicon 的 macOS 版本，以磁碟映像檔（`.dmg`）發佈。Windows 與 Intel Mac 尚未支援。
+Apple Silicon 的 macOS 版本以磁碟映像檔（`.dmg`）發佈，目前正在測試中、尚未發佈。Windows 與 Intel Mac 尚未支援。
 
 ## 系統需求
 
 - **x86_64 的 Linux。** AppImage 需要 `libfuse2` 才能執行。Ubuntu 22.04 起預設不再安裝它 ——
   見[AppImage 無法啟動時](#appimage-無法啟動時)。
-- **macOS 12（Monterey）以上、Apple Silicon 的 Mac。** 已在 macOS 13（Ventura）上測試。
+- **macOS 12（Monterey）以上、Apple Silicon 的 Mac**，等 macOS 版發佈之後 —— 目前正在測試中。
   見[在 macOS 上安裝](#在-macos-上安裝)。
 - **Claude Code**（agent session 需要）：`claude` 指令必須在你的 `PATH` 上。spekterm 執行的是真正的
   CLI，用的是你自己的登入與訂閱；它不會向你要 API key。只用 shell session 的話不需要它。
@@ -73,6 +73,10 @@ npm run install:desktop                          # → ~/.local/bin + 應用程�
 這個指令適用於 Linux。macOS 上不需要另外加什麼：把 spekterm 拖進「應用程式」就是安裝。
 
 ## 在 macOS 上安裝
+
+:::note[測試中]
+macOS 版還沒有放上發佈頁面。以下步驟描述的是它發佈時的樣子。
+:::
 
 1. 打開[最新版本](https://github.com/spekhq/spekterm/releases/latest)，下載
    `Spekterm-<version>-arm64.dmg`。
