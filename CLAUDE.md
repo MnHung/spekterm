@@ -87,7 +87,9 @@ OpenSpec 結構的側欄，讓使用者不必另外開 IDE 就能一邊駕駛 ag
   each with a landing page and user docs, English at `/` and Traditional Chinese at `/zh-tw/`, **every
   page in both**. What belongs to one product follows the page's path (`site/src/product.mjs`); spek's
   pages are written from spek's code and its screenshots need a clean, tagged spek checkout
-  (`site/README.md`). The docs are the authoritative user guide;
+  (`site/README.md`). **spek's live demo is served at `/spek/demo/`** — fetched by the build at the spek
+  release pinned in `site/src/spek-demo.json` (tag + SHA-256), a file the site serves rather than a page,
+  with no analytics; moving the pin is part of a spek release's site update. The docs are the authoritative user guide;
   the READMEs keep the overview and the install facts `desktop-packaging` reads them for. Its
   screenshots come only from `npm run capture:screenshots` (invented home, fixture repos, stub agent;
   reads the on-screen text through the hygiene matcher before each capture). Its "Data and network" page
