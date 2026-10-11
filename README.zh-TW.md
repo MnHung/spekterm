@@ -127,9 +127,17 @@ GitHub 的 Electron 下載太慢時，把 `ELECTRON_MIRROR` 指向鏡像站（�
 
 ## 與 spek 的關係
 
-[spek](https://github.com/spekhq/spek) 是開源的 OpenSpec 檢視器。spekterm 是獨立的 repo，透過兩個 npm
-套件重用 spek 的掃描引擎與視覺化元件：[`@spekjs/core`](https://www.npmjs.com/package/@spekjs/core) 與
-[`@spekjs/ui`](https://www.npmjs.com/package/@spekjs/ui)。
+[spek](https://github.com/spekhq/spek) 是 spekterm 的姊妹專案，出自同一群維護者：開源、唯讀的 OpenSpec
+內容檢視器 —— 在瀏覽器、VS Code、JetBrains IDE 裡都能用，也能由 CI 產出靜態頁面。spekterm 的側欄是站在
+spek 的成果上：
+
+- **讀懂 OpenSpec 的引擎** —— 掃描 spec 與 change、task 進度、worktree 聚合，都來自
+  [`@spekjs/core`](https://www.npmjs.com/package/@spekjs/core)。
+- **關係圖與時間軸** —— 和 spek 畫的是同一套元件，來自 [`@spekjs/ui`](https://www.npmjs.com/package/@spekjs/ui)。
+
+側欄本身是 spekterm 自己做的，為終端機旁的窄欄設計。想在平常工作的地方讀 spec，用 spek；要在多個 repo
+之間駕駛 agent、讓 spec 待在旁邊，用 spekterm。兩者讀的是同一批檔案，誰也不需要誰。spek 的官網在
+[spekterm.com/zh-tw/spek](https://spekterm.com/zh-tw/spek/)。
 
 ## 參與貢獻
 

@@ -141,10 +141,19 @@ Much of the existing documentation is in Traditional Chinese; new documentation 
 
 ## Relationship to spek
 
-[spek](https://github.com/spekhq/spek) is an open-source OpenSpec viewer. spekterm is a separate
-repository that reuses spek's scanning engine and visualizations through two npm packages:
-[`@spekjs/core`](https://www.npmjs.com/package/@spekjs/core) and
-[`@spekjs/ui`](https://www.npmjs.com/package/@spekjs/ui).
+[spek](https://github.com/spekhq/spek) is spekterm's sibling project, from the same maintainers: an
+open-source, read-only viewer for OpenSpec content — in your browser, in VS Code, in a JetBrains IDE, or as
+a static page your CI builds. spekterm's side panel stands on spek's work:
+
+- **The engine that reads OpenSpec** — scanning specs and changes, task progress, and worktree aggregation
+  come from [`@spekjs/core`](https://www.npmjs.com/package/@spekjs/core).
+- **The Graph and the Timeline** — the same components spek draws, from
+  [`@spekjs/ui`](https://www.npmjs.com/package/@spekjs/ui).
+
+The side panel itself is spekterm's own, made for a narrow column next to a terminal. Use spek to read
+specs where you already work; use spekterm when you drive agents across repositories and want the spec
+beside them. They read the same files, and neither needs the other. spek's website is
+[spekterm.com/spek](https://spekterm.com/spek/).
 
 ## Contributing
 
