@@ -41,6 +41,7 @@ const checked = (script, ...args) => [node(script, '--self-test'), node(script, 
 step('astro check', [astro, ['check']])
 step('root content guards', [process.execPath, ['--test', '--test-reporter=dot', '../scripts/public-hygiene.test.mjs', '../scripts/license.test.mjs']])
 step('astro build', [astro, ['build']])
+step('spek demo', ...checked('add-spek-demo.mjs'))
 step('parity', ...checked('check-parity.mjs'))
 step('origins', ...checked('check-origins.mjs'))
 step('notices', ...checked('write-notices.mjs'))

@@ -12,7 +12,7 @@
  * Options: `--base <origin>` (default https://spekterm.com), `--redirect <origin>` (repeatable;
  * default the three redirecting hosts), `--no-redirects` (pages only — for a local server).
  *
- * For every page in the sitemap, the third-party notices, and a path that does not exist, the served
+ * For every page in the sitemap, the third-party notices, spek's live demo, and a path that does not exist, the served
  * body must equal that commit's built file byte for byte — which catches anything the hosting
  * injects, same-origin `/cdn-cgi/` scripts included — and no response may set a cookie. Each
  * redirecting host must answer a deep path with a query by a 301 to the same path and query on the
@@ -52,6 +52,7 @@ export async function checkLive({ base, dist, redirects }) {
     await compare(`${base}${path}`, readFileSync(join(dist, path, 'index.html')), 200, problems)
   }
   await compare(`${base}/third-party-notices.txt`, readFileSync(join(dist, 'third-party-notices.txt')), 200, problems)
+  await compare(`${base}/spek/demo/`, readFileSync(join(dist, 'spek', 'demo', 'index.html')), 200, problems)
   await compare(`${base}/spekterm-live-check-no-such-page/`, readFileSync(join(dist, '404.html')), 404, problems)
 
   for (const origin of redirects) {
@@ -94,13 +95,13 @@ function serve(handler) {
   })
 }
 
-function staticHandler(dist, { inject = false, cookie = false } = {}) {
+function staticHandler(dist, { inject = false, cookie = false, demoOnly = false } = {}) {
   return (req, res) => {
     const path = new URL(req.url, 'http://x').pathname
     const file = path.endsWith('/') ? join(dist, path, 'index.html') : join(dist, path)
     const found = existsSync(file)
     let body = readFileSync(found ? file : join(dist, '404.html'))
-    if (inject && file.endsWith('.html')) {
+    if (inject && file.endsWith('.html') && (!demoOnly || path === '/spek/demo/')) {
       body = Buffer.from(body.toString('utf8').replace('</body>', '<script src="/cdn-cgi/scripts/email-decode.min.js"></script></body>'))
     }
     if (cookie) res.setHeader('set-cookie', '__cf_bm=abc; path=/')
@@ -125,6 +126,7 @@ async function selfTest() {
     'docs/index.html': page('docs'),
     '404.html': page('not found'),
     'third-party-notices.txt': 'notices\n',
+    'spek/demo/index.html': page('demo'),
   })
   const servers = []
   const start = async (handler) => {
@@ -139,6 +141,7 @@ async function selfTest() {
     const cases = [
       { label: 'a faithful host', options: { base: good, redirects: [goodRedirect] }, expect: null },
       { label: 'an injected /cdn-cgi/ script', options: { base: await start(staticHandler(dist, { inject: true })), redirects: [] }, expect: '/cdn-cgi/' },
+      { label: 'an injection into the demo alone', options: { base: await start(staticHandler(dist, { inject: true, demoOnly: true })), redirects: [] }, expect: '/spek/demo/: served body differs' },
       { label: 'a cookie', options: { base: await start(staticHandler(dist, { cookie: true })), redirects: [] }, expect: 'sets a cookie' },
       { label: 'a 302 redirect', options: { base: good, redirects: [await start(redirectHandler(good, { status: 302 }))] }, expect: 'expected 301' },
       { label: 'a redirect that drops the path', options: { base: good, redirects: [await start(redirectHandler(good, { keepPath: false }))] }, expect: 'redirects to' },
@@ -154,7 +157,7 @@ async function selfTest() {
     rmSync(dist, { recursive: true, force: true })
   }
   if (misses.length > 0) throw new Error(`self-test failed:\n  - ${misses.join('\n  - ')}`)
-  console.log('check-live: self-test passed (faithful host passes; injection, cookie, 302, dropped path caught)')
+  console.log('check-live: self-test passed (faithful host passes; injection, demo-only injection, cookie, 302, dropped path caught)')
 }
 
 function option(name) {

@@ -8,7 +8,9 @@
  *   number; the documentation home exists in both languages; per product (src/product.mjs) — the
  *   header's product link and switch, the header logo, exactly one tab icon, the home-screen icon, the
  *   repository links, the sidebar and previous / next links, the share image and its alt text, and on
- *   spek pages the title suffix and og:site_name (also on the not-found page where it applies).
+ *   spek pages the title suffix and og:site_name (also on the not-found page where it applies); spek's
+ *   live demo is served at /spek/demo/ with the pinned SHA-256 (a build step that wrote nothing would
+ *   otherwise publish a dead link with every other check green).
  * Content part — about what specific pages say:
  *   both landing pages' required elements (read from the main content without the footer, which holds
  *   the disclaimer, and without the header, which holds the product switch); no forbidden platform
@@ -26,6 +28,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { parse } from 'node-html-parser'
 import { landingOf, otherProduct, PRODUCTS, productOf } from '../src/product.mjs'
+import { DEMO_FILE, readPin, sha256Hex } from './add-spek-demo.mjs'
 import {
   walk,
   CANONICAL_ORIGIN,
@@ -117,9 +120,9 @@ function readSources(siteDir) {
 
 /**
  * @param {string} dist built site
- * @param {{ plan: any, strings: Record<string, Record<string, string>>, versions: string[], sources: Record<string, string>, structuralOnly?: boolean }} options
+ * @param {{ plan: any, strings: Record<string, Record<string, string>>, versions: string[], sources: Record<string, string>, demoPin: { sha256: string }, structuralOnly?: boolean }} options
  */
-export function checkContent(dist, { plan, strings, versions, sources, structuralOnly = false }) {
+export function checkContent(dist, { plan, strings, versions, sources, demoPin, structuralOnly = false }) {
   const problems = []
   const pages = sitemapPages(dist)
   const pageSet = new Set(pages)
@@ -248,6 +251,12 @@ export function checkContent(dist, { plan, strings, versions, sources, structura
     }
   }
 
+  const demo = join(dist, DEMO_FILE)
+  if (!existsSync(demo)) problems.push(`spek's live demo (/${DEMO_FILE}) was not built`)
+  else if (sha256Hex(readFileSync(demo)) !== demoPin.sha256) {
+    problems.push(`/${DEMO_FILE}: its SHA-256 is not the pin's (${demoPin.sha256})`)
+  }
+
   for (const file of frontmatterPagination(sources)) {
     problems.push(`${file}: sets prev / next in its frontmatter, which the per-product pagination does not honor`)
   }
@@ -366,7 +375,7 @@ const PLAN = {
   spek: {
     topics: ['spek/docs/x', 'spek/docs/net'],
     dataAndNetwork: 'spek/docs/net',
-    landing: { screenshotPrefix: 'spek-', links: ['https://github.com/spekhq/spek', 'https://spekhq.github.io/spek/demo.html'] },
+    landing: { screenshotPrefix: 'spek-', links: ['https://github.com/spekhq/spek', '/spek/demo/'] },
     dataAndNetworkKeywords: { en: ['git', '3001'], 'zh-TW': ['git', '3001'] },
   },
 }
@@ -432,8 +441,11 @@ ${hero ? '<img src="/_astro/hero.Ab12.webp" alt="">' : ''}${download ? `<a href=
 function spekLandingMain(lang, { openspec = true, demo = true, spektermLink = true } = {}) {
   const prefix = lang === 'en' ? '' : '/zh-tw'
   return `<h1>spek</h1><p>${openspec ? 'A viewer for OpenSpec.' : 'A viewer.'}</p><img src="/_astro/spek-change.Ab12.webp" alt="">
-<a href="https://github.com/spekhq/spek">Source</a>${demo ? '<a href="https://spekhq.github.io/spek/demo.html">Demo</a>' : ''}<a href="${prefix}/spek/docs/">Docs</a>${spektermLink ? `<a href="${prefix}/">spekterm</a>` : ''}`
+<a href="https://github.com/spekhq/spek">Source</a>${demo ? '<a href="/spek/demo/">Demo</a>' : ''}<a href="${prefix}/spek/docs/">Docs</a>${spektermLink ? `<a href="${prefix}/">spekterm</a>` : ''}`
 }
+
+/** The demo a fake site serves; the self-test's pin is computed from it, since no fixture can be the real file. */
+const DEMO_FIXTURE = '<!doctype html><title>spek demo</title><div id="root"></div>'
 
 function fakeSite(overrides = {}, { omit = [] } = {}) {
   const files = {
@@ -442,6 +454,7 @@ function fakeSite(overrides = {}, { omit = [] } = {}) {
       .map((p) => `<url><loc>${CANONICAL_ORIGIN}${p}</loc></url>`)
       .join('')}</urlset>`,
     '404.html': fakePage('/404/'),
+    [DEMO_FILE]: DEMO_FIXTURE,
   }
   for (const own of Object.values(PRODUCTS)) {
     for (const asset of [own.favicon, own.homeIcon, ...Object.values(own.share)]) files[asset.slice(1)] = 'x'
@@ -466,7 +479,7 @@ function fakeSite(overrides = {}, { omit = [] } = {}) {
 const withoutFile = (files, name) => Object.fromEntries(Object.entries(files).filter(([key]) => key !== name))
 
 const run = (structuralOnly, sources = SOURCES) => (dir) =>
-  checkContent(dir, { plan: PLAN, strings: STRINGS, versions: VERSIONS, sources, structuralOnly })
+  checkContent(dir, { plan: PLAN, strings: STRINGS, versions: VERSIONS, sources, demoPin: { sha256: sha256Hex(DEMO_FIXTURE) }, structuralOnly })
 
 function runSelfTest() {
   // The product of a path (design D1), the one function the site and this check share.
@@ -536,7 +549,9 @@ function runSelfTest() {
       { label: 'a landing page without the platform status', files: fakeSite({ 'index.html': fakePage('/', { main: landingMain('en', { platforms: false }) }) }), expect: 'platform status' },
       { label: "a landing page linking spek only from the header", files: fakeSite({ 'index.html': fakePage('/', { main: landingMain('en', { spekLink: false }) }) }), expect: "/: no link to spek's landing page" },
       { label: 'a spek landing page naming OpenSpec only in the footer', files: fakeSite({ 'spek/index.html': fakePage('/spek/', { main: spekLandingMain('en', { openspec: false }) }) }), expect: '/spek/: does not name OpenSpec' },
-      { label: 'a spek landing page without the demo link', files: fakeSite({ 'zh-tw/spek/index.html': fakePage('/zh-tw/spek/', { main: spekLandingMain('zh-TW', { demo: false }) }) }), expect: 'no link to https://spekhq.github.io/spek/demo.html' },
+      { label: 'a spek landing page without the demo link', files: fakeSite({ 'zh-tw/spek/index.html': fakePage('/zh-tw/spek/', { main: spekLandingMain('zh-TW', { demo: false }) }) }), expect: 'no link to /spek/demo/' },
+      { label: "a build without spek's live demo", files: withoutFile(fakeSite(), DEMO_FILE), expect: "spek's live demo (/spek/demo/index.html) was not built" },
+      { label: 'a demo that is not the pinned file', files: fakeSite({ [DEMO_FILE]: '<!doctype html><p>another release</p>' }), expect: "its SHA-256 is not the pin's" },
       { label: 'a spek landing page linking spekterm only from the header', files: fakeSite({ 'spek/index.html': fakePage('/spek/', { main: spekLandingMain('en', { spektermLink: false }) }) }), expect: "/spek/: no link to spekterm's landing page" },
       { label: 'a data and network page missing a keyword', files: fakeSite({ 'zh-tw/docs/net/index.html': fakePage('/zh-tw/docs/net/', { main: '<p>Slack.</p>' }) }), expect: 'login shell' },
       { label: 'a spek network page whose "git" is only part of a host name', files: fakeSite({ 'spek/docs/net/index.html': fakePage('/spek/docs/net/', { main: '<p>See spekhq.github.io. Port 3001.</p>' }) }), expect: '/spek/docs/net/: does not mention "git"' },
@@ -552,6 +567,7 @@ main('check-content', {
       strings: readStrings(SITE_ROOT),
       versions: appVersions(),
       sources: readSources(SITE_ROOT),
+      demoPin: readPin(),
       structuralOnly: process.argv.includes('--structural-only'),
     }),
 })

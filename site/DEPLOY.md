@@ -42,6 +42,9 @@ Then, under Settings → Builds:
 The project was created through the Pages API with the maintainer's `wrangler` login; the settings above
 are what it holds.
 
+The build fetches spek's demo from `raw.githubusercontent.com` (`site/README.md`); a failed fetch fails the
+build, which leaves the previous deployment live.
+
 ## 2. The custom domain
 
 Pages project → Custom domains → *Set up a custom domain* → `spekterm.com` → *Activate domain*. The
@@ -66,7 +69,9 @@ each inject a script, a cookie, or rewrite the HTML without any change to the re
 **As of the first deploy they were left at the zones' defaults** (changing them needs a Zone Settings
 permission the `wrangler` login does not have), and the live check found every page served byte for byte
 as built with no cookie — so none of them changes the site today. Email Address Obfuscation acts only on
-a page that contains an email address; no page does. **If the live check ever fails, turn the culprit off
+a page that contains an email address; no page does, but spek's demo (`/spek/demo/`) holds one in its
+embedded data. Whether the obfuscation rewrites text inside a `<script>` is not confirmed; the live check
+compares the demo byte for byte, so a rewrite would show there. **If the live check ever fails, turn the culprit off
 in the `spekterm.com` zone's settings** and run it again. Web Analytics is off for the Pages project
 (`web_analytics_tag: null`).
 
@@ -77,8 +82,8 @@ cd site
 node scripts/check-live.mjs --commit <deployed commit>
 ```
 
-It builds that commit in a temporary worktree and checks that every page, the notices file, and the
-not-found response are served byte for byte as built, with no `Set-Cookie`, and that each redirecting host
+It builds that commit in a temporary worktree and checks that every page, the notices file, spek's demo, and
+the not-found response are served byte for byte as built, with no `Set-Cookie`, and that each redirecting host
 answers 301 with the path and query kept. Run it after the first deploy and after any change to zone
 settings.
 

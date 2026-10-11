@@ -21,7 +21,7 @@ never writes to your repository. What it connects to depends on the form.
 | | Font from Google Fonts | Remote `https:` images in rendered Markdown |
 |---|---|---|
 | Web app | Yes | Loaded |
-| Static page (action output, live demo) | Yes | Loaded |
+| Static page (action output, live demo) | No — the font is embedded in the page | Loaded |
 | VS Code extension | No | Blocked (the panel's content security policy) |
 | JetBrains plugin | No | Loaded |
 

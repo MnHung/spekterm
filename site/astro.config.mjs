@@ -80,9 +80,11 @@ export default defineConfig({
         },
       ],
       plugins: [
-        // Fails the build on a broken link or anchor in Markdown content. Component links (the
-        // footer, the landing page's buttons) are not seen by it; check-content covers those.
-        starlightLinksValidator({ exclude: ['/third-party-notices.txt'] }),
+        // Fails the build on a broken link or anchor in Markdown content and in frontmatter hero
+        // actions (the landing pages' buttons). Component links (the footer) are not seen by it;
+        // check-content covers those. The notices and spek's demo are files written after Starlight's
+        // pages, not pages — check-content checks the demo is there.
+        starlightLinksValidator({ exclude: ['/third-party-notices.txt', '/spek/demo/'] }),
       ],
     }),
   ],

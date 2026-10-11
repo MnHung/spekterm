@@ -78,7 +78,7 @@
         "https://marketplace.visualstudio.com/items?itemName=kewang.spek-vscode",
         "https://plugins.jetbrains.com/plugin/30600-spek--openspec-viewer",
         "https://github.com/marketplace/actions/spek-openspec-static-site",
-        "https://spekhq.github.io/spek/demo.html"
+        "/spek/demo/"
       ]
     },
     "dataAndNetworkKeywords": {

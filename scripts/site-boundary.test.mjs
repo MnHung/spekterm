@@ -84,7 +84,7 @@ test('control: a workspace and its lock entries are caught', () => {
 // script; these are the steps it must still run, in order. A step deleted from `build.mjs` (or a
 // `build` script that bypasses it) would let a failing page publish, with nothing turning red.
 
-const SITE_BUILD_STEPS = ['astro check', 'root content guards', 'astro build', 'parity', 'origins', 'notices', 'content']
+const SITE_BUILD_STEPS = ['astro check', 'root content guards', 'astro build', 'spek demo', 'parity', 'origins', 'notices', 'content']
 
 /** The step names a build script declares, in order (`step('<name>', …)`). */
 function stepsOf(source) {

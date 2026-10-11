@@ -36,6 +36,15 @@ const MUST_LIST = ['@astrojs/starlight', 'pagefind', 'astro-expressive-code']
 
 const HEADING = 'Third-party software shipped by the spekterm.com website'
 
+/**
+ * spek's live demo (`/spek/demo/`) is bundled by spek's build, which this site cannot see into; it
+ * carries the notices of what it bundles itself, and `add-spek-demo.mjs` refuses a demo without them.
+ */
+export const DEMO_STATEMENT =
+  "spek's live demo at /spek/demo/ is spek's own build and bundles third-party code that this file does not\n" +
+  'list. The demo carries the notices of every package it bundles, with their license texts, in its\n' +
+  '<script type="text/plain" id="third-party-notices"> element (view the page source).\n'
+
 function roots() {
   if (!existsSync(NOTICE_MODULES_FILE)) throw new Error(`no shipped-module record at ${NOTICE_MODULES_FILE} — run astro build first`)
   const ids = JSON.parse(readFileSync(NOTICE_MODULES_FILE, 'utf8'))
@@ -68,10 +77,11 @@ export function generate() {
       return legalCommentsOf(source).map((comment) => ({ source: where, comment }))
     }),
   )
-  return { entries, text: `${renderSummary(entries, notices, HEADING)}\n` }
+  return { entries, text: `${renderSummary(entries, notices, HEADING)}\n\n${DEMO_STATEMENT}` }
 }
 
-function check(entries) {
+function check(entries, text) {
+  if (!text.includes(DEMO_STATEMENT)) throw new Error("the notices do not point to the notices spek's live demo carries")
   const names = new Set(entries.map((entry) => entry.name))
   const missing = MUST_LIST.filter((name) => !names.has(name))
   if (missing.length > 0) throw new Error(`the notices omit packages known to ship: ${missing.join(', ')}`)
@@ -81,9 +91,9 @@ function check(entries) {
 
 try {
   const { entries, text } = generate()
-  check(entries)
+  check(entries, text)
   if (process.argv.includes('--self-test')) {
-    console.log(`write-notices: self-test passed (${MUST_LIST.join(', ')} listed among ${entries.length} packages)`)
+    console.log(`write-notices: self-test passed (${MUST_LIST.join(', ')} listed among ${entries.length} packages; the demo's notices pointed to)`)
   } else {
     writeFileSync(join(DIST, 'third-party-notices.txt'), text)
     console.log(`write-notices: wrote third-party-notices.txt (${entries.length} packages)`)
