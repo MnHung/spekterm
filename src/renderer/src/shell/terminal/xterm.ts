@@ -288,6 +288,10 @@ export function createXterm(options: XtermOptions): XtermHandle {
     const action = matchClipboardKey(event)
     if (!action) return true
 
+    // **Handled here, so the browser's default must not run too.** Returning false only tells xterm not
+    // to send the key; it does not prevent the default. On macOS an unprevented `Cmd+V` then reaches the
+    // Edit menu's Paste role and pastes a second time (measured: a pasted command ran twice).
+    event.preventDefault()
     if (action === 'copy') {
       const selection = term.getSelection()
       if (selection) onCopy(selection)

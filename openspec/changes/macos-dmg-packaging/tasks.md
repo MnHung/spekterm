@@ -1,9 +1,12 @@
 ## 1. Measurements on the Mac (before the code they decide — design A2)
 
-- [ ] 1.1 With the maintainer, grant the one-time macOS permissions the acceptance needs: Accessibility,
+- [x] 1.1 With the maintainer, grant the one-time macOS permissions the acceptance needs: Accessibility,
   and Automation for System Events, for the program the SSH session runs. Verify: `osascript` reading
   Finder's menu bar items returns names instead of timing out with `-1712`.
-- [ ] 1.2 Copy the working tree to the Mac's clone (`rsync`, design Migration Plan). Build an unsigned
+  - 2026-10-12. Accessibility is needed for **both** `/usr/libexec/sshd-keygen-wrapper` and `/usr/bin/osascript`:
+    with only the first, `osascript` failed with "osascript is not allowed assistive access" (-1719).
+    Automation for System Events was granted at its prompt.
+- [x] 1.2 Copy the working tree to the Mac's clone (`rsync`, design Migration Plan). Build an unsigned
   trial bundle there: `npm run build && node scripts/package-mac.mjs -- --dir -c.mac.identity=null`. Measure with
   a temporary, uncommitted instrumentation in `src/main/index.ts`: an Edit menu of roles, and a log line
   per `close` / `before-quit`. Record each result under this task:
@@ -21,6 +24,21 @@
     `before-quit` → `close` → `closed`, and the app exits by itself, the same order as on Linux.
   - The rest needs someone at the Mac, and waits for 1.1: the paste, the Edit-menu items, the label
     override, and the quit Apple event (the Automation prompt has to be answered on its screen).
+  - 2026-10-12, measured with the real menu and UI scripting, rather than temporary instrumentation (the
+    probe's sections are the measurement):
+    - **`Cmd+V` in the terminal pastes twice** once an Edit menu exists: the pasted line ran as one doubled
+      command and wrote `P%sP`. Hence 3.6.
+    - **macOS adds two items to a menu named Edit, in the system's language**: 「啟動聽寫⋯」 and
+      「表情符號和其他符號」 on the Traditional Chinese build Mac. The probe recognises them as the system's.
+    - **Role items honour the `label` override**: the Edit menu showed the dictionary's labels in both
+      languages.
+    - **The quit Apple event behaves as `before-quit` first**: with a running session it asked nothing
+      and the app exited; with an unsaved file it asked about the file, and "Don't Save" finished the
+      quit. No requirement-level decision was needed.
+    - **Found on the way: closing a window that has a sheet ends the sheet** (Electron, on macOS). `Cmd+Q`
+      during the open close dialog made the dialog vanish, and nothing quit. `closeForQuit` now only
+      upgrades the open question's intent (`close-guard.ts`, with a unit check that no second close reaches
+      the window).
 - [x] 1.3 On the Mac, with a throwaway script run by `electron` that prints `app.getPath('userData')` with
   and without `XDG_CONFIG_HOME`: confirm that the variable is ignored on macOS. This avoids `npm run dev`,
   which would write into the real data directory. Record under this task.
@@ -167,9 +185,11 @@
   - `src/main/pty-cwd.ts` (`ptyCwdReadable`, `readPtyCwd`), moved out of `terminal.ts`, with tests.
   - Dictionaries: `consequenceFolder`, `consequenceWindow`, and `consequenceWindowFolder`, and the window
     button labels, in both languages. `close-prompt.test.ts` covers the folder and window wording.
-- [ ] 3.6 If 1.2 measured a double paste: in `src/renderer/src/shell/terminal/xterm.ts`, the custom key
+- [x] 3.6 If 1.2 measured a double paste: in `src/renderer/src/shell/terminal/xterm.ts`, the custom key
   handler calls `preventDefault()` for the keys it handles itself (`Cmd+V`, and `Cmd+C` with a selection).
   If not, record that here and leave the code.
+  - Measured double (1.2). `xterm.ts` calls `preventDefault()` for the keys the custom handler takes. Red
+    before the fix (`P%sP`), green after (`P`).
 - [x] 3.7 `src/main/user-env.ts`: correct the comment that says macOS's `env` lacks `-0`, citing the
   measurement in design Context.
 - [x] 3.8 `npm run typecheck`, `npm run lint`, `npm test` green.
@@ -187,7 +207,7 @@
     commit. It turns green on the release run (6.1).
   - Note: this replaced `release/Spekterm-0.2.3.AppImage` with a build of the working tree. The published
     0.2.3 on GitHub is untouched.
-- [ ] 4.2 `scripts/probe-package-mac.mjs`, run as `npm run probe:package:mac`, which is `node` directly,
+- [x] 4.2 `scripts/probe-package-mac.mjs`, run as `npm run probe:package:mac`, which is `node` directly,
   not `run-probe.mjs`:
   - ports in `scripts/lib/ports.mjs`; left out of `run-probes.mjs`;
   - `PROBE_PACKAGE_MAC_DMG` to point at any dmg or `.app`; the default is the declared version's dmg;
@@ -214,7 +234,9 @@
       longer count;
     - a second launch on the same port drove the first instance, so `launch()` now quits earlier
       instances first.
-- [ ] 4.3 On the Mac, against bundles built from the rsynced tree, run the probe through the override and
+  - 2026-10-12, the trial dmg from the current tree: **32/33**. The one red is the build identity, which a
+    trial build reports as dirty by design; it is green only on the release run (6.2).
+- [x] 4.3 On the Mac, against bundles built from the rsynced tree, run the probe through the override and
   record each result under this task:
   - the fixed build passes every section;
   - an unsealed bundle (`identity: null`) fails the signature section;
@@ -230,6 +252,19 @@
     - environment: with `~/.local/bin` on `PATH`, `command -v claude` prints a path, which turns the
       minimal-environment check red.
   - Still to run at the Mac: the fixed build's UI sections, and the build without 3.1–3.3.
+  - The build without 3.1–3.3: a control dmg from the commit before this change (`3df0a7c`, unsigned,
+    built in a temporary worktree on the Mac): **14/30**. Red as required:
+    - the menu (it still carried Electron's default menu, with Services, a Window menu and `Cmd+W`,
+      despite `setApplicationMenu(null)` in `createWindow`), `Cmd+W`, and the language switch;
+    - `Cmd+Q` asks: after tightening, see below;
+    - the window wording, the window keeping the app, the reopen, and the second window's menu;
+    - `Cmd+Q` during the open dialog, the OS quit finishing after "Don't Save", and the terminal paste.
+  - **The control exposed a false green.** "`Cmd+Q` asks" checked only for a Cancel button and passed on
+    the old build, whose `Cmd+Q` asked about the unsaved file alone. It now requires the question that
+    names the running session, and is red on the old build.
+  - Green on the old build as well, and marked so in the coverage table: text-field copy and paste and the
+    editor paste (Electron's default Edit menu), `Cmd+Q` with nothing to ask, Quit with no window, and the
+    OS quit with a running session (the existing before-quit rule).
 - [x] 4.4 With the Electron cache emptied on the Mac and `ELECTRON_MIRROR` set, run the install and
   `package-mac` once. Record that the archive came from the mirror and passed the pinned checksum. This is
   the carrier of "A mirror delivers a verified archive".

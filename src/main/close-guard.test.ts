@@ -201,7 +201,17 @@ describe('guardWindowClose', () => {
     it('a quit during the open prompt makes it a quit: answering close finishes it', async () => {
       const { window, dialog, guarded, quits } = setup({ sessions: running })
       window.userClose()
+      let closes = 0
+      const close = window.close
+      window.close = () => {
+        closes += 1
+        close()
+      }
       guarded.closeForQuit()
+      // The open question is not disturbed: no second close reaches the window (on macOS that would end
+      // the sheet as if it had been answered).
+      assert.equal(closes, 0)
+      window.close = close
       assert.equal(dialog.prompts.length, 1)
       await dialog.answer('quit')
       assert.equal(window.closed, true)

@@ -160,6 +160,13 @@ export function guardWindowClose(window: ClosableWindow, deps: CloseGuardDeps): 
   return {
     closeForQuit(): void {
       if (window.isDestroyed()) return
+      // **A question already open only becomes a quit; the window is not closed again.** On macOS a
+      // close of a window with a sheet ends the sheet first (Electron), which the dialog reads as an
+      // answer — measured: Cmd+Q during the open dialog made it vanish and nothing quit.
+      if (asking) {
+        askingForQuit = true
+        return
+      }
       // Read and cleared by the `close` handler. **Not reset after `close()` returns**: whether Electron
       // emits `close` inside that call or later is not something this module should depend on.
       closeIsQuit = true

@@ -547,7 +547,8 @@ try {
     const editExpected = ['appMenu.undo', 'appMenu.redo', 'appMenu.cut', 'appMenu.copy', 'appMenu.paste', 'appMenu.selectAll']
       .map((key) => copy(key))
     // macOS adds its own items to a menu named Edit (dictation, emoji); they are the system's, not ours.
-    const SYSTEM_EDIT_ITEMS = /^(Start Dictation|Emoji & Symbols|AutoFill)/
+    // They come in the system's language, not the app's (the build Mac's is Traditional Chinese).
+    const SYSTEM_EDIT_ITEMS = /^(Start Dictation|Emoji & Symbols|AutoFill|啟動聽寫|表情符號和其他符號|自動填寫)/
     const extra = [...app.filter((n) => !appExpected.includes(n)), ...edit.filter((n) => !editExpected.includes(n) && !SYSTEM_EDIT_ITEMS.test(n))]
     check(results, 'the menu holds the application menu and the Edit menu with exactly the defined items',
       appExpected.every((n) => app.includes(n)) && editExpected.every((n) => edit.includes(n)) && extra.length === 0,
@@ -582,15 +583,24 @@ try {
       await client.send('Input.dispatchMouseEvent', { type, x, y, button: 'right', buttons: type === 'mousePressed' ? 2 : 0, clickCount: 1 })
     }
     await realClick(client, await pollUntil(client, MENU_ITEM_RECT(copy('sessions.rename')), (value) => value !== null, 4000))
-    await pollUntil(client, RENAME_INPUT, (value) => value !== null, 4000)
+    await pollUntil(client, `${RENAME_INPUT} !== null`, (value) => value === true, 4000)
     await client.send('Input.insertText', { text: 'alpha' })
+    setClipboard('stale')
     keystroke(mainPid, 'a')
+    const selected = await pollUntil(client, `(() => { const el = ${RENAME_INPUT}; return el ? el.selectionEnd - el.selectionStart : -1 })()`,
+      (n) => n === 5, 3000)
     keystroke(mainPid, 'c')
-    await client.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'End', code: 'End', windowsVirtualKeyCode: 35 })
-    await client.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'End', code: 'End', windowsVirtualKeyCode: 35 })
+    const copied = await pollFor({
+      read: () => execFileSync('pbpaste', { encoding: 'utf8' }),
+      settled: (text) => text === 'alpha',
+      timeoutMs: 3000,
+      label: 'the clipboard after Cmd+C',
+    })
+    await client.evaluate(`(() => { const el = ${RENAME_INPUT}; el.setSelectionRange(el.value.length, el.value.length); return true })()`)
     keystroke(mainPid, 'v')
     const value = await pollUntil(client, `${RENAME_INPUT}?.value ?? null`, (v) => v !== 'alpha', 3000)
-    check(results, 'Cmd+A, Cmd+C and Cmd+V work in a text field, and paste once', value === 'alphaalpha', `value="${value}"`)
+    check(results, 'Cmd+A, Cmd+C and Cmd+V work in a text field, and paste once', value === 'alphaalpha',
+      `value="${value}"; selected after Cmd+A=${selected}; clipboard after Cmd+C=${JSON.stringify(copied)}`)
     await client.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 })
     await client.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 })
   }, { needs: scripting })
@@ -605,7 +615,7 @@ try {
     const written = await pollDisk(() => existsSync(witness), 8000, 'the pasted command ran')
     const content = written ? readFileSync(witness, 'utf8') : null
     check(results, 'Cmd+V in the terminal pastes once', content === 'P',
-      `content=${JSON.stringify(content)} (a double paste writes "PP")`)
+      `content=${JSON.stringify(content)} (pasted twice, the line runs as one command and writes "P%sP")`)
   }, { needs: scripting })
 
   await section('Paste in the editor', async () => {
@@ -624,7 +634,11 @@ try {
       else await realClick(client, await pollUntil(client, TERMINAL_RECT, (value) => value !== null, 6000))
       keystroke(mainPid, 'q')
       const buttons = await waitSheet(mainPid)
-      check(results, `Cmd+Q with focus in the ${where} asks before quitting`, buttons.includes(copy('closeConfirm.cancel')),
+      // The question must be the one that names the running session, not only the unsaved file: with the
+      // Quit role, Cmd+Q went through before-quit first and asked about the file alone (measured on the
+      // pre-change build, where a check for "a Cancel button" passed).
+      check(results, `Cmd+Q with focus in the ${where} asks before quitting`,
+        buttons.includes(copy('closeConfirm.quitWithoutSaving')) && buttons.includes(copy('closeConfirm.cancel')),
         JSON.stringify(buttons))
       clickSheetButton(mainPid, copy('closeConfirm.cancel'))
       await pollFor({ read: () => sheetButtons(mainPid), settled: (b) => b.length === 0, timeoutMs: 5000, label: 'the sheet closes' })
@@ -665,11 +679,14 @@ try {
     await openShell(reconnected, mainPid)
     clickCloseButton(mainPid)
     await waitSheet(mainPid)
+    const quitItem = copy('appMenu.quit', { name: 'Spekterm' })
+    const enabled = osa(`tell application "System Events" to tell ${proc(mainPid)} to get enabled of menu item "${quitItem}" of menu 1 of menu bar item 2 of menu bar 1`).out
     keystroke(mainPid, 'q')
+    const sheetAfterKey = sheetButtons(mainPid)
     clickSheetButton(mainPid, copy('closeConfirm.closeWindow'))
     const gone = await waitExit(mainPid)
     check(results, 'Cmd+Q pressed while the close dialog is open, then answering close, quits the application', gone === true,
-      `exited=${gone}`)
+      `exited=${gone}; Quit item enabled while the sheet is open=${enabled}; sheet after Cmd+Q=${JSON.stringify(sheetAfterKey)}`)
     reconnected.close()
   }, { needs: scripting })
 

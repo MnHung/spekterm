@@ -49,19 +49,30 @@ Electron 43.5.0, electron-builder 26.15.7, 2026-10-08). Almost every one of them
     Reminders, Desktop, Documents, and Downloads. The privacy log (`log show --predicate 'subsystem ==
     "com.apple.TCC"'`) names the accessing process. Each ad-hoc build is a new identity, so the prompts
     can come back after an update. In zsh, `log` is a builtin; call `/usr/bin/log`.
-13. **UI scripting from SSH needs Accessibility and Automation for `/usr/libexec/sshd-keygen-wrapper`.**
-    Without them `osascript` to System Events waits two minutes and fails with `-1712`, and the prompt
-    appears on the Mac's screen, where nobody may be.
+13. **UI scripting from SSH needs Accessibility for both `/usr/libexec/sshd-keygen-wrapper` and
+    `/usr/bin/osascript`, and Automation for System Events.** Without Automation, `osascript` waits two
+    minutes and fails with `-1712`; the prompt appears on the Mac's screen, where nobody may be. Without
+    Accessibility for `osascript` itself, it fails with `-1719`.
+14. **macOS adds its own items to a menu named Edit, in the system's language** (「啟動聽寫⋯」,
+    「表情符號和其他符號」 on a Traditional Chinese Mac). A check for "exactly our items" has to recognise them.
+15. **A pre-change build still showed Electron's default menu** (Services, a Window menu with `Cmd+W`)
+    although `createWindow` called `setApplicationMenu(null)`. Do not assume `null` removes the macOS menu.
+    The probe's menu check is red on that build.
 
 ## Quitting
 
-14. **`SIGTERM` emits `before-quit` before `close`, as on Linux.** The close guard reads that order as "a
+16. **`SIGTERM` emits `before-quit` before `close`, as on Linux.** The close guard reads that order as "a
     quit that did not start with the window". The Quit *role* goes the same way, which is why the macOS
     Quit is a custom item that closes the window first (`closeForQuit`).
-15. **On macOS, a quit whose close is held (to ask about unsaved changes) is abandoned by Electron**, and
+17. **On macOS, a quit whose close is held (to ask about unsaved changes) is abandoned by Electron**, and
     `window-all-closed` does not quit there. Without `onQuitClose` the user who chose Quit would be left
     with an app and no window.
 
-Not yet measured (they need someone at the Mac, tasks 1.2 of `macos-dmg-packaging`): whether `Cmd+V` in
-the terminal pastes twice once an Edit menu exists, whether macOS adds items to a menu named Edit, whether
-a role item's `label` override shows, and the event order of the quit Apple event (the Dock's Quit, logout).
+18. **`Cmd+V` in the terminal pastes twice once an Edit menu exists**, unless the key handler that pastes
+    calls `preventDefault()`. Returning `false` from xterm's custom key handler only stops xterm. The
+    pasted line ran as one doubled command (`P%sP`).
+19. **Closing a window that has a sheet ends the sheet first** (Electron on macOS), and the dialog reads it
+    as an answer. A Quit pressed while the close dialog is open must therefore not close the window again;
+    it only marks the open question as a quit (`closeForQuit`).
+20. **The quit Apple event (the Dock's Quit, logout) emits `before-quit` first**, like `SIGTERM`: no sessions
+    question, the unsaved-changes question kept, and the quit finished once that is answered.
