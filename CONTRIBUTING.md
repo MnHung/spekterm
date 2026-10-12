@@ -27,8 +27,10 @@ expected to uphold it. Please report unacceptable behavior to **cpckewang@gmail.
 
 ### Prerequisites
 
-- **Linux.** spekterm currently builds and is tested on Linux only (macOS and Windows builds are not
-  available yet).
+- **Linux for development.** The end-to-end probes run only on Linux (they need `xvfb`), and `npm run dev`
+  keeps its data apart from an installed spekterm only there. A Mac with Apple Silicon is needed only to
+  package the macOS build (`npm run dist:mac`) and run its acceptance (`npm run probe:package:mac`); see
+  [README](README.md#on-macos). There is no Windows build yet.
 - **Node.js 22** — the exact version is pinned in [`.nvmrc`](.nvmrc) (`nvm use` picks it up).
 - **[Claude Code](https://code.claude.com/docs)** (`claude` on your `PATH`) if you want
   to open agent sessions.
