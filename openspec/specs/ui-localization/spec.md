@@ -25,7 +25,7 @@ app 中所有**使用者可見的文案**以**當前的 UI 語言**呈現，且�
 
 app 中每一個**使用者可見的文案** SHALL 以**當前的 UI 語言**呈現。
 
-「使用者可見的文案」SHALL 包含以下五類 —— 它們的載體不同，但都會抵達使用者的眼睛：
+「使用者可見的文案」SHALL 包含以下六類 —— 它們的載體不同，但都會抵達使用者的眼睛：
 
 1. **renderer 的介面文字**：JSX 的文字節點、`aria-label`、`title`、驗證訊息、空狀態、
    選單項與按鈕的標籤。
@@ -34,6 +34,10 @@ app 中每一個**使用者可見的文案** SHALL 以**當前的 UI 語言**呈
    訊息、檔案操作的失敗說明）。
 4. **寫進 pty 串流、供人閱讀的訊息**：如 session 重建時的重播分隔線。
 5. **主行程發出的作業系統原生通知**：其標題與內文。
+6. **The application menu the operating system draws** (macOS): the labels of its items. Like the
+   notifications, it is drawn outside the application's own window, and the label of a role item would
+   otherwise come from the system, not from the dictionaries. The application menu's own title is the
+   bundle's name and is exempt.
 
 **`console.*` 的輸出與內部不變式的例外訊息不屬於使用者可見的文案** —— 它們不需要進入字典
 （沒有使用者會讀到它們），但仍 SHALL 為英文（見「產品原始碼不得含非英文的字串字面值」）。
@@ -89,6 +93,11 @@ app 中每一個**使用者可見的文案** SHALL 以**當前的 UI 語言**呈
 
 - **WHEN** UI 語言為非英文，一個 agent session 啟動
 - **THEN** 經 `SessionStart` 注入其脈絡的自我介紹為英文
+
+#### Scenario: The macOS application menu is in the current UI language
+
+- **WHEN** on macOS the UI language is not English and the application menu is opened
+- **THEN** each of its items is labelled in that language, from the shared dictionaries
 
 ### Requirement: 使用者可見的文案由 i18n 層供應，不得硬編於程式碼
 

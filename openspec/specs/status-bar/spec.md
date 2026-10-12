@@ -2,7 +2,9 @@
 
 ## Purpose
 TBD - created by archiving change panel-drive-and-shell-affordances. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: 狀態列呈現 focused session 的脈絡
 
 狀態列 SHALL 呈現當前 focused session 的脈絡資訊，至少包含：其所屬 repo 的名稱、該 repo 的
@@ -99,9 +101,14 @@ linked worktree 時，SHALL 呈現該 worktree 的名稱而非完整路徑。
 
 工作目錄的取得 SHALL NOT 倚賴 agent 提供 —— login shell 的 session 同樣要有這個欄位。
 
+**On macOS this field is not available yet.** The application cannot read a pty's current directory
+there, so the status bar shows neither the working directory nor its git state for the focused session.
+This is a known gap, documented as a macOS limitation and tracked as an issue. The scenarios below are
+accepted on Linux.
+
 #### Scenario: 於終端內切換目錄後欄位隨之更新
 
-- **WHEN** 使用者在 focused session 的終端內切換到另一個目錄
+- **WHEN** 於 Linux 上，使用者在 focused session 的終端內切換到另一個目錄
 - **THEN** 狀態列呈現的工作目錄於短時間內改為新的目錄
 
 #### Scenario: login shell 的 session 同樣呈現工作目錄

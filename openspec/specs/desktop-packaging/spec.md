@@ -47,10 +47,20 @@ electron-builder 不再讀它，於是驗收與實際生效的設定悄悄脫鉤
 
 後續 change 若必須外移設定，SHALL 同時更新 `app-identity` 的該條 scenario 與其驗收腳本。
 
+The macOS target is declared in the same place (`build.mac`, `build.dmg`). A packaging command MAY pass
+values that depend on the build machine on the command line, such as the path of the verified Electron
+archive. It SHALL NOT move any setting that the guard below checks out of `package.json`.
+
 #### Scenario: 打包設定位於 package.json
 
 - **WHEN** 讀取版控中的 `package.json`
 - **THEN** `build` 之下存在 Linux 目標設定，且該設定指定 AppImage 為產出形態
+
+#### Scenario: The macOS target is declared in package.json
+
+- **WHEN** `package.json` in version control is read
+- **THEN** `build.mac` declares a dmg for `arm64`, an ad-hoc signing identity, and the hardened runtime
+  turned off
 
 #### Scenario: 版控中不存在獨立的 electron-builder 設定檔
 
@@ -172,6 +182,15 @@ Electron 的 ABI**，使該規格所依賴的跨 runtime 相容性失效。
 靜默拿掉」。它 SHALL NOT 被詮釋為「打包會成功」或「產物可執行」—— 它連一次打包都沒有執行過。
 產物是否真的能用，只有實際打包並執行產物的驗收能回答。
 
+For macOS the guard also checks:
+
+- the ad-hoc identity and the hardened runtime turned off;
+- that no file is placed at the top of the bundle's `Contents/`. There is no top-level `extraFiles` entry
+  and no `build.mac.extraFiles` entry, because a platform's file set is added to the top-level one, and a
+  file there makes signing fail;
+- that the macOS packaging command keeps its release check before the build, packages only through the
+  step that verifies the Electron archive (never by calling the packager directly), and prunes after it.
+
 #### Scenario: 關鍵設定齊備時守衛通過
 
 - **WHEN** 在打包設定完整的情況下執行單元測試
@@ -181,6 +200,22 @@ Electron 的 ABI**，使該規格所依賴的跨 runtime 相容性失效。
 
 - **WHEN** 自 `package.json` 移除 `build.asarUnpack` 的 `node-pty` 涵蓋後執行單元測試
 - **THEN** 該守衛失敗
+
+#### Scenario: A top-level extra file fails the guard
+
+- **WHEN** an entry is added to the top-level `build.extraFiles` and the unit tests run
+- **THEN** the guard fails, naming the macOS bundle's `Contents/` as the reason
+
+#### Scenario: A macOS extra file fails the guard
+
+- **WHEN** an entry is added to `build.mac.extraFiles` and the unit tests run
+- **THEN** the guard fails
+
+#### Scenario: Packaging around the checksum step fails the guard
+
+- **WHEN** the macOS packaging command is changed to call the packager directly instead of the verifying
+  step, and the unit tests run
+- **THEN** the guard fails
 
 ### Requirement: 打包產物於桌面環境啟動時仍能解析使用者的 agent CLI
 
@@ -312,6 +347,10 @@ SHALL NOT 寫入主行程自身的環境。
 打包產物 SHALL 繼續解析到 `app-identity` 所規範的位置（即以 `productName` 命名的目錄），
 使既有的使用者設定為打包產物所沿用。
 
+**On macOS this separation does not hold yet.** Electron does not read `XDG_CONFIG_HOME` on macOS, so
+`npm run dev` there resolves to the packaged application's data directory. This is a known gap, tracked as
+an issue; the scenarios below are accepted on Linux.
+
 #### Scenario: 開發模式的啟動指令自身宣告了資料目錄的隔離
 
 - **WHEN** 讀取版控中 `package.json` 的 `dev` script
@@ -319,7 +358,7 @@ SHALL NOT 寫入主行程自身的環境。
 
 #### Scenario: 該環境變數確實改變 userData 的解析結果
 
-- **WHEN** 於設定與未設定該環境變數的兩種情況下各啟動一次 Electron，並讀取
+- **WHEN** 於 Linux 上，於設定與未設定該環境變數的兩種情況下各啟動一次 Electron，並讀取
   `app.getPath('userData')`
 - **THEN** 兩次解析出不同的路徑，且設定時的路徑位於該環境變數所指的目錄之下
 
@@ -331,6 +370,13 @@ SHALL NOT 寫入主行程自身的環境。
   而非套件缺失，讀起來像「這個 app 壞了」。
 - 上述情況的逃生口：以 `--appimage-extract-and-run` 執行（不經 fuse）。
 - 首次打包需要網路（下載 Electron binary）。
+- Building the macOS artifact needs a Mac, a checkout of a release commit, and network access for the
+  Electron archive. Where GitHub's download is too slow, `ELECTRON_MIRROR` may point at a mirror. It applies
+  to installing the dependencies as well as to packaging, and the
+  pinned checksum still applies.
+- Trying a macOS build at a commit that is not a release runs the packaging step without the release check,
+  and the README
+  says that such a build is not a release.
 
 一個只有作者知道的逃生口等於沒有逃生口 —— 而這幾條的共同特徵是**失敗訊息不會指向真正的原因**。
 
@@ -340,10 +386,19 @@ SHALL NOT 寫入主行程自身的環境。
 - **THEN** 其中記載 `libfuse2` 的前提、`--appimage-extract-and-run` 的逃生口，以及首次打包的網路
   需求
 
+#### Scenario: README states how to build for macOS
+
+- **WHEN** the `README` is read
+- **THEN** it states that the macOS artifact is built on a Mac from a release commit, names
+  `ELECTRON_MIRROR`, and gives the command for a trial build that is not a release
+
 ### Requirement: 專案提供將產物整合進桌面環境的機制
 
 專案 SHALL 提供一個指令，將打包產物安裝為桌面環境的應用程式項目 —— 安裝後該項目 SHALL 出現在
 應用程式選單中，且點選它 SHALL 啟動已安裝的產物。
+
+This applies to Linux. On macOS, dragging the application from the disk image to Applications is the
+platform's own integration, and the project provides no command for it.
 
 這不只是便利。本規格另有兩條 requirement 明訂其驗收「**SHALL 以自桌面環境啟動的執行驗收，
 SHALL NOT 以自終端機啟動的執行替代**」（agent CLI 的解析、主行程的 PATH）——
@@ -414,6 +469,10 @@ SHALL NOT 以自終端機啟動的執行替代**」（agent CLI 的解析、主�
 打包指令 SHALL 於成功產出之後，只保留**當次與前一次**的產物，並刪除更早的。保留前一次是刻意的：
 換版後行為出問題時，退回上一份可執行的產物是第一個處置。
 
+The count is kept **per kind of artifact**. The AppImages and the dmgs are counted separately, so one
+platform's artifacts never push out the other's. A dmg's `.blockmap` belongs to its dmg and is deleted
+with it.
+
 刪除 SHALL 只涵蓋本專案自己產出的產物檔，SHALL NOT 涵蓋輸出目錄中的其他內容。
 
 **「最近」SHALL 依版本序判定，SHALL NOT 依檔名的字典序。** 兩者在版本號跨越十位數之前完全
@@ -424,7 +483,7 @@ SHALL NOT 以自終端機啟動的執行替代**」（agent CLI 的解析、主�
 #### Scenario: 第三次打包後只留下最近兩份產物
 
 - **WHEN** 連續執行打包指令三次
-- **THEN** 輸出目錄中本專案的產物只剩最近的兩份，最早的那一份已不存在
+- **THEN** 輸出目錄中本專案同一種產物只剩最近的兩份，最早的那一份已不存在
 
 #### Scenario: 版本號跨越十位數時保留的仍是版本序上最新的兩份
 
@@ -436,3 +495,180 @@ SHALL NOT 以自終端機啟動的執行替代**」（agent CLI 的解析、主�
 
 - **WHEN** 輸出目錄中存在一個非本專案產出的檔案，且執行打包指令
 - **THEN** 該檔案仍然存在
+
+#### Scenario: Each kind of artifact keeps its own two
+
+- **WHEN** the output directory holds three AppImages and three dmgs with their blockmaps, and pruning runs
+- **THEN** the newest two AppImages and the newest two dmgs remain, each remaining dmg still has its
+  blockmap, and the oldest dmg's blockmap is gone with it
+
+### Requirement: The project produces an installable macOS artifact
+
+The project SHALL provide a packaging command, run on macOS, that produces a disk image (`.dmg`) for
+Apple Silicon (`arm64`) in `release/`, containing the application bundle and a link to the Applications
+folder. The bundle SHALL run from any location outside the repository working copy, as the Linux artifact
+does. Intel Macs are not a target: no artifact SHALL be produced for an architecture nothing has run.
+
+The command SHALL refuse to run on any other platform, with a message that names the platform it needs.
+
+The bundle SHALL NOT carry Electron's placeholder application (`default_app.asar`). It is never used
+when the application's own archive is present, and a release ships only what the application uses.
+
+#### Scenario: The packaging command produces a dmg
+
+- **WHEN** the macOS packaging command is run on a Mac at a release commit
+- **THEN** `release/` contains a file named `Spekterm-<version>-arm64.dmg`, and mounting it shows the
+  application bundle
+
+#### Scenario: The command refuses another platform
+
+- **WHEN** the macOS packaging command is run on Linux
+- **THEN** it exits with an error naming macOS, and produces nothing
+
+#### Scenario: No placeholder application ships
+
+- **WHEN** the bundle inside the dmg is inspected
+- **THEN** `Contents/Resources/default_app.asar` does not exist
+
+### Requirement: The macOS bundle carries a signature that seals it
+
+The macOS bundle SHALL be signed ad hoc so that the signature covers the whole bundle: the executables,
+the frameworks, the helper applications, the resources, and `Info.plist`. Verifying it strictly and in
+depth SHALL succeed, on the copy taken out of the dmg, not only on the build output.
+
+This is what turns a downloaded copy from "damaged" (an unsealed bundle carrying the quarantine flag) into
+"from an unidentified developer", which the user can allow once. **It SHALL NOT be described as making
+the app open without a warning.** That needs a paid Developer ID and notarization, which this project
+does not have.
+
+The bundle SHALL NOT use the hardened runtime. That runtime matters only for notarization, and combined
+with an ad-hoc signature it can stop the app from loading its own frameworks.
+
+**Acceptance gaps, settled by dogfood:**
+
+- which dialog a quarantined (downloaded) copy shows. Gatekeeper's command-line assessment rejects any
+  app that is not notarized and does not say which dialog the user would see;
+- whether updating from one ad-hoc build to the next makes macOS ask again for permissions granted to
+  the previous one (notifications, protected folders, keychain items), since each ad-hoc build is a
+  different code identity;
+- whether notifications from an ad-hoc signed app are shown.
+
+#### Scenario: The dmg's copy verifies
+
+- **WHEN** the bundle is copied out of the mounted dmg and its signature is verified strictly and in depth
+- **THEN** verification succeeds
+
+#### Scenario: An unsealed bundle fails the same check
+
+- **WHEN** the same verification is run on a bundle packaged without signing
+- **THEN** verification fails, reporting that the bundle's resources are not sealed
+
+### Requirement: The Electron binary in a macOS artifact matches a pinned checksum
+
+The Electron archive that a macOS artifact is built from SHALL match the SHA-256 that the installed
+`electron` package publishes for that exact archive, whichever server delivered it. A mirror is allowed
+for speed, but a mirror SHALL NOT be trusted to vouch for its own file: the expected hash SHALL NOT come
+from the server that served the archive.
+
+The check SHALL run on every build, including when the archive comes from a local cache. A mismatch SHALL
+stop the build, naming the archive and stating that its checksum did not match.
+
+#### Scenario: A wrong checksum stops the build
+
+- **WHEN** the expected checksum for the archive is altered and the macOS packaging command runs
+- **THEN** it stops before packaging and reports the mismatch
+
+#### Scenario: A mirror delivers a verified archive
+
+- **WHEN** the Electron cache is empty, `ELECTRON_MIRROR` points at a mirror, and the macOS packaging command
+  runs
+- **THEN** the archive is downloaded from the mirror, matches the pinned checksum, and the build continues
+
+### Requirement: The macOS artifact passes the packaged-artifact acceptance from a desktop launch
+
+The macOS artifact SHALL pass, on a Mac and against the bundle copied out of the dmg, the same behavioral
+checks the Linux artifact passes:
+
+- its window opens and the renderer loads from the archive (`document.title` is `spekterm`);
+- the production Content-Security-Policy applies;
+- a session creates a real pty process, and a command sent to it runs, judged by its side effect on disk.
+  This is the same judgment "打包產物中的 native 模組可載入並 spawn 出真實 pty" requires;
+- the Settings dialog shows the build identity, whose version equals the version in the dmg's file name,
+  whose commit is the release commit, and which reports a clean working tree.
+
+These checks SHALL be run on an application launched with **the environment a Finder or Dock launch
+gets**, not the environment of the shell running the acceptance. A launch that inherits the acceptance
+shell's `PATH` is the substitute "打包產物於桌面環境啟動時仍能解析使用者的 agent CLI" forbids. On macOS,
+launching through `open` from a shell is such a substitute, because `open` passes the caller's
+environment on. The minimal environment SHALL be shown to be minimal: in it, `claude` does not resolve.
+
+From that launch, an agent session SHALL start `claude`. If `claude` is not installed on the Mac, that
+check SHALL report that it did not run, not that it passed.
+
+The acceptance's processes SHALL be identified by this run's own launch arguments, not by reading other
+processes' environments, which macOS does not show.
+
+**Acceptance gap:** that the browser engine opens no connection at startup (`workspace-app-shell`) is
+checked on Linux only. Its carrier maps host names to a local listener through Linux-specific means. On
+macOS it is not verified.
+
+#### Scenario: The renderer and CSP of the dmg's copy
+
+- **WHEN** the bundle from the dmg is launched from a minimal environment
+- **THEN** its window's `document.title` is `spekterm`, and the renderer's policy has `script-src 'self'`
+  and no development-server source
+
+#### Scenario: A pty runs a command in the dmg's copy
+
+- **WHEN** a shell session is created in that application and a command with a side effect is sent to it
+- **THEN** a pty process exists among the application's descendants, and the side effect appears with the
+  content of the command
+
+#### Scenario: The launch environment is minimal
+
+- **WHEN** the environment used to launch the application is checked
+- **THEN** `claude` does not resolve in it
+
+#### Scenario: An agent session reaches claude from a desktop launch
+
+- **WHEN** `claude` is installed on the Mac and an agent session is created in that application
+- **THEN** a `claude` process appears among the application's descendants
+
+#### Scenario: The dmg's copy states its build identity
+
+- **WHEN** the Settings dialog of that application is opened
+- **THEN** its build identity shows the version in the dmg's file name, the release commit, and a clean
+  working tree
+
+### Requirement: The documentation states how to install on macOS and what is limited there
+
+The README (both languages) and the website's documentation (both languages) SHALL state, for macOS:
+
+- the minimum macOS version the artifact declares, and the version the acceptance ran on;
+- how to allow the app the first time, on the tested version and on macOS 15 and later, where the steps
+  changed;
+- what to do if macOS still reports the app as damaged (removing the quarantine flag);
+- that macOS attributes to spekterm the privacy prompts caused by programs running in its sessions
+  (an agent reading under the home directory, for example). The documentation SHALL say that denying them
+  is safe unless a repository lives in the protected place it names;
+- that updates may ask again for permissions granted before;
+- where the application keeps its data on macOS;
+- the features that degrade on macOS:
+  - restored shells restart in their folder, not their last directory;
+  - the status bar shows neither the focused session's working directory nor its git state;
+  - idle shells are not hibernated automatically;
+  - the font setting offers only the system default monospace font;
+  - closing the window leaves the application running, and with it the inbox and Slack polling;
+  - `Ctrl+↑` / `Ctrl+↓` are taken by Mission Control and App Exposé in macOS's default settings;
+  - there is no command that integrates the app into the desktop; dragging it to Applications installs it.
+
+#### Scenario: The macOS install steps are documented
+
+- **WHEN** the README and the website's install page are read in either language
+- **THEN** they state the minimum macOS version, the first-launch allow step, the damaged-app escape, the
+  data location, and why privacy prompts name spekterm
+
+#### Scenario: The macOS limitations are documented
+
+- **WHEN** the website's documentation is read in either language
+- **THEN** each degraded feature listed above is stated as a macOS limitation

@@ -397,8 +397,3 @@
   - The wording turned back to "available", with the issue links and "tested on macOS 13 and 27", in the
     commit pushed after the release.
   - #63 is closed.
-- [ ] 6.4 Dogfood on the Mac, results recorded under this task:
-  - download the released dmg in a browser; confirm the "unidentified developer" path and Open Anyway,
-    with the unsealed build as the "damaged" control;
-  - install the next release over this one, and note which permission prompts return;
-  - with no window open, click a real notification; confirm that a window opens and shows the item.
