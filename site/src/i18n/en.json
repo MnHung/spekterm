@@ -10,10 +10,10 @@
   "footer.source": "Source on GitHub",
   "header.switchTo": "Go to {product}",
   "landing.download": "Download",
-  "landing.downloadNote": "From the latest GitHub release: an AppImage for Linux. The .dmg for Macs with Apple Silicon is in testing and not released yet.",
+  "landing.downloadNote": "From the latest GitHub release: an AppImage for Linux, a .dmg for Macs with Apple Silicon.",
   "landing.early": "Early and actively developed — expect rough edges.",
   "landing.illustrative": "Screenshots show illustrative example content.",
-  "landing.platforms": "Builds are available for Linux (x86_64). A macOS build for Apple Silicon is in testing; Windows and Intel Macs are not supported yet.",
+  "landing.platforms": "Builds are available for Linux (x86_64) and for macOS on Apple Silicon. Windows and Intel Macs are not supported yet.",
   "social.imageAlt": "spekterm — The spec beside the agent",
   "social.spekImageAlt": "spek — the OpenSpec viewer"
 }

@@ -12,9 +12,9 @@ without opening an IDE.
 
 ![spekterm: a Claude Code session in the conversation view, next to the side panel showing the tasks of the OpenSpec change it is working on](site/src/assets/screenshots/en/hero.png)
 
-> **Status:** early. Builds are available for Linux (x86_64). A macOS build for Apple Silicon is in testing
-> and not released yet (see [macOS](#macos)); Windows and Intel Macs are not supported yet. Auto-update is not
-> available yet.
+> **Status:** early. Builds are available for Linux (x86_64) and for macOS on Apple Silicon; Windows and
+> Intel Macs are not supported yet. Auto-update is not available yet, and the macOS build is not notarized
+> by Apple (it is signed ad hoc — see [macOS](#macos)).
 
 ## Why
 
@@ -43,7 +43,7 @@ Everything is described in the [documentation](https://spekterm.com/docs/), incl
 - Linux x64 with `libfuse2` (needed to run AppImages; Ubuntu 22.04+ no longer installs it by default).
   Without it the AppImage fails with `dlopen(): error loading libfuse.so.2`; run it without FUSE instead:
   `./Spekterm-<version>.AppImage --appimage-extract-and-run`.
-- Or, once the macOS build is released (it is in testing), macOS 12 (Monterey) or later on Apple Silicon.
+- Or macOS 12 (Monterey) or later on Apple Silicon. Tested on macOS 13 (Ventura).
 - [Claude Code](https://code.claude.com/docs) (`claude` on your `PATH`) for agent sessions. spekterm runs
   the real CLI with your own subscription — it never asks for an API key.
 
@@ -62,9 +62,6 @@ chmod +x Spekterm-<version>.AppImage
 spekterm keeps its data in `~/.config/Spekterm`.
 
 ### macOS
-
-> **In testing.** The macOS build is not on the Releases page yet. The steps below are for when it is; until
-> then, you can build it yourself on a Mac — see [On macOS](#on-macos).
 
 Download the latest `Spekterm-<version>-arm64.dmg` from the
 [Releases page](https://github.com/spekhq/spekterm/releases), open it, and drag **Spekterm** to
@@ -91,11 +88,11 @@ Download the latest `Spekterm-<version>-arm64.dmg` from the
   if configured) keep running. `Cmd+Q` asks like closing the window; quitting from the Dock, logging out,
   or shutting down does not ask about running sessions (it still asks about unsaved files).
 
-Known limitations on macOS: restored shells restart in their folder, not their last directory; the status
-bar does not show the focused session's working directory or git state; idle shells are never hibernated
-automatically (hibernating by hand works); the font setting offers only the system default monospace
-font; `Ctrl+↑` / `Ctrl+↓` are taken by Mission Control and App Exposé in macOS's default settings (turn
-them off in System Settings → Keyboard → Keyboard Shortcuts → Mission Control); there is no `Cmd+W` —
+Known limitations on macOS: restored shells restart in their folder, not their last directory, and the status
+bar does not show the focused session's working directory or git state ([#67](https://github.com/spekhq/spekterm/issues/67)); idle shells are never hibernated
+automatically, though hibernating by hand works ([#68](https://github.com/spekhq/spekterm/issues/68)); the font setting offers only the system default monospace
+font ([#69](https://github.com/spekhq/spekterm/issues/69)); `Ctrl+↑` / `Ctrl+↓` are taken by Mission Control and App Exposé in macOS's default settings (turn
+them off in System Settings → Keyboard → Keyboard Shortcuts → Mission Control; [#71](https://github.com/spekhq/spekterm/issues/71)); there is no `Cmd+W` —
 close a session with `Ctrl+Shift+W`. See the [install guide](https://spekterm.com/docs/getting-started/install/#install-on-macos).
 
 ## Install from source
