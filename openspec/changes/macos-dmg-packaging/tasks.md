@@ -292,7 +292,7 @@
     pages, and the macOS build facts in both READMEs, with a control.
 ## 5. Documentation
 
-- [ ] 5.1 Open GitHub issues for the macOS gaps this change documents but does not fix, so that the docs and
+- [x] 5.1 Open GitHub issues for the macOS gaps this change documents but does not fix, so that the docs and
   spec gaps can link them:
   - a pty's working directory on macOS (shell restore and the status bar);
   - automatic hibernation of shells on macOS;
@@ -303,6 +303,11 @@
   - building on CI.
 
   Close issue #63 (the macOS build) with a reference to this change once 6.3 has published the dmg.
+  - Opened 2026-10-12: #67 (a pty's working directory), #68 (idle hibernation), #69 (font list), #70 (`npm
+    run dev` data isolation), #71 (`Ctrl+↑/↓`), #72 (`node_modules` drift on `dist:linux`), #73 (building on
+    CI). The docs gain the links in the release commit that turns "in testing" back into "available"
+    (6.3), so that the website is redeployed once.
+  - #63 is closed at 6.3. Intel (x64), which it also named, stays out of scope (proposal).
 - [x] 5.2 `README.md` and `README.zh-TW.md`, kept in sync:
   - the platform status (Linux, and macOS on Apple Silicon);
   - the macOS install: minimum version, the first-launch allow step for 13 and for 15 or later, the
@@ -370,7 +375,8 @@
   - The website and the READMEs went out early (commit a164f26) and now say the macOS build is "in
     testing". At release, turn that back into "available": the README status, requirements and macOS
     install note; the site's `landing.platforms` / `landing.downloadNote`, the docs index, the install
-    page (its intro, requirements and "In testing" note) and the FAQ, in both languages.
+    page (its intro, requirements and "In testing" note) and the FAQ, in both languages. In the same
+    commit, link #67–#71 from the macOS limitations (install page, both READMEs).
 - [ ] 6.4 Dogfood on the Mac, results recorded under this task:
   - download the released dmg in a browser; confirm the "unidentified developer" path and Open Anyway,
     with the unsealed build as the "damaged" control;
