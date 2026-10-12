@@ -13,7 +13,7 @@ Intel Macs are not supported yet.
 
 - **Linux on x86_64.** The AppImage needs `libfuse2` to run. Ubuntu 22.04 and later no longer install it
   by default — see [If the AppImage does not start](#if-the-appimage-does-not-start).
-- **macOS 12 (Monterey) or later on a Mac with Apple Silicon.** It has been tested on macOS 13 (Ventura).
+- **macOS 12 (Monterey) or later on a Mac with Apple Silicon.** It has been tested on macOS 13 (Ventura) and macOS 27.
   See [Install on macOS](#install-on-macos).
 - **Claude Code** for agent sessions: the `claude` command must be on your `PATH`. spekterm runs the real
   CLI with your own login and subscription; it never asks for an API key. Shell sessions work without it.

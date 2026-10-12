@@ -12,7 +12,7 @@ spekterm 提供 x86_64 的 Linux 版本，以 AppImage 發佈（一個檔案就�
 
 - **x86_64 的 Linux。** AppImage 需要 `libfuse2` 才能執行。Ubuntu 22.04 起預設不再安裝它 ——
   見[AppImage 無法啟動時](#appimage-無法啟動時)。
-- **macOS 12（Monterey）以上、Apple Silicon 的 Mac。** 已在 macOS 13（Ventura）上測試。
+- **macOS 12（Monterey）以上、Apple Silicon 的 Mac。** 已在 macOS 13（Ventura）與 macOS 27 上測試。
   見[在 macOS 上安裝](#在-macos-上安裝)。
 - **Claude Code**（agent session 需要）：`claude` 指令必須在你的 `PATH` 上。spekterm 執行的是真正的
   CLI，用的是你自己的登入與訂閱；它不會向你要 API key。只用 shell session 的話不需要它。

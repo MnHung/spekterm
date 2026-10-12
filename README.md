@@ -43,7 +43,7 @@ Everything is described in the [documentation](https://spekterm.com/docs/), incl
 - Linux x64 with `libfuse2` (needed to run AppImages; Ubuntu 22.04+ no longer installs it by default).
   Without it the AppImage fails with `dlopen(): error loading libfuse.so.2`; run it without FUSE instead:
   `./Spekterm-<version>.AppImage --appimage-extract-and-run`.
-- Or macOS 12 (Monterey) or later on Apple Silicon. Tested on macOS 13 (Ventura).
+- Or macOS 12 (Monterey) or later on Apple Silicon. Tested on macOS 13 (Ventura) and macOS 27.
 - [Claude Code](https://code.claude.com/docs) (`claude` on your `PATH`) for agent sessions. spekterm runs
   the real CLI with your own subscription — it never asks for an API key.
 

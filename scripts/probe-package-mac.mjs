@@ -30,7 +30,7 @@
  * Exit code 0 means every check passed. A check that could not run is reported as "not run" and fails.
  */
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, userInfo } from 'node:os'
 import { dirname, join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -111,8 +111,10 @@ function processTable() {
 
 /** The app's main process: the bundle's own executable, launched with this run's profile. */
 function mainProcess(appPath, profileDir) {
-  const executable = join(appPath, 'Contents', 'MacOS', 'Spekterm')
-  return processTable().find((p) => p.command.startsWith(executable) && p.command.includes(profileDir)) ?? null
+  // `ps` may show the real path: macOS's `/var` is a link to `/private/var` (measured: the same run printed
+  // either form). Compare against both.
+  const executables = [appPath, realpathSync(appPath)].map((path) => join(path, 'Contents', 'MacOS', 'Spekterm'))
+  return processTable().find((p) => executables.some((e) => p.command.startsWith(`${e} `)) && p.command.includes(profileDir)) ?? null
 }
 
 function descendants(rootPid) {
@@ -243,8 +245,17 @@ function bringFront(pid) {
   osa(`tell application "System Events" to set frontmost of ${proc(pid)} to true`)
 }
 
+/**
+ * Press `Cmd+<key>` in the app under test — **only if it is the frontmost app**. A key equivalent goes to
+ * whatever is in front; on a machine where the user's own Spekterm is running, a `Cmd+Q` that missed would
+ * quit their app and end their sessions. Refusing is the safe failure.
+ */
 function keystroke(pid, key) {
   bringFront(pid)
+  const front = osa('tell application "System Events" to get unix id of first process whose frontmost is true')
+  if (!front.ok || Number(front.out) !== pid) {
+    throw new Error(`refusing to press Cmd+${key}: the frontmost process is ${front.out || '(unknown)'}, not the app under test (${pid})`)
+  }
   return osa(`tell application "System Events" to keystroke "${key}" using {command down}`)
 }
 
@@ -273,6 +284,18 @@ function clickCloseButton(pid) {
 function windowCount(pid) {
   const run = osa(`tell application "System Events" to tell ${proc(pid)} to count windows`)
   return run.ok ? Number(run.out) : null
+}
+
+/**
+ * Send the quit Apple event — what the Dock's Quit and logout send — to this process only.
+ * `tell application "<path>" to quit` resolves to the bundle identifier and may reach the user's own running
+ * Spekterm instead; `NSRunningApplication.terminate` addresses one process.
+ */
+function quitAppleEvent(pid) {
+  const run = spawnSync('osascript', ['-l', 'JavaScript', '-e',
+    `ObjC.import('AppKit'); const app = $.NSRunningApplication.runningApplicationWithProcessIdentifier(${pid}); app.isNil() ? 'none' : String(app.terminate)`],
+  { encoding: 'utf8', timeout: 20_000 })
+  return { ok: run.status === 0 && run.stdout.trim() === 'true', out: run.stdout.trim(), err: (run.stderr ?? '').trim() }
 }
 
 function setClipboard(text) {
@@ -548,7 +571,7 @@ try {
       .map((key) => copy(key))
     // macOS adds its own items to a menu named Edit (dictation, emoji); they are the system's, not ours.
     // They come in the system's language, not the app's (the build Mac's is Traditional Chinese).
-    const SYSTEM_EDIT_ITEMS = /^(Start Dictation|Emoji & Symbols|AutoFill|啟動聽寫|表情符號和其他符號|自動填寫)/
+    const SYSTEM_EDIT_ITEMS = /^(Start Dictation|Emoji & Symbols|AutoFill|Writing Tools|啟動聽寫|表情符號和其他符號|自動填寫|書寫工具)/
     const extra = [...app.filter((n) => !appExpected.includes(n)), ...edit.filter((n) => !editExpected.includes(n) && !SYSTEM_EDIT_ITEMS.test(n))]
     check(results, 'the menu holds the application menu and the Edit menu with exactly the defined items',
       appExpected.every((n) => app.includes(n)) && editExpected.every((n) => edit.includes(n)) && extra.length === 0,
@@ -611,8 +634,18 @@ try {
     const witness = join(workDir, 'paste-witness.txt')
     setClipboard(`printf %s P >> ${witness}`)
     keystroke(mainPid, 'v')
-    await typeLine(client, '')
-    const written = await pollDisk(() => existsSync(witness), 8000, 'the pasted command ran')
+    // **Enter again until the line runs.** A System Events keystroke is delivered asynchronously, and the
+    // terminal pastes through a round trip to the main process; on a loaded Mac the text arrived after an
+    // immediate Enter and sat unexecuted (measured on macOS 27 right after its update). An empty Enter is
+    // harmless, and a doubled paste still shows: it is one line, `P%sP`.
+    const written = await retryAction({
+      act: () => typeLine(client, ''),
+      read: () => existsSync(witness),
+      settled: (value) => value === true,
+      attemptWindowMs: 2000,
+      timeoutMs: 15_000,
+      label: 'the pasted command ran',
+    })
     const content = written ? readFileSync(witness, 'utf8') : null
     check(results, 'Cmd+V in the terminal pastes once', content === 'P',
       `content=${JSON.stringify(content)} (pasted twice, the line runs as one command and writes "P%sP")`)
@@ -713,7 +746,7 @@ try {
     {
       const { client: c, pid } = await launch()
       await openShell(c, pid)
-      osa(`tell application "${appPath}" to quit`)
+      quitAppleEvent(pid)
       const gone = await waitExit(pid)
       check(results, 'an OS quit with a running session asks nothing and exits', gone === true && sheetButtons(pid).length === 0,
         `exited=${gone}`)
@@ -723,7 +756,7 @@ try {
       const { client: c, pid } = await launch({ folders: [['fixture-plain', repo]] })
       await openFixtureFile(c)
       await c.send('Input.insertText', { text: 'UNSAVED ' })
-      osa(`tell application "${appPath}" to quit`)
+      quitAppleEvent(pid)
       const buttons = await waitSheet(pid)
       check(results, 'an OS quit with an unsaved file asks about the file', buttons.includes(copy('unsaved.discard')),
         JSON.stringify(buttons))

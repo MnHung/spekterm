@@ -38,7 +38,7 @@ spec —— 並且在 agent 寫入磁碟時跟著更新。
 - Linux x64，並安裝 `libfuse2`（執行 AppImage 需要；Ubuntu 22.04 起預設不再安裝）。
   少了它，AppImage 會以 `dlopen(): error loading libfuse.so.2` 失敗；可改為不經 FUSE 執行：
   `./Spekterm-<version>.AppImage --appimage-extract-and-run`。
-- 或是 Apple Silicon 的 macOS 12（Monterey）以上。已在 macOS 13（Ventura）上測試。
+- 或是 Apple Silicon 的 macOS 12（Monterey）以上。已在 macOS 13（Ventura）與 macOS 27 上測試。
 - [Claude Code](https://code.claude.com/docs)（`claude` 在 `PATH` 上），用於 agent session。spekterm
   執行的是真正的 CLI、用你自己的訂閱 —— 從不要求 API key。
 

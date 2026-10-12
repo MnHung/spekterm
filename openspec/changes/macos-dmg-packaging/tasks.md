@@ -366,17 +366,37 @@
     CLAUDE.md.
 ## 6. Release and dogfood (each step leaving the machine waits for the maintainer — design Migration Plan)
 
-- [ ] 6.1 After the maintainer has tried the rsynced build on the Mac: commit everything except `site/`,
+- [x] 6.1 After the maintainer has tried the rsynced build on the Mac: commit everything except `site/`,
   then run `dist:linux`. Ask before pushing to master.
-- [ ] 6.2 On the Mac: `git pull`, `npm run dist:mac`, `npm run probe:package:mac`. Every section is green;
+  - 2026-10-12. The maintainer had tried the build. `npm run probe:package` bumped to 0.2.4
+    (`919f172 chore(release): 0.2.4`) and passed 17/17, with a clean build identity. Pushed. The code
+    and the site had already gone out with `a164f26` before this step (see 6.3).
+- [x] 6.2 On the Mac: `git pull`, `npm run dist:mac`, `npm run probe:package:mac`. Every section is green;
   "not run" is not acceptable for this run.
-- [ ] 6.3 Ask before uploading the AppImage and the dmg to the GitHub release. Then commit the `site/`
+  - 2026-10-12, on the Mac. It had just been upgraded from macOS 13.7 to **macOS 27.0.1**, which also gave it
+    a new tailscale node. `dist:mac` accepted the release commit (`0.2.4 — release commit 919f172,
+    clean`), the archive matched the pinned checksum, and it built `Spekterm-0.2.4-arm64.dmg`.
+  - `probe:package:mac`: **33/33**, the build identity included. On the way to that:
+    - `ps` showed the app under `/private/var/…` while the probe compared against `/var/…`, so it now
+      compares both;
+    - macOS 27 adds 「書寫工具」 (Writing Tools) to the Edit menu, now recognised as the system's;
+    - on the freshly updated, loaded Mac the pasted text arrived after the Enter, so the probe now
+      re-sends Enter until the line runs (a doubled paste still shows as `P%sP`).
+  - The maintainer's own Spekterm was running on the Mac. The probe now presses keys only when the app
+    under test is frontmost, and sends the quit Apple event to its pid (`NSRunningApplication`), never by
+    bundle path.
+- [x] 6.3 Ask before uploading the AppImage and the dmg to the GitHub release. Then commit the `site/`
   changes, and ask before pushing them (the push deploys the website).
   - The website and the READMEs went out early (commit a164f26) and now say the macOS build is "in
     testing". At release, turn that back into "available": the README status, requirements and macOS
     install note; the site's `landing.platforms` / `landing.downloadNote`, the docs index, the install
     page (its intro, requirements and "In testing" note) and the FAQ, in both languages. In the same
     commit, link #67–#71 from the macOS limitations (install page, both READMEs).
+  - Release `v0.2.4`: created as a draft at `919f172` with the AppImage, the dmg uploaded from the Mac, both
+    digests checked against the local SHA-256 (also listed in the notes), then published as latest.
+  - The wording turned back to "available", with the issue links and "tested on macOS 13 and 27", in the
+    commit pushed after the release.
+  - #63 is closed.
 - [ ] 6.4 Dogfood on the Mac, results recorded under this task:
   - download the released dmg in a browser; confirm the "unidentified developer" path and Open Anyway,
     with the unsealed build as the "damaged" control;
