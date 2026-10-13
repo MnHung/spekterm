@@ -1,0 +1,691 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>spekterm reel</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1920px; height: 1080px; overflow: hidden; background: #07090c; }
+  body { font-family: 'Inter', sans-serif; color: #e2e8f0; -webkit-font-smoothing: antialiased; }
+  #stage { position: absolute; inset: 0; overflow: hidden; background: #07090c; }
+
+  /* ambient */
+  .blob { position: absolute; border-radius: 50%; filter: blur(120px); will-change: transform; }
+  #grid { position: absolute; inset: -200px; opacity: .5;
+    background-image: radial-gradient(rgba(255,255,255,.07) 1.2px, transparent 1.3px);
+    background-size: 44px 44px; }
+
+  .layer { position: absolute; inset: 0; }
+  .cam { position: absolute; inset: 0; perspective: 1900px; perspective-origin: 50% 50%; }
+
+  /* app windows */
+  .win { position: absolute; left: 50%; top: 50%; border-radius: 16px; overflow: hidden;
+    background: #0a0c0f; transform-origin: 50% 50%;
+    box-shadow: 0 80px 160px rgba(0,0,0,.65), 0 0 0 1px rgba(255,255,255,.09), 0 0 120px rgba(245,158,11,.10); }
+  .win img { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .win svg.ov { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+  .win .ovh { position: absolute; inset: 0; }
+  .ov rect, .ov path { fill: none; stroke: #f59e0b; stroke-width: 2.2; filter: drop-shadow(0 0 6px rgba(245,158,11,.8)); }
+
+  .tag { position: absolute; padding: 6px 12px 7px; border-radius: 8px; white-space: nowrap;
+    background: #f59e0b; color: #0a0c0f; font: 700 15px/1 'Inter'; letter-spacing: .01em;
+    box-shadow: 0 10px 30px rgba(0,0,0,.5); transform-origin: 0 50%; }
+  .tag.dark { background: rgba(10,12,15,.92); color: #fbbf24; border: 1px solid rgba(245,158,11,.6); }
+  .ring { position: absolute; width: 60px; height: 60px; margin: -30px 0 0 -30px; border-radius: 50%;
+    border: 3px solid #fbbf24; box-shadow: 0 0 24px rgba(245,158,11,.9), inset 0 0 16px rgba(245,158,11,.6); }
+
+  /* kinetic type */
+  .kt { position: absolute; white-space: nowrap; }
+  .kt .ln { overflow: hidden; padding: .06em .04em .16em; line-height: 1; }
+  .kt .ch { display: inline-block; will-change: transform; }
+  .big { font-weight: 800; letter-spacing: -.035em; }
+  .amber { color: #f59e0b; }
+  .muted { color: #94a3b8; }
+  .mono { font-family: 'DejaVu Sans Mono', monospace; }
+
+  /* fake terminals */
+  .term { position: absolute; left: 50%; top: 50%; border-radius: 12px; overflow: hidden;
+    background: #0d1014; border: 1px solid rgba(255,255,255,.10);
+    box-shadow: 0 40px 80px rgba(0,0,0,.6); font: 15px/22px 'DejaVu Sans Mono', monospace; color: #cbd5e1; }
+  .term .bar { height: 34px; background: #151a20; display: flex; align-items: center; gap: 8px; padding: 0 14px;
+    border-bottom: 1px solid rgba(255,255,255,.06); font: 600 13px/1 'Inter'; color: #94a3b8; }
+  .term .bar i { width: 11px; height: 11px; border-radius: 50%; background: #2a313a; display: inline-block; }
+  .term .bar span { margin-left: 8px; }
+  .term .body { position: absolute; left: 0; right: 0; top: 34px; bottom: 0; overflow: hidden; padding: 0 14px; }
+  .term .scroll { position: absolute; left: 14px; right: 14px; top: 0; }
+  .term .scroll div { white-space: nowrap; height: 22px; }
+  .g { color: #4ade80 } .b { color: #60a5fa } .a { color: #fbbf24 } .m { color: #64748b } .gr { color: #34d399 } .r { color: #f87171 }
+
+  /* inbox cards */
+  .card { position: absolute; left: 50%; top: 0; border-radius: 12px; overflow: hidden;
+    background-image: url(../../site/src/assets/screenshots/en/inbox.png); background-repeat: no-repeat;
+    box-shadow: 0 30px 70px rgba(0,0,0,.6), 0 0 0 1px rgba(255,255,255,.10); transform-origin: 50% 0; }
+
+  /* transitions & finish */
+  #wipe { position: absolute; inset: 0; pointer-events: none; }
+  #wipe div { position: absolute; top: -20%; height: 140%; width: 140%; left: -20%; }
+  #w1 { background: linear-gradient(90deg, #fbbf24, #dd8b09); }
+  #w2 { background: #0c0f13; box-shadow: -30px 0 60px rgba(0,0,0,.5); }
+  #w2::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 6px; background: #fff3d6; filter: blur(2px); }
+  #flash { position: absolute; inset: 0; background: radial-gradient(circle at 50% 50%, #fff7e6 0%, #fbbf24 30%, rgba(245,158,11,0) 70%); opacity: 0; }
+  #blackout { position: absolute; inset: 0; background: #07090c; opacity: 0; }
+  #hline { position: absolute; left: 0; right: 0; top: 539px; height: 2px; background: #fde68a; box-shadow: 0 0 30px #f59e0b, 0 0 80px #f59e0b; transform-origin: 50% 50%; }
+  .shade { position: absolute; inset: 0; pointer-events: none; }
+  #vignette { position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 50%, transparent 55%, rgba(0,0,0,.55) 100%); }
+  #grain { position: absolute; inset: 0; opacity: .10; mix-blend-mode: overlay; }
+
+  /* HUD */
+  .hud { position: absolute; font: 500 13px/1 'DejaVu Sans Mono', monospace; color: rgba(226,232,240,.45); letter-spacing: .12em; text-transform: uppercase; }
+  .crop { position: absolute; width: 22px; height: 22px; border-color: rgba(226,232,240,.28); border-style: solid; border-width: 0; }
+
+  #cursor { position: absolute; width: 34px; height: 34px; left: 0; top: 0; }
+
+  #tlCam { perspective: 1900px; }
+  #tlPanel { position: absolute; left: 160px; top: 230px; width: 1600px; height: 720px; border-radius: 16px; background: #0d1014;
+    box-shadow: 0 80px 160px rgba(0,0,0,.65), 0 0 0 1px rgba(255,255,255,.09), 0 0 120px rgba(245,158,11,.10); transform-origin: 50% 60%; overflow: hidden; }
+  .tlHead { position: absolute; left: 0; right: 0; top: 0; height: 64px; padding: 0 30px; display: flex; align-items: center; font: 600 22px 'Inter'; border-bottom: 1px solid rgba(255,255,255,.07); }
+  .tlTabs { margin-left: auto; display: flex; gap: 24px; font-weight: 500; font-size: 19px; color: #94a3b8; }
+  .tlTabs .on { color: #f59e0b; background: rgba(245,158,11,.15); padding: 6px 12px; border-radius: 6px; margin: -6px 0; }
+  #tlLabels { position: absolute; left: 30px; top: 80px; width: 420px; bottom: 0; }
+  .tlLabel { position: absolute; left: 0; font: 400 19px/30px 'Inter'; color: #cbd5e1; white-space: nowrap; }
+  .tlLabel.act { font-weight: 600; }
+  #tlChart { position: absolute; left: 470px; top: 80px; width: 1080px; bottom: 30px; border-left: 1px solid rgba(255,255,255,.08); }
+  .tlMonth { position: absolute; top: 14px; font: 500 17px 'Inter'; color: #94a3b8; transform: translateX(-50%); }
+  .tlGrid { position: absolute; top: 46px; bottom: 0; width: 1px; background: rgba(255,255,255,.06); }
+  .tlBar { position: absolute; height: 22px; border-radius: 6px; background: #8b9bb0; width: 0; }
+  .tlBar.act { background: linear-gradient(90deg, #dd8b09, #fbbf24); }
+  #tlPlay { position: absolute; top: 40px; bottom: 0; width: 0; border-left: 3px solid #fbbf24; box-shadow: 0 0 20px #f59e0b; }
+  #tlPlay.dashed { border-left: 2px dashed #f59e0b; box-shadow: none; }
+  #tlToday { position: absolute; top: 12px; transform: translateX(-50%); font: 600 16px 'Inter'; color: #f59e0b; }
+  .repo { position: absolute; top: 360px; width: 560px; height: 380px; border-radius: 18px; background: #0d1014;
+    border: 1px solid rgba(255,255,255,.10); box-shadow: 0 60px 120px rgba(0,0,0,.6); padding: 30px 34px; }
+  .repo .rh { font: 700 40px 'Inter'; letter-spacing: -.02em; display: flex; align-items: center; gap: 16px; }
+  .repo .fold { width: 34px; height: 26px; border: 3px solid #94a3b8; border-radius: 4px 4px 6px 6px; display: inline-block; }
+  .repo .rb { margin: 8px 0 0 52px; font-size: 22px; color: #64748b; }
+  .pill { position: absolute; left: 34px; top: 160px; display: flex; align-items: center; gap: 14px; padding: 16px 22px; border-radius: 12px;
+    background: #151a20; border: 1px solid rgba(255,255,255,.12); font: 600 24px 'DejaVu Sans Mono', monospace; transform-origin: 0 50%; white-space: nowrap; }
+  .pill .dot { width: 12px; height: 12px; border-radius: 50%; background: #34d399; box-shadow: 0 0 10px #34d399; }
+  .chk { margin-left: 18px; color: #34d399; font-size: 22px; display: inline-block; }
+  .doc { position: absolute; left: 0; top: 0; width: 180px; height: 52px; border-radius: 12px; background: #f59e0b; color: #0a0c0f;
+    font: 700 22px/52px 'DejaVu Sans Mono', monospace; text-align: center; box-shadow: 0 0 40px rgba(245,158,11,.8), 0 20px 40px rgba(0,0,0,.5); }
+  .doc.rep { width: 140px; height: 48px; line-height: 48px; background: #34d399; box-shadow: 0 0 40px rgba(52,211,153,.8); }
+  .hoDot { position: absolute; left: 0; top: 0; width: 12px; height: 12px; border-radius: 50%; background: #fbbf24; box-shadow: 0 0 12px #f59e0b; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="grid"></div>
+  <div class="blob" id="blobA" style="width:900px;height:900px;background:rgba(245,158,11,.20);left:-200px;top:-300px"></div>
+  <div class="blob" id="blobB" style="width:800px;height:800px;background:rgba(52,211,153,.10);right:-250px;bottom:-300px"></div>
+  <div class="blob" id="blobC" style="width:600px;height:600px;background:rgba(96,165,250,.08);left:700px;top:500px"></div>
+
+  <!-- S1 intro -->
+  <div class="layer" id="intro">
+    <div id="introGroup" style="position:absolute;left:0;top:0;width:1920px;height:1080px;transform-origin:960px 540px">
+      <svg id="logo1" viewBox="0 0 512 512" style="position:absolute;width:420px;height:420px;left:750px;top:330px;overflow:visible"></svg>
+      <div class="kt big" id="wm1" style="font-size:156px;left:840px;top:430px"></div>
+      <div class="kt mono amber" id="sub1" style="font-size:26px;left:852px;top:624px;letter-spacing:.06em"></div>
+    </div>
+  </div>
+
+  <!-- S2 chaos -->
+  <div class="layer" id="chaos">
+    <div id="terms"></div>
+    <div class="shade" id="chaosShade" style="background:radial-gradient(ellipse 50% 32% at 50% 50%, rgba(7,9,12,.92), rgba(7,9,12,.35) 70%, rgba(7,9,12,0))"></div>
+    <div class="kt big" id="h2a" style="font-size:150px"></div>
+    <div class="kt big" id="h2b" style="font-size:150px"></div>
+    <div class="kt big" id="h2c" style="font-size:150px"></div>
+    <div class="kt big amber" id="h2d" style="font-size:150px"></div>
+  </div>
+
+  <!-- windows -->
+  <div class="cam" id="cam"></div>
+
+  <!-- inbox -->
+  <div class="cam" id="inboxCam"></div>
+
+
+  <!-- timeline -->
+  <div class="cam" id="tlCam">
+    <div id="tlPanel">
+      <div class="tlHead"><span class="muted">api-server / </span>Timeline<span class="tlTabs"><span>Browse</span><span>◈ Graph</span><span class="on">▤ Timeline</span></span></div>
+      <div id="tlLabels"></div>
+      <div id="tlChart"><div id="tlPlay"></div><div id="tlToday">today</div></div>
+      <div id="tlTagWrap"></div>
+      <div class="tag dark" id="tlTag" style="right:40px;bottom:30px">2 active · 8 archived</div>
+    </div>
+  </div>
+
+  <!-- handoff diagram -->
+  <div class="layer" id="hoDiag" style="perspective:1600px;transform-origin:960px 560px">
+    <svg style="position:absolute;inset:0;width:1920px;height:1080px;overflow:visible">
+      <path id="hoArc" d="M 700 551 C 820 250, 1160 250, 1290 520" fill="none" stroke="#f59e0b" stroke-width="3" stroke-dasharray="1" style="filter:drop-shadow(0 0 8px rgba(245,158,11,.8))"/>
+      <path id="hoArcBack" d="M 1460 745 C 1260 930, 740 930, 560 745" fill="none" stroke="#34d399" stroke-width="3" style="filter:drop-shadow(0 0 8px rgba(52,211,153,.8))"/>
+    </svg>
+    <div class="repo" id="hoA" style="left:260px"><div class="rh"><span class="fold"></span>api-server</div><div class="rb mono">add-rate-limiting</div>
+      <div class="pill" id="hoPillA"><b class="dot"></b>claude 1<span id="hoCheck" class="chk">→ 1 ✓</span><div class="ring" id="hoBurstA" style="left:85%;top:50%"></div></div>
+      <div class="tag" id="hoTagA" style="left:30px;top:250px">the agent writes a handoff</div></div>
+    <div class="repo" id="hoB" style="left:1100px"><div class="rh"><span class="fold"></span>web-app</div><div class="rb mono">main</div>
+      <div class="pill" id="hoPillB"><b class="dot"></b>Show the remaining budget…<div class="ring" id="hoBurst" style="left:50%;top:50%"></div></div>
+      <div class="tag" id="hoTagB" style="left:30px;top:250px">a new session, first prompt sent</div></div>
+    <div class="doc" id="hoDoc">{ } handoff</div>
+    <div class="doc rep" id="hoRep">✓ report</div>
+  </div>
+  <div class="shade" id="leftShade" style="background:linear-gradient(90deg, rgba(7,9,12,.99) 0%, rgba(7,9,12,.96) 34%, rgba(7,9,12,.6) 46%, rgba(7,9,12,0) 60%)"></div>
+  <div class="shade" id="bottomShade" style="background:linear-gradient(0deg, rgba(7,9,12,.97) 0%, rgba(7,9,12,.85) 22%, rgba(7,9,12,0) 46%)"></div>
+
+  <div class="kt big" id="h3" style="font-size:62px;top:64px"></div>
+  <div class="kt big" id="h4" style="font-size:118px;left:110px;top:290px"></div>
+  <div class="kt mono muted" id="h4s" style="font-size:26px;left:116px;top:720px;line-height:1.5"></div>
+  <div class="kt big" id="h5" style="font-size:104px;left:110px;top:330px"></div>
+  <div class="kt big" id="h6" style="font-size:70px;top:96px"></div>
+  <div class="kt big" id="hT" style="font-size:66px;top:80px"></div>
+  <div class="kt big" id="hH1" style="font-size:72px;top:110px"></div>
+  <div class="kt big" id="hH2" style="font-size:72px;top:110px"></div>
+  <div class="kt big" id="h6b" style="font-size:70px;top:96px"></div>
+  <div class="kt big" id="h7" style="font-size:84px;left:110px;top:800px"></div>
+
+  <svg id="cursor" viewBox="0 0 24 24"><path d="M3 2 L3 20 L8 15.5 L11.5 22.5 L14.5 21 L11 14 L18 14 Z" fill="#fff" stroke="#0a0c0f" stroke-width="1.4" stroke-linejoin="round"/></svg>
+
+  <!-- end card -->
+  <div id="blackout"></div>
+  <div class="layer" id="endc">
+    <div id="logo2wrap" style="position:absolute;width:230px;height:230px;left:845px;top:250px">
+      <svg id="logo2" viewBox="0 0 512 512" style="position:absolute;inset:0;width:100%;height:100%;overflow:visible"></svg>
+      <div id="sweepClip" style="position:absolute;inset:0;border-radius:43px;overflow:hidden">
+        <div id="sweep" style="position:absolute;top:-20%;height:140%;width:40%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.35),transparent);transform:skewX(-20deg)"></div>
+      </div>
+    </div>
+    <div class="kt big" id="wm2" style="font-size:132px;top:520px"></div>
+    <div class="kt muted" id="tag2" style="font-size:40px;font-weight:500;top:700px"></div>
+    <div class="kt mono" id="url2" style="font-size:28px;top:790px;letter-spacing:.04em"></div>
+  </div>
+
+  <div id="hline"></div>
+  <div id="flash"></div>
+  <div id="wipe"><div id="w1"></div><div id="w2"></div></div>
+
+  <div id="vignette"></div>
+  <svg id="grain" width="1920" height="1080"><filter id="nz"><feTurbulence id="turb" type="fractalNoise" baseFrequency=".85" numOctaves="2" seed="1" stitchTiles="stitch"/><feColorMatrix type="saturate" values="0"/></filter><rect width="100%" height="100%" filter="url(#nz)"/></svg>
+
+  <div class="hud" id="hudTL" style="left:56px;top:46px">spekterm &nbsp;—&nbsp; motion reel ’26</div>
+  <div class="hud" id="hudTR" style="right:56px;top:46px">1920 × 1080 &nbsp;·&nbsp; 30p</div>
+  <div class="hud" id="hudBL" style="left:56px;bottom:44px"></div>
+  <div class="hud" id="hudBR" style="right:56px;bottom:44px"></div>
+  <div class="crop" style="left:30px;top:30px;border-left-width:2px;border-top-width:2px"></div>
+  <div class="crop" style="right:30px;top:30px;border-right-width:2px;border-top-width:2px"></div>
+  <div class="crop" style="left:30px;bottom:30px;border-left-width:2px;border-bottom-width:2px"></div>
+  <div class="crop" style="right:30px;bottom:30px;border-right-width:2px;border-bottom-width:2px"></div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const lerp = (a, b, p) => a + (b - a) * p;
+const prog = (t, s, d) => clamp((t - s) / d);
+const eOutExpo = p => p >= 1 ? 1 : 1 - Math.pow(2, -10 * p);
+const eInExpo = p => p <= 0 ? 0 : Math.pow(2, 10 * p - 10);
+const eIO = p => p < .5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
+const eInC = p => p * p * p;
+const eOutC = p => 1 - Math.pow(1 - p, 3);
+const eSine = p => -(Math.cos(Math.PI * p) - 1) / 2;
+const eBack = (p, s = 1.9) => 1 + (s + 1) * Math.pow(p - 1, 3) + s * Math.pow(p - 1, 2);
+const spring = p => p <= 0 ? 0 : p >= 1 ? 1 : 1 - Math.exp(-6.5 * p) * Math.cos(11 * p);
+function rng(seed) { return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+const show = (el, on) => { el.style.display = on ? '' : 'none'; return on; };
+
+/* ---------- kinetic text ---------- */
+function kt(id, str, center) {
+  const el = $(id); el.innerHTML = '';
+  str.split('\n').forEach(line => {
+    const L = document.createElement('div'); L.className = 'ln';
+    if (center) L.style.textAlign = 'center';
+    [...line].forEach(ch => { const s = document.createElement('span'); s.className = 'ch'; s.textContent = ch === ' ' ? ' ' : ch; L.appendChild(s); });
+    el.appendChild(L);
+  });
+  el._chars = [...el.querySelectorAll('.ch')];
+  if (center) { el.style.left = '0'; el.style.width = '1920px'; }
+}
+function text(id, t, t0, t1, o = {}) {
+  const el = $(id), st = o.stagger ?? .022, d = o.dur ?? .6, xd = o.out ?? .32, n = el._chars.length;
+  if (t < t0 - .01 || t > t1 + xd + st * .5 * n) { el.style.visibility = 'hidden'; return; }
+  el.style.visibility = 'visible';
+  el._chars.forEach((c, i) => {
+    const pin = eOutExpo(prog(t, t0 + i * st, d));
+    const pout = eInC(prog(t, t1 + i * st * .5, xd));
+    const y = (1 - pin) * 115 - pout * 115;
+    c.style.transform = `translateY(${y}%) rotate(${(1 - pin) * 14 - pout * 6}deg)`;
+    c.style.opacity = Math.min(pin * 1.5, 1) * (1 - pout);
+  });
+}
+
+/* ---------- logo ---------- */
+const LOGO = `
+<defs><linearGradient id="ag%" gradientUnits="userSpaceOnUse" x1="120" y1="110" x2="410" y2="420"><stop offset="0" stop-color="#fbbf24"/><stop offset="1" stop-color="#dd8b09"/></linearGradient>
+<linearGradient id="pg%" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#161a20"/><stop offset="1" stop-color="#07090c"/></linearGradient></defs>
+<g class="tile"><rect width="512" height="512" rx="96" fill="url(#pg%)"/><rect x="0.75" y="0.75" width="510.5" height="510.5" rx="95.25" fill="none" stroke="#ffffff" stroke-opacity="0.12" stroke-width="1.5"/></g>
+<g class="strokes" style="filter:drop-shadow(0 0 18px rgba(245,158,11,.55))"><g transform="translate(7,-6)"><g transform="translate(266,276) scale(1.02) translate(-256,-256)">
+<path class="pS" d="M 320.0 136.0 C 320.0 136.0, 368.0 136.0, 368.0 184.0 C 368.0 232.0, 320.0 256.0, 256.0 256.0 C 192.0 256.0, 144.0 280.0, 144.0 328.0 C 144.0 376.0, 192.0 376.0, 192.0 376.0" fill="none" stroke="url(#ag%)" stroke-width="56" stroke-linecap="round"/></g>
+<path class="pC" d="M 119.6 119.0 L 206.0 173.0 L 119.6 227.0" fill="none" stroke="#fbbf24" stroke-width="50" stroke-linecap="round" stroke-linejoin="miter"/>
+<rect class="pR" x="266.0" y="375.0" width="146.0" height="46.0" rx="23.0" fill="#fbbf24"/></g></g>`;
+function makeLogo(svg, k) {
+  svg.innerHTML = LOGO.replaceAll('%', k);
+  const o = { tile: svg.querySelector('.tile'), S: svg.querySelector('.pS'), C: svg.querySelector('.pC'), R: svg.querySelector('.pR') };
+  o.lS = o.S.getTotalLength(); o.lC = o.C.getTotalLength();
+  o.S.style.strokeDasharray = o.lS; o.C.style.strokeDasharray = o.lC;
+  return o;
+}
+function drawLogo(o, pC, pS, pR, tileOp, blink = 1) {
+  o.C.style.strokeDashoffset = o.lC * (1 - pC); o.C.style.opacity = pC > 0 ? 1 : 0;
+  o.S.style.strokeDashoffset = o.lS * (1 - pS); o.S.style.opacity = pS > 0 ? 1 : 0;
+  o.R.setAttribute('transform', `translate(266,398) scale(${Math.max(pR, .0001)},1) translate(-266,-398)`);
+  o.R.style.opacity = (pR > 0 ? 1 : 0) * blink;
+  o.tile.style.opacity = tileOp;
+}
+
+/* ---------- windows ---------- */
+const cam = $('cam');
+function makeWin(id, src, W) {
+  const H = W * 1800 / 2880, d = document.createElement('div');
+  d.className = 'win'; d.id = id; d.style.width = W + 'px'; d.style.height = H + 'px';
+  d.style.marginLeft = -W / 2 + 'px'; d.style.marginTop = -H / 2 + 'px';
+  d.innerHTML = `<img src="${src}"><svg class="ov" viewBox="0 0 1000 625" preserveAspectRatio="none"></svg><div class="ovh"></div>`;
+  d._W = W; d._H = H; d._svg = d.querySelector('svg'); d._h = d.querySelector('.ovh');
+  cam.appendChild(d); return d;
+}
+function place(el, c) {
+  const lx = (c.px - .5) * el._W, ly = (c.py - .5) * el._H;
+  const tx = c.qx - 960 - c.s * lx, ty = c.qy - 540 - c.s * ly;
+  el.style.transform = `translate3d(${tx}px,${ty}px,0) rotateX(${c.rx || 0}deg) rotateY(${c.ry || 0}deg) scale(${c.s})`;
+  el.style.opacity = c.op ?? 1;
+  el.style.filter = c.blur ? `blur(${c.blur}px)` : '';
+}
+function addBox(win, x, y, w, h) {
+  const r = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+  r.setAttribute('x', x); r.setAttribute('y', y); r.setAttribute('width', w); r.setAttribute('height', h); r.setAttribute('rx', 6);
+  r.setAttribute('pathLength', 1); r.style.strokeDasharray = 1; win._svg.appendChild(r); return r;
+}
+function addPath(win, d) {
+  const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  p.setAttribute('d', d); p.setAttribute('pathLength', 1); p.style.strokeDasharray = 1; p.style.strokeWidth = 3.2; p.style.strokeLinecap = 'round';
+  win._svg.appendChild(p); return p;
+}
+function addTag(win, txt, css, dark) { const g = document.createElement('div'); g.className = 'tag' + (dark ? ' dark' : ''); g.textContent = txt; g.style.cssText += css; win._h.appendChild(g); return g; }
+function addRing(win, x, y) { const r = document.createElement('div'); r.className = 'ring'; r.style.left = x + '%'; r.style.top = y + '%'; win._h.appendChild(r); return r; }
+function drawStroke(el, p, fade = 1) { el.style.strokeDashoffset = 1 - p; el.style.opacity = (p > 0 ? 1 : 0) * fade; }
+function popTag(g, t, t0, t1) {
+  const p = spring(prog(t, t0, .6)), q = eInC(prog(t, t1, .25));
+  g.style.transform = `scale(${p * (1 - q)})`; g.style.opacity = Math.min(1, p * 2) * (1 - q);
+}
+function pulse(r, t, t0, period = 1.15, count = 3, t1 = 99) {
+  if (t < t0 || t > t1) { r.style.opacity = 0; return; }
+  const k = (t - t0) / period;
+  if (k >= count) { r.style.opacity = 0; return; }
+  const f = k % 1;
+  r.style.transform = `scale(${.4 + eOutC(f) * 1.9})`;
+  r.style.opacity = (1 - f) * (1 - eInC(prog(t, t1 - .25, .25)));
+}
+
+/* ---------- build ---------- */
+const L1 = makeLogo($('logo1'), 'a'), L2 = makeLogo($('logo2'), 'b');
+kt('wm1', 'spekterm'); kt('sub1', 'the spec beside the agent_');
+
+kt('h2a', 'Four repos.', true); kt('h2b', 'Four agents.', true); kt('h2c', 'Twelve terminal tabs.', true); kt('h2d', 'Where’s the spec?', true);
+['h2a', 'h2b', 'h2c', 'h2d'].forEach(id => $(id).style.top = '440px');
+
+kt('h3', 'Every repo. Every agent. One window.', true);
+kt('h4', 'The spec\nbeside\nthe agent.');
+kt('h4s', 'proposal · specs · design · tasks\nread straight from openspec/, live');
+kt('h5', 'Every spec.\nEvery change.\nOne graph.');
+kt('hT', 'Every change, on one timeline.', true);
+kt('hH1', 'Hand the work to another repo.', true);
+kt('h7', 'Parent and child,\nside by side in the rail.');
+kt('h6', 'Slack mentions land in your inbox.', true);
+kt('h6b', 'Accept it — a session opens, prompt ready.', true);
+kt('hH2', '…and its agent reports back when done.', true);
+kt('wm2', 'spekterm', true); kt('tag2', 'The spec beside the agent.', true); kt('url2', 'spekterm.com  ·  open source  ·  MIT', true);
+$('h7').style.top = '790px';
+
+/* terminals */
+const files = ['middleware/rate-limit.ts', 'routes/billing.ts', 'auth/session.ts', 'pages/usage.tsx', 'webhooks/retry.ts', 'db/migrations/0042.sql', 'lib/plans.ts', 'api/keys.ts'];
+const TL = [
+  (r, R) => `<span class=g>me@dev</span> <span class=b>${r}</span> % claude`,
+  () => `<span class=a>✻</span> Thinking…`,
+  (r, R) => `<span class=gr>●</span> Read <span class=m>src/${files[R() * files.length | 0]}</span>`,
+  (r, R) => `<span class=gr>●</span> Edit <span class=m>src/${files[R() * files.length | 0]}</span>`,
+  (r, R) => `<span class=m>  └ Updated ${2 + (R() * 30 | 0)} lines</span>`,
+  () => `<span class=gr>●</span> Bash <span class=m>npm test</span>`,
+  (r, R) => `<span class=m>  └ ${8 + (R() * 90 | 0)} passing</span>`,
+  () => `<span class=a>&gt;</span> wait, which change was this for?`,
+  () => `<span class=r>✗</span> 1 failing`,
+  () => `<span class=a>&gt;</span> did I already do task 2.3?`,
+  (r, R) => `<span class=m>  └ Found ${3 + (R() * 40 | 0)} files</span>`,
+  () => `<span class=gr>●</span> Write <span class=m>openspec/changes/…/tasks.md</span>`,
+];
+const TERMS = [
+  ['api-server — claude', -600, -300, -6, 540, 300], ['web-app — claude', 10, -340, 3, 560, 280], ['billing — zsh', 630, -280, 5, 520, 300],
+  ['docs — claude', -700, 40, 4, 500, 320], ['api-server — npm run dev', 690, 70, -4, 520, 300], ['infra — claude', -560, 340, -3, 540, 280],
+  ['web-app — vitest', 40, 350, 2, 560, 300], ['mobile — claude', 620, 370, 6, 500, 280], ['api-server — claude (2)', -20, 0, -1, 640, 360],
+];
+const termEls = TERMS.map((c, i) => {
+  const R = rng(17 + i * 101), d = document.createElement('div');
+  d.className = 'term'; d.style.width = c[4] + 'px'; d.style.height = c[5] + 'px'; d.style.marginLeft = -c[4] / 2 + 'px'; d.style.marginTop = -c[5] / 2 + 'px';
+  let lines = ''; const repo = c[0].split(' ')[0];
+  for (let k = 0; k < 70; k++) lines += `<div>${TL[(R() * TL.length) | 0](repo, R)}</div>`;
+  d.innerHTML = `<div class="bar"><i></i><i></i><i></i><span>${c[0]}</span></div><div class="body"><div class="scroll">${lines}</div></div>`;
+  d._scroll = d.querySelector('.scroll'); d._speed = 60 + R() * 120; d._c = c;
+  $('terms').appendChild(d); return d;
+});
+
+/* windows */
+const wHero = makeWin('wHero', '../../site/src/assets/screenshots/en/hero.png', 1560);
+const hb1 = addBox(wHero, 38, 58, 178, 104), hb2 = addBox(wHero, 222, 70, 512, 300), hb3 = addBox(wHero, 737, 64, 262, 542);
+const ht1 = addTag(wHero, 'repos & sessions', 'left:3.8%;top:27.5%');
+const ht2 = addTag(wHero, 'your agent, as it works', 'left:22.2%;top:61.5%');
+const ht3 = addTag(wHero, 'OpenSpec, live', 'left:75.5%;top:86%');
+const hRing = addRing(wHero, 75.15, 60.56);
+const hb4 = addBox(wHero, 742, 401, 252, 27);
+const ht4 = addTag(wHero, 'next up', 'left:88.5%;top:70.3%', true);
+const ht5 = addTag(wHero, '2.2 checked off by the agent', 'left:77%;top:54.6%', true);
+
+const wGraph = makeWin('wGraph', '../../site/src/assets/screenshots/en/graph.png', 1560);
+const gr1 = addRing(wGraph, 52.25, 37.8), gr2 = addRing(wGraph, 56.25, 73.8);
+const gr1b = addRing(wGraph, 52.25, 37.8), gr2b = addRing(wGraph, 56.25, 73.8);
+const gt1 = addTag(wGraph, 'active change', 'left:41%;top:30.4%', true), gt2 = addTag(wGraph, 'active change', 'left:59.6%;top:72.4%', true);
+
+const wHand = makeWin('wHand', '../../site/src/assets/screenshots/en/handoff.png', 1560);
+const hp1 = addPath(wHand, 'M 56 130 C 18 132, 18 209, 54 211');
+const hp1a = addPath(wHand, 'M 46 203 L 55 211 L 45 218');
+const hr1 = addRing(wHand, 17.6, 33.7);
+const hb5 = addBox(wHand, 271, 316, 456, 39);
+const htH1 = addTag(wHand, 'opened in web-app', 'left:1.6%;top:38%');
+const htH2 = addTag(wHand, 'report: done', 'left:19.6%;top:31.6%', true);
+const htH3 = addTag(wHand, 'the report, in the parent', 'left:61%;top:57.6%', true);
+
+/* timeline (recreated from the fixture repo's changes) */
+const AX0 = 645, AXW = 1321, fx = x => (x - AX0) / AXW;
+const TROWS = [
+  ['2026-06-30-standardize-errors', 681, 728], ['2026-07-14-add-api-keys', 809, 891], ['2026-07-28-cursor-pagination', 915, 1055],
+  ['2026-08-05-record-key-changes', 1102, 1148], ['2026-08-19-log-requests', 1230, 1312], ['2026-08-27-introduce-plans', 1289, 1406],
+  ['2026-09-08-publish-sdks', 1464, 1546], ['2026-09-18-sign-webhooks', 1570, 1663], ['add-rate-limiting', 1792, 1897, 1], ['usage-alerts', 1838, 1897, 1],
+];
+const TODAY = fx(1897);
+const chart = $('tlChart'), CHW = 1080, ROWH = 46;
+['Jul', 754, 'Aug', 1121, 'Sep', 1484, 'Oct', 1835].forEach((v, i, a) => {
+  if (i % 2) return;
+  const m = document.createElement('div'); m.className = 'tlMonth'; m.textContent = v; m.style.left = fx(a[i + 1]) * CHW + 'px'; chart.appendChild(m);
+  const g = document.createElement('div'); g.className = 'tlGrid'; g.style.left = fx(a[i + 1]) * CHW + 'px'; chart.appendChild(g);
+});
+const tlRows = TROWS.map(([name, a, b, act], i) => {
+  const lab = document.createElement('div'); lab.className = 'tlLabel' + (act ? ' act' : ''); lab.textContent = name; lab.style.top = 60 + i * ROWH + 'px';
+  $('tlLabels').appendChild(lab);
+  const bar = document.createElement('div'); bar.className = 'tlBar' + (act ? ' act' : '');
+  bar.style.left = fx(a) * CHW + 'px'; bar.style.top = 60 + i * ROWH + 4 + 'px'; chart.appendChild(bar);
+  return { lab, bar, a: fx(a), b: fx(b), act };
+});
+const playhead = $('tlPlay'), todayLbl = $('tlToday');
+
+/* handoff diagram */
+const hoPath = $('hoArc'), hoBack = $('hoArcBack');
+const hoLen = hoPath.getTotalLength(), hoBackLen = hoBack.getTotalLength();
+hoPath.style.strokeDasharray = hoLen; hoBack.style.strokeDasharray = hoBackLen;
+const trail = [...Array(6)].map((_, i) => { const d = document.createElement('div'); d.className = 'hoDot'; $('hoDiag').appendChild(d); return d; });
+
+/* inbox cards: crop each card out of the real inbox screenshot */
+const CW = 1500, IW = CW / .978, IH = IW * 1010 / 2880;
+const CARDS = [[.103, .368], [.395, .659], [.686, .952]];
+const cardEls = CARDS.map(([a, b]) => {
+  const d = document.createElement('div'); d.className = 'card';
+  d.style.width = CW + 'px'; d.style.height = (b - a) * IH + 'px'; d.style.marginLeft = -CW / 2 + 'px';
+  d.style.backgroundSize = `${IW}px ${IH}px`; d.style.backgroundPosition = `${-.011 * IW}px ${-a * IH}px`;
+  d._h = (b - a) * IH; $('inboxCam').appendChild(d); return d;
+});
+const acceptRing = document.createElement('div'); acceptRing.className = 'ring'; acceptRing.style.left = '97%'; acceptRing.style.top = '83.8%'; cardEls[1].appendChild(acceptRing);
+
+/* ---------- scene timing (60 s cut) ---------- */
+const T = { hero: 8.0, zoom: 13.8, graph: 23.0, tl: 29.0, hand: 35.0, shot: 41.5, slack: 48.0, end: 55.5 };
+const SECTIONS = [[0, '00 / intro'], [2.9, '01 / the problem'], [T.hero, '02 / the workbench'], [15.0, '03 / the spec'], [T.graph, '04 / the graph'], [T.tl, '05 / the timeline'], [T.hand, '06 / handoffs'], [T.slack, '07 / slack'], [T.end, '08 / spekterm']];
+
+function wipe(t, mid) {
+  const p = prog(t, mid - .38, .76);
+  if (p <= 0 || p >= 1) return false;
+  const e = eIO(p);
+  $('w1').style.transform = `translateX(${lerp(-150, 150, clamp(e * 1.04))}%) skewX(-18deg)`;
+  $('w2').style.transform = `translateX(${lerp(-165, 135, e)}%) skewX(-18deg)`;
+  return true;
+}
+function bez(P, u) {
+  const [a, b, c, d] = P, v = 1 - u;
+  return [v * v * v * a[0] + 3 * v * v * u * b[0] + 3 * v * u * u * c[0] + u * u * u * d[0], v * v * v * a[1] + 3 * v * v * u * b[1] + 3 * v * u * u * c[1] + u * u * u * d[1]];
+}
+const ARC = [[700, 551], [820, 250], [1160, 250], [1290, 520]];
+const ARCB = [[1460, 745], [1260, 930], [740, 930], [560, 745]];
+
+function render(t) {
+  const frame = Math.round(t * 30);
+  $('turb').setAttribute('seed', 1 + frame % 9);
+  $('blobA').style.transform = `translate(${Math.sin(t * .35) * 160}px,${Math.cos(t * .27) * 110}px)`;
+  $('blobB').style.transform = `translate(${Math.cos(t * .31) * 140}px,${Math.sin(t * .23) * 120}px)`;
+  $('blobC').style.transform = `translate(${Math.sin(t * .2 + 1) * 300}px,${Math.cos(t * .33) * 150}px)`;
+  $('grid').style.transform = `translate(${(t * 14) % 44}px,${(t * 8) % 44}px)`;
+  let sec = SECTIONS[0][1]; for (const s of SECTIONS) if (t >= s[0]) sec = s[1];
+  $('hudBL').textContent = sec;
+  $('hudBR').textContent = `00:00:${String(Math.floor(t)).padStart(2, '0')}:${String(frame % 30).padStart(2, '0')}`;
+
+  /* ---- intro ---- */
+  if (show($('intro'), t < 3.3)) {
+    const blink = t > 1.62 && t < 2.7 ? (Math.floor((t - 1.62) / .26) % 2 ? .2 : 1) : 1;
+    drawLogo(L1, eIO(prog(t, .15, .7)), eIO(prog(t, .45, .95)), eBack(prog(t, 1.2, .35)), eOutC(prog(t, 1.55, .5)), blink);
+    const tileS = lerp(.86, 1, spring(prog(t, 1.55, .9))), mv = eIO(prog(t, 1.8, .6)), out = eInExpo(prog(t, 2.65, .55));
+    $('logo1').style.transform = `translateX(${-mv * 350}px) scale(${tileS * lerp(1, .62, mv)})`;
+    $('wm1').style.left = '820px'; $('sub1').style.left = '826px';
+    text('wm1', t, 2.0, 99, { stagger: .04, dur: .65 });
+    text('sub1', t, 2.3, 99, { stagger: .016, dur: .5 });
+    $('introGroup').style.transform = `scale(${1 + out * 7})`;
+    $('introGroup').style.opacity = 1 - out;
+    $('introGroup').style.filter = out > .01 ? `blur(${out * 24}px)` : '';
+  }
+
+  /* ---- chaos ---- */
+  if (show($('chaos'), t > 2.8 && t < T.hero + .2)) {
+    const col = eInExpo(prog(t, T.hero - .6, .58)), shake = 3 * prog(t, 5.0, 2.5) ** 2;
+    termEls.forEach((d, i) => {
+      const [, x, y, r] = d._c, p = spring(prog(t, 2.9 + i * .08, .9));
+      let X = lerp(x * 2.4, x, p) + Math.sin(t * 1.3 + i) * 10 + Math.sin(t * 43 + i * 7) * shake * 3;
+      let Y = lerp(y * 2.4 + 300, y, p) + Math.cos(t * 1.1 + i * 2) * 8 + Math.cos(t * 37 + i * 3) * shake * 3;
+      let R = lerp(r * 5, r, p) + Math.sin(t * .9 + i) * 1.2, S = lerp(.55, 1, p);
+      X *= 1 - col; Y *= 1 - col; R *= 1 - col; S *= 1 - .88 * col;
+      d.style.transform = `translate(${X}px,${Y}px) rotate(${R}deg) scale(${S})`;
+      d.style.opacity = clamp(prog(t, 2.9 + i * .08, .2)) * (1 - col ** 3);
+      d.style.filter = `brightness(${lerp(.62, 1.8, col)})${col > .02 ? ` blur(${col * 8}px)` : ''}`;
+      d._scroll.style.transform = `translateY(${-((t - 2.8) * d._speed % (22 * 40))}px)`;
+    });
+    $('chaosShade').style.opacity = clamp(prog(t, 3.2, .4)) * (1 - col);
+    const H = [[3.3, 4.25], [4.45, 5.4], [5.6, 6.55], [6.75, 7.4]];
+    ['h2a', 'h2b', 'h2c', 'h2d'].forEach((id, k) => {
+      const [t0, t1] = H[k];
+      text(id, t, t0, t1, { stagger: k === 2 ? .018 : .026, out: .22 });
+      $(id).style.transformOrigin = '50% 50%';
+      $(id).style.transform = `scale(${1 + .06 * Math.exp(-6 * Math.max(0, t - t0)) + (t - t0) * .025})`;
+      const g = Math.sin(t * 61) * Math.sin(t * 23) > .55 ? 1 : 0, j = 4 + 10 * g;
+      $(id).style.textShadow = k === 3 ? `${j}px 0 rgba(255,60,60,.6), ${-j}px 0 rgba(60,220,255,.55)` : '';
+      if (k === 3) $(id).style.transform += ` translateX(${g * Math.sin(t * 97) * 18}px) skewX(${g * 8}deg)`;
+    });
+  }
+  const f1 = Math.exp(-Math.pow((t - (T.hero + .03)) / .14, 2)), f0 = Math.exp(-Math.pow((t - 2.95) / .18, 2)) * .85;
+  const f2 = Math.exp(-Math.pow((t - T.shot) / .12, 2)) * .7;
+  $('flash').style.opacity = Math.max(f1, f0, f2);
+
+  /* ---- workbench + spec ---- */
+  let leftShade = 0, bottomShade = 0;
+  if (show(wHero, t > T.hero - .02 && t < T.graph)) {
+    const h = T.hero, a = spring(prog(t, h, 1.2)), ae = eOutExpo(prog(t, h, 1.05));
+    const drift = eSine(prog(t, h + 1.1, T.zoom - h - 1.1));
+    const z = eIO(prog(t, T.zoom, 1.4));
+    const pan = eSine(prog(t, T.zoom + 1.5, 7.3));
+    let s = lerp(.22, .84, a) + .04 * drift;
+    let rx = lerp(42, 10, ae) - 6 * drift, ry = lerp(-38, -12, ae) + 9 * drift;
+    s = lerp(s, 2.1, z); rx = lerp(rx, 0, z); ry = lerp(ry, 0, z);
+    const px = lerp(.5, .865, z), py = lerp(.5, .36, z) + .26 * pan;
+    place(wHero, { s, px, py, qx: lerp(960, 1330, z), qy: lerp(600, 540, z), rx, ry, op: clamp(prog(t, h, .2)) });
+    const fo = 1 - prog(t, 13.4, .3);
+    drawStroke(hb1, eIO(prog(t, 9.5, .6)), fo); drawStroke(hb2, eIO(prog(t, 10.6, .6)), fo); drawStroke(hb3, eIO(prog(t, 11.7, .7)), fo);
+    popTag(ht1, t, 9.85, 13.4); popTag(ht2, t, 10.95, 13.4); popTag(ht3, t, 12.1, 13.4);
+    pulse(hRing, t, 16.9, 1.1, 2);
+    popTag(ht5, t, 17.1, 19.4);
+    drawStroke(hb4, eIO(prog(t, 19.6, .6)), 1 - prog(t, 22.4, .3));
+    popTag(ht4, t, 19.95, 22.4);
+    leftShade = Math.max(leftShade, clamp(prog(t, T.zoom + .5, .6)));
+  }
+  text('h3', t, 8.55, 13.4, { stagger: .015 });
+  text('h4', t, 15.0, 22.35, { stagger: .03, dur: .7 });
+  text('h4s', t, 15.7, 22.35, { stagger: .012 });
+
+  /* ---- graph ---- */
+  if (show(wGraph, t > T.graph && t < T.tl)) {
+    const g = T.graph, pb = eOutExpo(prog(t, g, 1.5)), push = eSine(prog(t, g + 1.3, 4.7));
+    const s = lerp(2.6, 1.5, pb) + .22 * push;
+    place(wGraph, { s, px: .6, py: .585, qx: 1270, qy: 560, rx: lerp(-8, 3, pb) - 2 * push, ry: lerp(-22, -5, pb) + 5 * push });
+    pulse(gr1, t, g + .7, 1.2, 4); pulse(gr1b, t, g + 1.3, 1.2, 3); pulse(gr2, t, g + 1.2, 1.2, 4); pulse(gr2b, t, g + 1.8, 1.2, 3);
+    popTag(gt1, t, g + 1.1, T.tl - .5); popTag(gt2, t, g + 1.6, T.tl - .5);
+    leftShade = Math.max(leftShade, clamp(prog(t, g, .3)));
+  }
+  text('h5', t, T.graph + .35, T.tl - .55, { stagger: .026, dur: .65 });
+
+  /* ---- timeline ---- */
+  if (show($('tlCam'), t > T.tl && t < T.hand)) {
+    const s0 = T.tl, pb = eOutExpo(prog(t, s0, 1.2)), dr = eSine(prog(t, s0 + 1, 5));
+    $('tlPanel').style.transform = `translate3d(0,${lerp(140, 0, pb)}px,0) rotateX(${lerp(28, 6, pb) - 4 * dr}deg) rotateY(${lerp(-16, -3, pb) + 5 * dr}deg) scale(${lerp(.8, 1, pb) + .04 * dr})`;
+    $('tlPanel').style.opacity = clamp(prog(t, s0, .25));
+    const ph = eIO(prog(t, s0 + .6, 2.6)) * TODAY, done = prog(t, s0 + 3.2, .3);
+    playhead.style.left = ph * CHW + 'px';
+    playhead.style.opacity = clamp(prog(t, s0 + .55, .1));
+    playhead.classList.toggle('dashed', done >= 1);
+    todayLbl.style.opacity = done; todayLbl.style.left = TODAY * CHW + 'px';
+    tlRows.forEach((r, i) => {
+      const lp = eOutExpo(prog(t, s0 + .3 + i * .05, .6));
+      r.lab.style.transform = `translateX(${(1 - lp) * -40}px)`; r.lab.style.opacity = lp;
+      const w = clamp((ph - r.a) / (r.b - r.a));
+      r.bar.style.width = Math.max(0, (r.b - r.a) * CHW * eOutC(w)) + 'px';
+      r.bar.style.opacity = w > 0 ? 1 : 0;
+      if (r.act) {
+        const gl = .5 + .5 * Math.sin((t - s0) * 5 + i);
+        r.bar.style.boxShadow = `0 0 ${10 + gl * 22}px rgba(245,158,11,${.45 + gl * .4})`;
+        r.lab.style.color = done > 0 ? '#fbbf24' : '';
+      }
+    });
+    $('tlTagWrap').style.opacity = 0;
+    popTag($('tlTag'), t, s0 + 3.5, T.hand - .45);
+  }
+  text('hT', t, T.tl + .3, T.hand - .5, { stagger: .016 });
+
+  /* ---- handoff: the idea ---- */
+  if (show($('hoDiag'), t > T.hand && t < T.shot + .05)) {
+    const s0 = T.hand, zout = eInExpo(prog(t, T.shot - .4, .42));
+    $('hoDiag').style.transform = `scale(${1 + zout * 1.6})`; $('hoDiag').style.opacity = 1 - zout; $('hoDiag').style.filter = zout > .01 ? `blur(${zout * 14}px)` : '';
+    [['hoA', -1], ['hoB', 1]].forEach(([id, sd], k) => {
+      const p = spring(prog(t, s0 + .1 + k * .15, .9));
+      $(id).style.transform = `translateX(${(1 - p) * sd * 500}px) rotateY(${(1 - p) * sd * -40}deg)`;
+      $(id).style.opacity = clamp(prog(t, s0 + .1 + k * .15, .25));
+    });
+    $('hoPillA').style.transform = `scale(${spring(prog(t, s0 + .5, .6))})`;
+    // the agent writes a handoff: the doc appears beside its session, holds, then flies
+    const born = spring(prog(t, s0 + 1.4, .6)), go = eIO(prog(t, s0 + 2.8, 1.0));
+    hoPath.style.strokeDashoffset = hoLen * (1 - eOutC(prog(t, s0 + 2.7, .9)));
+    const [x, y] = go > 0 ? bez(ARC, go) : [700, 551];
+    const on = t > s0 + 1.4 && go < 1;
+    $('hoDoc').style.display = on ? '' : 'none';
+    $('hoDoc').style.transform = `translate(${x - 90}px,${y - 26}px) rotate(${Math.sin(go * Math.PI) * -8}deg) scale(${born * (1 + .25 * Math.sin(go * Math.PI))})`;
+    trail.forEach((d, i) => {
+      const u = clamp(go - (i + 1) * .035), [tx, ty] = bez(ARC, u);
+      d.style.display = on && go > 0 && u > 0 ? '' : 'none';
+      d.style.transform = `translate(${tx - 6}px,${ty - 6}px) scale(${1 - i * .13})`; d.style.opacity = .7 - i * .1;
+    });
+    popTag($('hoTagA'), t, s0 + 1.7, s0 + 2.7);
+    const sp = spring(prog(t, s0 + 3.8, .7));
+    $('hoPillB').style.transform = `scale(${sp})`; $('hoPillB').style.opacity = clamp(prog(t, s0 + 3.8, .1));
+    pulse($('hoBurst'), t, s0 + 3.8, .9, 1);
+    popTag($('hoTagB'), t, s0 + 4.0, s0 + 5.2);
+    // the report comes back
+    const bk = eIO(prog(t, s0 + 5.0, .8));
+    hoBack.style.strokeDashoffset = hoBackLen * (1 - eOutC(prog(t, s0 + 4.95, .8)));
+    hoBack.style.opacity = t > s0 + 4.95 ? 1 : 0;
+    const [bx, by] = bez(ARCB, bk);
+    $('hoRep').style.display = t > s0 + 4.97 && bk < 1 ? '' : 'none';
+    $('hoRep').style.transform = `translate(${bx - 70}px,${by - 24}px) scale(${1 + .2 * Math.sin(bk * Math.PI)})`;
+    const ck = spring(prog(t, s0 + 5.8, .5));
+    $('hoCheck').style.transform = `scale(${ck})`; $('hoCheck').style.opacity = clamp(prog(t, s0 + 5.8, .1));
+    pulse($('hoBurstA'), t, s0 + 5.8, .9, 1);
+  }
+  text('hH1', t, T.hand + .25, T.hand + 3.6, { stagger: .016 });
+  text('hH2', t, T.hand + 3.9, T.shot - .5, { stagger: .016 });
+
+  /* ---- handoff: in the app ---- */
+  if (show(wHand, t > T.shot - .05 && t < T.slack)) {
+    const s0 = T.shot, pb = eOutExpo(prog(t, s0, 1.4)), dr = eSine(prog(t, s0 + 1, 5.2));
+    const s = lerp(2.4, 1.3, pb) + .12 * dr;
+    place(wHand, { s, px: .36, py: .39, qx: 1000, qy: 560, rx: lerp(10, 2, pb), ry: lerp(18, 3, pb) - 3 * dr, op: clamp(prog(t, s0 - .05, .15)) });
+    drawStroke(hp1, eIO(prog(t, s0 + .6, .8))); drawStroke(hp1a, eOutC(prog(t, s0 + 1.35, .2)));
+    popTag(htH1, t, s0 + 1.1, T.slack - .4);
+    pulse(hr1, t, s0 + 2.3, 1.1, 2);
+    popTag(htH2, t, s0 + 2.45, T.slack - .4);
+    drawStroke(hb5, eIO(prog(t, s0 + 3.5, .6)));
+    popTag(htH3, t, s0 + 3.85, T.slack - .4);
+    bottomShade = clamp(prog(t, s0, .3));
+  }
+  text('h7', t, T.shot + .3, T.slack - .45, { stagger: .02 });
+
+  /* ---- slack ---- */
+  if (show($('inboxCam'), t > T.slack && t < T.end)) {
+    const s0 = T.slack, sel = eIO(prog(t, s0 + 3.4, .6)), fly = eInExpo(prog(t, T.end - .7, .55));
+    const baseY = [300, 510, 720];
+    cardEls.forEach((d, i) => {
+      const p = spring(prog(t, s0 + .2 + i * .15, 1.0));
+      let y = baseY[i] + (1 - p) * 240, x = 0, s = 1, op = clamp(prog(t, s0 + .2 + i * .15, .25)), rx = (1 - p) * -70;
+      if (i !== 1) { x = sel * (i === 0 ? -1 : 1) * 380; op *= 1 - sel; rx += sel * 25 * (i === 0 ? -1 : 1); }
+      else { y = lerp(y, 420, sel); s = lerp(1, 1.12, sel) * (1 + fly * 2.5); op *= 1 - fly ** 2; }
+      d.style.transform = `translate3d(${x}px,${y}px,0) rotateX(${rx}deg) scale(${s})`;
+      d.style.opacity = op;
+      d.style.filter = i === 1 && fly > .01 ? `blur(${fly * 14}px)` : (i !== 1 && sel > 0 ? `blur(${sel * 6}px)` : '');
+    });
+    pulse(acceptRing, t, s0 + 3.05, .8, 2);
+    const cm = eIO(prog(t, s0 + 2.0, 1.0)), click = Math.exp(-Math.pow((t - (s0 + 3.08)) / .07, 2));
+    const cx = lerp(1560, 960 + 850 * .94, cm), cy = lerp(1000, 510 + cardEls[1]._h * .838 + 4, cm);
+    const cv = prog(t, s0 + 1.85, .2) * (1 - prog(t, s0 + 3.4, .2));
+    $('cursor').style.display = cv > 0 ? '' : 'none';
+    $('cursor').style.transform = `translate(${cx}px,${cy}px) scale(${1 - .18 * click})`;
+    $('cursor').style.opacity = cv;
+  } else $('cursor').style.display = 'none';
+  text('h6', t, T.slack + .35, T.slack + 3.2, { stagger: .016 });
+  text('h6b', t, T.slack + 3.55, T.end - .8, { stagger: .014 });
+
+  $('leftShade').style.opacity = leftShade;
+  $('bottomShade').style.opacity = bottomShade;
+
+  const w = wipe(t, T.graph) || wipe(t, T.tl) || wipe(t, T.hand) || wipe(t, T.slack);
+  $('wipe').style.display = w ? '' : 'none';
+
+  /* ---- end card ---- */
+  const e0 = T.end, hl = eOutExpo(prog(t, e0 - .35, .35)), ho = prog(t, e0, .35);
+  $('hline').style.display = t > e0 - .35 && t < e0 + .4 ? '' : 'none';
+  $('hline').style.transform = `scaleX(${hl}) scaleY(${1 + eOutExpo(ho) * 30})`;
+  $('hline').style.opacity = 1 - ho;
+  $('blackout').style.opacity = eIO(prog(t, e0 - .25, .25));
+  if (show($('endc'), t > e0 - .05)) {
+    const p = spring(prog(t, e0 + .05, 1.0)), breathe = 1 + .012 * Math.sin((t - e0) * 2);
+    $('logo2wrap').style.transform = `scale(${lerp(.4, 1, p) * breathe}) rotate(${(1 - p) * -12}deg)`;
+    $('logo2wrap').style.opacity = clamp(prog(t, e0 + .05, .2));
+    drawLogo(L2, eIO(prog(t, e0 + .1, .5)), eIO(prog(t, e0 + .2, .6)), eBack(prog(t, e0 + .7, .3)), 1, t > e0 + 1.1 && Math.floor((t - e0 - 1.1) / .4) % 2 ? .25 : 1);
+    $('sweep').style.left = lerp(-60, 140, eIO(prog(t, e0 + 1.05, .7))) + '%';
+    text('wm2', t, e0 + .35, 99, { stagger: .035, dur: .7 });
+    text('tag2', t, e0 + .8, 99, { stagger: .012 });
+    text('url2', t, e0 + 1.1, 99, { stagger: .01 });
+    $('url2')._chars.forEach((c, i) => c.style.color = i < 12 ? '#f59e0b' : '#64748b');
+  }
+  $('endc').style.opacity = 1 - prog(t, 59.55, .45);
+}
+
+window.ready = Promise.all([document.fonts.ready, ...[...document.images].map(i => i.decode())]).then(() => { render(0); return true; });
+</script>
+</body>
+</html>
