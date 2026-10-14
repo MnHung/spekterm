@@ -96,3 +96,42 @@ describe('BranchService 的輪詢判定依據', () => {
     assert.equal(usePollingOf(root.watcher), false)
   })
 })
+
+/**
+ * Resolves once every watcher the service has built reports `ready`. Call it right after `sync()`:
+ * chokidar emits `ready` asynchronously, so the listener is attached in time.
+ */
+function allReady(): Promise<unknown> {
+  return Promise.all(created.map(({ watcher }) => new Promise<void>((resolve) => watcher.once('ready', () => resolve()))))
+}
+
+/** Counts `onChanged` calls; `settle` waits past the service's debounce. */
+function changeCounter(): { count: () => number; onChanged: () => void } {
+  let n = 0
+  return { count: () => n, onChanged: () => { n += 1 } }
+}
+
+const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 600))
+
+describe('BranchService carries hasOpenSpec', () => {
+  it('pushes the folder list when openspec/ is created and removed while the app runs', async () => {
+    const counter = changeCounter()
+    service = new BranchService({ list: () => [folderAt(base)] } satisfies FolderLookup, counter.onChanged, spyFactory)
+    service.sync()
+    await allReady()
+
+    // Control: another top-level entry is the agent's noise and must not push.
+    fs.writeFileSync(path.join(base, 'README.md'), 'x')
+    fs.mkdirSync(path.join(base, 'src'))
+    await settle()
+    assert.equal(counter.count(), 0, 'a top-level entry other than .git / openspec pushed the list')
+
+    fs.mkdirSync(path.join(base, 'openspec', 'specs'), { recursive: true })
+    await settle()
+    assert.equal(counter.count(), 1, 'creating openspec/ did not push the folder list')
+
+    fs.rmSync(path.join(base, 'openspec'), { recursive: true })
+    await settle()
+    assert.equal(counter.count(), 2, 'removing openspec/ did not push the folder list')
+  })
+})

@@ -11,7 +11,10 @@ export const FOLDER_CHANNELS = {
   remove: 'workspace:folders:remove',
   reorder: 'workspace:folders:reorder',
   setPinned: 'workspace:folders:setPinned',
-  /** 主行程 → renderer。目前唯一的推送來源是 git 分支變動（使用者在 terminal 裡切 branch）。 */
+  /**
+   * 主行程 → renderer. Pushed when a folder's git branch changes or its `openspec/` appears or vanishes
+   * (the user switches branch or runs `openspec init` in a terminal).
+   */
   changed: 'workspace:folders:changed',
 } as const
 

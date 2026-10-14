@@ -93,6 +93,10 @@ workspace 的 folder 清單 SHALL 持久化於使用者資料目錄，且 SHALL 
 
 每個 folder SHALL 標示其是否含有 `openspec/` 目錄。此標示 SHALL 為衍生狀態 —— 於加入 folder 時與每次載入 workspace 時重新判定，SHALL NOT 持久化於設定檔。
 
+The mark SHALL also follow `openspec/` appearing or vanishing **while the application runs** (the user
+runs `openspec init` in a session next to the folder): the folder list SHALL be pushed to the renderer
+again, without a restart and without the user re-adding the folder.
+
 判定 SHALL 以單次檔案系統查詢完成。它 SHALL NOT 執行完整的 OpenSpec 掃描，亦 SHALL NOT 呼叫任何外部程式。
 
 #### Scenario: folder 含有 openspec 目錄
@@ -109,6 +113,11 @@ workspace 的 folder 清單 SHALL 持久化於使用者資料目錄，且 SHALL 
 
 - **WHEN** 一個原本不含 `openspec/` 的 folder 於應用程式關閉期間被建立了該目錄，而後啟動應用程式
 - **THEN** 該 folder 被標示為含有 OpenSpec
+
+#### Scenario: The mark follows openspec/ created while the application runs
+
+- **WHEN** a folder without `openspec/` is in the workspace and the directory is created while the application runs
+- **THEN** the folder is marked as containing OpenSpec without a restart: the rail drops its "no openspec/" note and the side panel's OpenSpec identity becomes available
 
 #### Scenario: 偵測不觸發外部程式
 

@@ -24,15 +24,24 @@ import type { FolderLookup, WorkspaceFolder } from './workspace-store'
  * 消失，再據以建立／銷毀第二層。
  *
  * 代價是 folder 根目錄的事件流會被 agent 的頂層寫檔活動打到 —— 以 basename 過濾即可，事件多但廉價。
+ *
+ * ## The root watcher also carries `hasOpenSpec`
+ *
+ * `hasOpenSpec` is derived the same way as the branch (recomputed by `WorkspaceStore.list()`), and
+ * `openspec/` is a direct child of the folder root just like `.git` — so the first layer already sees it
+ * appear or vanish. Without this, a folder whose `openspec/` is created while the app runs (the user runs
+ * `openspec init` in the session next to it) keeps saying "no openspec/" and the OpenSpec identity stays
+ * disabled until a restart: nothing else pushes the folder list.
  */
 
 /** 一次 `git checkout` 會連續改寫多個檔案；rail 不需要為此重繪多次。 */
 const DEBOUNCE_MS = 80
 
 const GIT_ENTRY = '.git'
+const OPENSPEC_ENTRY = 'openspec'
 
 interface FolderWatchers {
-  /** 監看 folder 根目錄，等 `.git` 出現或消失。 */
+  /** 監看 folder 根目錄，等 `.git` 出現或消失。 Also `openspec/`, for `hasOpenSpec`. */
   root: FSWatcher
   /** 監看 HEAD 檔案。`.git` 不存在時為 null。 */
   head: FSWatcher | null
@@ -97,7 +106,9 @@ export class BranchService {
       depth: 0,
     })
     root.on('all', (_event, changed) => {
-      if (path.basename(changed) !== GIT_ENTRY) return // agent 在頂層寫檔的噪音
+      const entry = path.basename(changed)
+      if (entry === OPENSPEC_ENTRY) return this.#notify() // `hasOpenSpec` changed (see the header)
+      if (entry !== GIT_ENTRY) return // agent 在頂層寫檔的噪音
       const current = this.#folders.get(folder.id)
       if (current) this.#refreshHead(folder)
       this.#notify()

@@ -191,7 +191,8 @@ const workspaceApi = {
     setPinned: (id: string, pinned: boolean): Promise<WorkspaceFolder[]> =>
       ipcRenderer.invoke('workspace:folders:setPinned', id, pinned),
     /**
-     * folder 清單的推送更新（目前唯一的來源是 git 分支變動 —— 使用者在 terminal 裡切 branch）。
+     * folder 清單的推送更新 — sent when a folder's git branch changes or its `openspec/` appears or
+     * vanishes (the user switches branch or runs `openspec init` in a terminal).
      * 回傳取消訂閱的函式：renderer 拿不到 `ipcRenderer`，因此也無從自行解除其他監聽器。
      */
     onChanged: (listener: (folders: WorkspaceFolder[]) => void): (() => void) => {
