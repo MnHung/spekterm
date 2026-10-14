@@ -28,6 +28,8 @@ spec —— 並且在 agent 寫入磁碟時跟著更新。
 - **OpenSpec 側欄** —— session 正在做的 change、它的 artifact 與 tasks，瀏覽、關係圖、時間軸，含 worktree。
 - **對話檢視、收件匣與交接** —— 以訊息形式讀 agent；Slack 提及會變成收件匣項目；agent 可以把工作交給
   另一個 repo。
+- **遠端存取**（預設關閉）—— 已配對的手機直接連到 spekterm，不經中繼：session、對話、收件匣，以及 agent 在等你時的
+  通知。Android app 仍在開發中；協定寫在 [`docs/remote-protocol.md`](docs/remote-protocol.md)。
 
 完整說明都在[文件](https://spekterm.com/zh-tw/docs/)，包括[快捷鍵](https://spekterm.com/zh-tw/docs/reference/keyboard-shortcuts/)、
 [疑難排解](https://spekterm.com/zh-tw/docs/help/troubleshooting/)，以及

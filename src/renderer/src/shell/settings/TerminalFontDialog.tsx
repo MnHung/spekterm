@@ -4,6 +4,7 @@ import { SUPPORTED_LANGUAGES, type Language, languageLabel, t as translate } fro
 import { AUTO_HIBERNATE_PRESETS, DEFAULT_AUTO_HIBERNATE_SECONDS } from '@shared/hibernation/settings'
 import { usePreferences } from '../PreferencesProvider'
 import { buildInfo } from '../../build-info'
+import { listenLine, useRemoteState } from '../remote/useRemoteState'
 
 // **`fixed` 而非 `absolute`**：這個對話框由 ActivityBar 觸發，而 ActivityBar 活在一個 56px 寬的
 // Panel 裡 —— `absolute inset-0` 會相對於那個 Panel 定位，遮罩只有 56px 寬。`fixed` 相對於
@@ -28,7 +29,14 @@ const BUTTON_CLASS = 'rounded border border-hairline px-2 py-[3px] text-xs hover
  * free-text 的 family 輸入（不做字型選擇器，design D9）：空白 ＝ 用系統等寬字。size 空白 ＝ 用
  * 字級尺度的預設。兩個欄位一起送（`updateTerminalFont`），主行程清理／夾制後回傳套用後的值。
  */
-export function TerminalFontDialog({ onClose }: { onClose: () => void }): React.JSX.Element {
+export function TerminalFontDialog({
+  onClose,
+  onOpenRemote,
+}: {
+  onClose: () => void
+  /** Opens the remote access dialog (`terminal-preferences`' remote access section). */
+  onOpenRemote?: () => void
+}): React.JSX.Element {
   const { t } = useTranslation()
   const {
     terminal,
@@ -285,6 +293,8 @@ export function TerminalFontDialog({ onClose }: { onClose: () => void }): React.
           {t('settings.previewSample')}
         </pre>
 
+        {onOpenRemote ? <RemoteAccessSection onOpen={onOpenRemote} /> : null}
+
         <BuildIdentity />
 
         <div className="mt-4 flex items-center justify-between gap-2">
@@ -302,6 +312,39 @@ export function TerminalFontDialog({ onClose }: { onClose: () => void }): React.
         </div>
       </div>
     </div>
+  )
+}
+
+/**
+ * Remote access, as one line and a way into its dialog (`terminal-preferences`). **It changes nothing
+ * itself**: turning remote access on, pairing and revoking happen in the dialog, which states what a paired
+ * device can do.
+ */
+function RemoteAccessSection({ onOpen }: { onOpen: () => void }): React.JSX.Element {
+  const { t } = useTranslation()
+  const state = useRemoteState()
+  let line = t('remote.section.off')
+  if (state?.enabled) {
+    line =
+      state.listen.status === 'error'
+        ? t('remote.section.failed', { cause: listenLine(state, t) })
+        : t('remote.section.on', {
+            devices: state.devices.length,
+            connected: state.devices.filter((device) => device.connected).length,
+          })
+  }
+  return (
+    <section role="group" aria-label={t('remote.section.label')} className="mt-4 border-t border-hairline pt-3 text-xs">
+      <p className="text-ink">{t('remote.section.label')}</p>
+      <div className="mt-1 flex items-center justify-between gap-2">
+        <p role="status" className="text-ink-faint">
+          {line}
+        </p>
+        <button type="button" aria-label={t('remote.section.open')} onClick={onOpen} className={`${BUTTON_CLASS} shrink-0`}>
+          {t('remote.title')}
+        </button>
+      </div>
+    </section>
   )
 }
 

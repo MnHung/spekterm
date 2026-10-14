@@ -174,10 +174,18 @@ export function makeStubAgent(
     '}',
     'read_loop() {',
     '  stty -icanon min 1 time 0 < /dev/tty 2>/dev/null',
-    '  line=""',
+    '  line=""; nuser=0',
     '  while :; do',
-    '    oct=$(dd bs=1 count=1 2>/dev/null | od -An -v -to1 | tr -d " \\n")',
-    '    [ -n "$oct" ] || break',
+    /*
+      **A block at a time**: whatever the tty has, up to 4 KiB. Each block's arrival goes to the session's
+      block receipt with its time, so a caller can tell "the submit key came as its own write, later" from
+      "it came in the same write as the text" (`remote-protocol`'s split send). A per-byte timestamp would
+      measure this loop's own pace (one `dd` per byte is about 2.5 ms), not the product's writes.
+    */
+    '    octs=$(dd bs=4096 count=1 2>/dev/null | od -An -v -to1 | tr -s " \\n" "  ")',
+    '    [ -n "$(printf %s "$octs" | tr -d " ")" ] || break',
+    `    printf '%s %s\\n' "$(date +%s%N)" "$octs" >> "${perSessionDir}/$sid.blocks"`,
+    '    for oct in $octs; do',
     `    printf '%s ' "$oct" >> ${JSON.stringify(byteLog)}`,
     `    printf '%s ' "$oct" >> "${perSessionDir}/$sid.bytes"`,
     '    case "$oct" in',
@@ -189,7 +197,9 @@ export function makeStubAgent(
     `    printf '%s\\n' "$line" >> "${perSessionDir}/$sid.lines"`,
     // 延遲補寫紀錄 —— 用來驗「送出後在它出現於紀錄之前標示為未確認」。
     echoDelaySeconds ? `  sleep ${echoDelaySeconds}` : '',
-    `    printf '{"type":"user","uuid":"u-%s","timestamp":"2026-09-06T00:00:01.000Z","message":{"role":"user","content":"%s"}}\\n' "$$" "$line" >> "$tp"`,
+    // Every record gets its own `uuid`: resuming a conversation names the last one received.
+    '    nuser=$((nuser+1))',
+    `    printf '{"type":"user","uuid":"u-%s-%s","timestamp":"2026-09-06T00:00:01.000Z","message":{"role":"user","content":"%s"}}\\n' "$$" "$nuser" "$line" >> "$tp"`,
     // `busySeconds`：先宣告忙碌、停一段時間再宣告就緒 —— 供「忙碌時呈現忙碌、閒置後消失」。
     busySeconds ? '  fire PreToolUse' : '',
     busySeconds ? `  sleep ${busySeconds}` : '',
@@ -209,6 +219,7 @@ export function makeStubAgent(
     // 模擬「agent 正在等使用者於終端回答」。
     holdPermission ? '  fire PermissionRequest' : '  fire Stop',
     '    line=""',
+    '    done',
     '  done',
     '}',
     /*
@@ -382,6 +393,28 @@ export function makeStubAgent(
         return `printf '%s' '${payload}' > "$SPEKTERM_HANDOFF_DIR/.report.partial"`
       },
       commit: () => 'mv "$SPEKTERM_HANDOFF_DIR/.report.partial" "$SPEKTERM_HANDOFF_DIR/report-$(date +%s%N).json"',
+    },
+    /**
+     * The blocks one session's stub read, in order: `{ atMs, text }`. `atMs` is when the block arrived
+     * (milliseconds, fractional). See the read loop: one block is one read of whatever the tty held.
+     */
+    sessionBlocks: (conversationId) => {
+      let raw
+      try {
+        raw = readFileSync(join(perSessionDir, `${conversationId}.blocks`), 'utf8')
+      } catch {
+        return []
+      }
+      return raw
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => {
+          const [ns, ...octs] = line.trim().split(/\s+/)
+          return {
+            atMs: Number(BigInt(ns) / 1000n) / 1000,
+            text: octs.map((oct) => String.fromCharCode(parseInt(oct, 8))).join(''),
+          }
+        })
     },
     /** 替身宣告就緒的那一刻是否已經到了。 */
     ready: () => existsSync(readyReceipt),

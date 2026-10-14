@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
-import { sessionToReuse } from './reuse-session'
+import { runAccept } from './accept-flow'
 import { useTranslation } from 'react-i18next'
 
 import { formatDateTime, relativeTime } from '@shared/i18n/locale'
@@ -122,41 +122,24 @@ export function IntakeOverlay({ onClose, opener }: IntakeOverlayProps): React.JS
   const accept = useCallback(
     async (item: IntakeView, folderId: string) => {
       setFailure(null)
-      const decision = await window.workspace.intake.accept(item.id, item.adapter, folderId)
-      if (!decision.ok) {
-        setFailure(
-          decision.reason === 'prefillUnavailable'
+      // The desktop's accept, shared with a paired device (`accept-flow.ts`): reuse the session an earlier
+      // accept left in this folder, else create one, then attach.
+      const outcome = await runAccept({ intake: window.workspace.intake, sessions }, item, folderId)
+      if (outcome.ok) {
+        close()
+        return
+      }
+      setFailure(
+        outcome.reason === 'createFailed'
+          ? outcome.message
+          : outcome.reason === 'prefillUnavailable'
             ? t('intake.prefillUnavailable')
             : // 主行程回 FOLDER_GONE 只剩一個成因：使用者確認的 folder 在按下接受之前被移除了。
               // 「這條規則指向的…」那句講的是規則，對這裡是錯的。
-              decision.reason === 'FOLDER_GONE'
+              outcome.reason === 'FOLDER_GONE'
               ? t('intake.chosenFolderGone')
               : t('intake.unresolved'),
-        )
-        return
-      }
-      /**
-       * **這一則已經建過 session 了嗎。**
-       *
-       * 預填逾時會把它退回待處理，而**那個 session 仍然存在** —— 再次接受時若又建一個，
-       * 每處理一次就多一個空的 session，沒有上界，而每一個看起來都正常。
-       * 還在、**而且在使用者這次確認的 folder** 就沿用它（`attach` 會重新排一次預填），
-       * 否則建新的 —— 改選之後沿用舊的，等於把本文送進他剛改掉的 repo。
-       */
-      const reusable = sessionToReuse(decision.existingSessionId, sessions.all(), decision.folderId)
-      const sessionId = reusable
-        ? reusable
-        : await (async () => {
-            const outcome = await sessions.create(decision.folderId, 'claude', { ticket: decision.ticket })
-            if (outcome.status !== 'created') {
-              setFailure(outcome.failure.message)
-              return null
-            }
-            return outcome.sessionId
-          })()
-      if (!sessionId) return
-      await window.workspace.intake.attach(item.id, item.adapter, sessionId)
-      close()
+      )
     },
     [close, sessions, t],
   )

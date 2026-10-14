@@ -181,10 +181,11 @@ export const MUTATIONS = [
   },
   {
     name: 'system-names-session',
-    file: 'src/renderer/src/shell/intake/IntakeOverlay.tsx',
-    from: `      await window.workspace.intake.attach(item.id, item.adapter, sessionId)`,
-    to: `      sessions.rename(sessionId, item.title)\n`
-      + `      await window.workspace.intake.attach(item.id, item.adapter, sessionId)`,
+    // The desktop's accept lives in `accept-flow.ts` since `mobile-remote-bridge` (shared with a paired device).
+    file: 'src/renderer/src/shell/intake/accept-flow.ts',
+    from: `  await deps.intake.attach(item.id, item.adapter, sessionId)`,
+    to: `  ;(deps.sessions as unknown as { rename: (id: string, title: string) => void }).rename(sessionId, 'SYSTEM-NAMED')\n`
+      + `  await deps.intake.attach(item.id, item.adapter, sessionId)`,
     expectRed: 'session 的名稱未被系統指定（agent 宣告的標題呈現得出來）',
     why: '系統代為命名＝使用者永久接管命名權，此後 agent 宣告的標題被靜默地不予呈現。',
   },

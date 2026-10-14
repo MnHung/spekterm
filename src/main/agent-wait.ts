@@ -36,6 +36,10 @@ export interface WaitSnapshot {
   transcriptPath: string | null
   /** 這一次 drain 讀到幾則事件。 */
   count: number
+  /** The batch contained a turn completion (`DrainResult.turnEnded`). */
+  turnEnded: boolean
+  /** The batch's last permission request (`DrainResult.choiceRaised`). */
+  choiceRaised: { tool: string; arg: string | null } | null
 }
 
 type Subscriber = (snapshot: WaitSnapshot) => void
@@ -87,7 +91,24 @@ export function foldDrain(sessionId: string, result: DrainResult): WaitSnapshot 
     pending: result.pending,
     transcriptPath: result.transcriptPath,
     count: result.count,
+    turnEnded: result.turnEnded,
+    choiceRaised: result.choiceRaised,
   }
+}
+
+/** Sees every drained batch of every session, with the state before it. */
+export type WaitObserver = (sessionId: string, snapshot: WaitSnapshot, previous: WaitState) => void
+
+const observers = new Set<WaitObserver>()
+
+/**
+ * A process-wide observer of every drained batch (`remote-notifications`). One registration covers every
+ * session, including ones created later, so no per-session wiring can be forgotten — the attention events
+ * and the remote session list hang off this. It sees each batch once, after the session's subscribers.
+ */
+export function observeWaits(observer: WaitObserver): () => void {
+  observers.add(observer)
+  return () => observers.delete(observer)
 }
 
 function tick(sessionId: string): void {
@@ -99,6 +120,13 @@ function tick(sessionId: string): void {
   // **無論有沒有變化都通知** —— 跟進器要靠每一次 tick 主動 poll 一次紀錄，
   // 那是它「監看負責延遲、主動讀負責保證」的那一半。
   for (const subscriber of entry.subscribers) subscriber(snapshot)
+  for (const observer of observers) {
+    try {
+      observer(sessionId, snapshot, previous)
+    } catch (error) {
+      console.error(`[agent-wait] observer failed: ${String(error)}`)
+    }
+  }
 }
 
 /**

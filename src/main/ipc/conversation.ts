@@ -1,15 +1,8 @@
 import { type WebContents, ipcMain } from 'electron'
 
-import { TranscriptFollower, type FollowUpdate } from '../transcript-follow-service'
-import { transcriptPathFor } from '../transcript-follow'
-import { encodeInput, type WaitState } from '../agent-events'
-import {
-  lastTranscriptPathOf,
-  pendingRequestOf,
-  subscribeWait,
-  waitStateOf,
-  type WaitSnapshot,
-} from '../agent-wait'
+import { encodeInput } from '../agent-events'
+import { waitStateOf } from '../agent-wait'
+import { type Follow, startFollow } from '../conversation-follow'
 import { existingTerminalService } from './terminal'
 
 /**
@@ -43,12 +36,6 @@ export const CONVERSATION_CHANNELS = {
   send: 'workspace:conversation:send',
 } as const
 
-interface Entry {
-  follower: TranscriptFollower
-  sessionId: string
-  unsubscribe: () => void
-}
-
 /**
  * 等待狀態住在 `agent-wait`，**而這裡只是它的訂閱者之一**。
  *
@@ -58,36 +45,15 @@ interface Entry {
  */
 
 /** 每個 renderer 至多一份 —— 呈現的恆是當下顯示的那一個 session。 */
-const followers = new Map<number, Entry>()
+const followers = new Map<number, Follow>()
 
 function stop(contentsId: number): void {
   const entry = followers.get(contentsId)
   if (!entry) return
-  entry.unsubscribe()
-  entry.follower.dispose()
+  entry.stop()
   followers.delete(contentsId)
   // **等待狀態刻意不清除** —— 它屬於那個 session，不屬於這次訂閱。
   // 清除的時機是 session 結束，那由 `agent-events` 的落點清理負責。
-}
-
-/**
- * 一次事件輪詢。
- *
- * **事件帶來的 `transcript_path` 是定位的權威來源** —— 它關掉了「使用者在 agent 之內清空或
- * 切換對話」那條路：那些操作發生在 pty 之內，pty 沒死，我們收不到任何自己發出的訊號
- * （實測 `/clear` 會換一份紀錄）。
- *
- * **而 `SessionEnd` 事件 SHALL NOT 觸發拆除** —— `drainEvents` 只把它翻成「狀態未知」，
- * 跟進器照常活著，等 `SessionStart` 帶來新位置。
- */
-function onWait(contents: WebContents, entry: Entry, snapshot: WaitSnapshot, previous: () => WaitState): void {
-  if (contents.isDestroyed()) return
-  if (snapshot.transcriptPath) entry.follower.relocate(snapshot.transcriptPath)
-  // **監看負責延遲，這裡負責保證。** 監看有一整類靜默的失效方式，而它們的徵狀都是
-  // 「畫面安靜地停住」—— 那比沒有 view 更糟。
-  entry.follower.poll()
-  if (snapshot.count === 0 && snapshot.state === previous()) return
-  contents.send(CONVERSATION_CHANNELS.wait, entry.sessionId, snapshot.state, snapshot.pending)
 }
 
 function start(contents: WebContents, sessionId: string): void {
@@ -96,40 +62,12 @@ function start(contents: WebContents, sessionId: string): void {
   stop(contents.id)
 
   const source = existingTerminalService(contents.id)?.agentSourceOf(sessionId) ?? null
-  if (!source) {
-    // shell 目標沒有紀錄可跟。**明說**，不要讓呈現層停在「跟進中」。
-    contents.send(CONVERSATION_CHANNELS.update, {
-      sessionId,
-      status: 'unavailable',
-      events: [],
-      truncated: false,
-      reset: true,
-    } satisfies FollowUpdate)
-    return
-  }
-
-  const follower = new TranscriptFollower(sessionId, (update) => {
-    if (contents.isDestroyed()) return
-    contents.send(CONVERSATION_CHANNELS.update, update)
+  const follow = startFollow(sessionId, source, {
+    update: (update) => contents.send(CONVERSATION_CHANNELS.update, update),
+    wait: (state, pending) => contents.send(CONVERSATION_CHANNELS.wait, sessionId, state, pending),
+    alive: () => !contents.isDestroyed(),
   })
-  let lastSent: WaitState = waitStateOf(sessionId)
-  const entry: Entry = {
-    follower,
-    sessionId,
-    unsubscribe: () => undefined,
-  }
-  entry.unsubscribe = subscribeWait(sessionId, (snapshot) => {
-    const previous = lastSent
-    lastSent = snapshot.state
-    onWait(contents, entry, snapshot, () => previous)
-  })
-  followers.set(contents.id, entry)
-  // 沿用這個 session 既有的狀態（切走再切回不該退回未知）。
-  contents.send(CONVERSATION_CHANNELS.wait, sessionId, waitStateOf(sessionId), pendingRequestOf(sessionId))
-    // 算出來的位置是初始值；事件帶來的 `transcript_path` 一旦到達即取代它。
-  // An event may already have relocated it while no view was open: the wait state is drained for
-  // every running claude session (`session-hibernation`), so start from the last reported location.
-  follower.relocate(lastTranscriptPathOf(sessionId) ?? transcriptPathFor(source.cwd, source.conversationId))
+  if (follow) followers.set(contents.id, follow)
 }
 
 /** renderer 消失時的清理。與 watcher／pty 的擁有者記帳同構。 */

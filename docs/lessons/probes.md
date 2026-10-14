@@ -22,6 +22,10 @@
 
 ## 探針的幾個環境事實
 
+- **Two probes meet the real profile's remote access** (`mobile-remote-bridge`). `probe:identity` runs on
+  the real profile on purpose, so if the maintainer turned remote access on, that probe's app listens for its
+  few seconds — by design, not a leak. `probe:core` asserts that nothing listens, so it now launches with
+  `XDG_CONFIG_HOME` at an empty directory; on the real profile it would be red for a correct app.
 - **`probe:identity` 不傳 `--user-data-dir`** —— 它要驗的正是 `app.getPath('userData')` 實際解析出來
   的路徑，那個旗標會覆寫掉待驗的對象。它啟動真正的 `electron .` 再從**子行程的 argv** 讀（寫成
   Electron 主行程腳本的話，`electron <script>` 不讀 repo 的 `package.json`，只會量到預設值 `Electron`）。
@@ -1132,3 +1136,33 @@ And one about the fixture: **a profile that already holds the downloaded diction
 unfixed** — it cannot tell a fixed app from an unfixed one. The upgrade launch seeds only the `Preferences`
 entry an unfixed run writes (`{"spellcheck":{"dictionaries":["en-US"],"dictionary":""}}`), no file. The
 `Dictionaries/` directory is created in every configuration, fixed or not, so its absence proves nothing.
+
+
+## `runSections` returns an object — `process.exit(outcome ? 0 : 1)` always exits 0
+
+`runSections` resolves with a summary object (`{ ok, … }`), and an object is always truthy. A probe that ends
+with `process.exit(outcome ? 0 : 1)` exits 0 with red assertions, and `run-probes.mjs` (which reads the exit
+code) then reports it as passed. `probe:remote` was written with that line copied from `probe:slack` and
+caught it when a run printed `89/90` and exit 0. `probe:slack` and `probe:intake` still had it when
+`mobile-remote-bridge` was written (recorded there for an issue). **Exit on `outcome.ok`.**
+
+## Aim after the target stops moving: a dialog that loads, and an entry that something appears next to
+
+Two clicks in `probe:remote` landed on nothing, both because the target moved between measuring and clicking,
+and both turned out to be product issues rather than probe ones:
+
+- **A vertically centered dialog that first renders a "loading" body grows when its state arrives, and its
+  top buttons move up.** The probe measured Close while the card was small. A user clicking quickly hits the
+  same jump. The dialog now opens with the state its opener already holds.
+- **An entry that appears or disappears next to another moves it.** The remote access indicator sat below
+  Settings at the bottom of the activity bar, so it shifted Settings every time a phone connected. It now sits
+  above Settings inside the same bottom group, so Settings never moves.
+
+## The renderer's view of a session lags the main process's
+
+The main process knows a session stopped the moment its pty exits; the renderer learns it from the exit event
+and a re-render later. A probe (or a device) that reads the main process's answer ("not running") and
+immediately acts through the renderer can find the renderer still saying "running" — and, on screen, the
+dormant view arriving after the probe moved focus elsewhere (it focuses its Wake button). Wait for the
+renderer's own sign (the Wake button focused) before the next step. In the product, the remote wake asks the
+main process whether a pty exists instead of trusting the renderer's status.

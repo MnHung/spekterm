@@ -88,6 +88,11 @@ export type CreateOutcome =
   | { status: 'created'; sessionId: string }
   | { status: 'failed'; failure: FsFailure }
 
+export type WakeOutcome = { status: 'woken' } | { status: 'failed'; message: string }
+
+/** Which view's automatic focus a quiet arrival holds back (`remote-protocol`, design D4). */
+export type QuietConsumer = 'terminal' | 'conversation'
+
 export interface SessionsApi {
   /**
    * 所有 folder 的所有 session。
@@ -130,6 +135,12 @@ export interface SessionsApi {
        * still becomes its item's focused session, but `attention` does not move.
        */
       background?: boolean
+      /**
+       * Requested from a paired device (`remote-protocol`): it **never takes the desktop**. It sets no
+       * item's focused session (so it replaces nothing on screen; an item with no session shows it by the
+       * `focusedIdFor` fallback), and its arrival does not take keyboard focus — see `takeQuietArrival`.
+       */
+      quiet?: boolean
     },
   ): Promise<CreateOutcome>
     /**
@@ -140,8 +151,20 @@ export interface SessionsApi {
    * re-render, and a failed wake can be retried by pressing Wake again.
    *
    * 重複呼叫是安全的（已在喚醒中或已有 pty 者為 no-op）。
+   *
+   * `quiet`: requested from a paired device — the session starting does not take keyboard focus.
+   * Resolves with the outcome (a device is told whether it worked).
    */
-  wake(sessionId: string): void
+  wake(sessionId: string, options?: { quiet?: boolean }): Promise<WakeOutcome>
+  /**
+   * Whether this view should hold back its automatic focus for a session that arrived quietly (created or
+   * woken for a paired device). **One-shot per view**: the answer is consumed. A view asks only at the
+   * moment it would focus on its own — a terminal at its first evaluation or a status change, the
+   * conversation on dormant → running — so a view that is not on screen at that moment drops the mark,
+   * and a later activation (the user turning to it) focuses as usual. Any user action that turns to the
+   * session (`focus()`, a wake the user asks for) clears the mark.
+   */
+  takeQuietArrival(sessionId: string, consumer: QuietConsumer): boolean
   /**
    * Put a running session back to dormant (`session-hibernation`). A shell's screen is serialized
    * first, so the snapshot is current when its pty dies. The session becomes dormant when the main
@@ -351,6 +374,8 @@ export function SessionsProvider({ children }: { children: React.ReactNode }): R
   const restoredRef = useRef(false)
     /** 已經送出喚醒請求的 session。避免同一個 session 被 spawn 兩次。 */
   const waking = useRef(new Set<string>())
+  /** Sessions that arrived quietly, with the views whose automatic focus is still held back. */
+  const quietArrivals = useRef(new Map<string, Set<QuietConsumer>>())
   /** A shell's screen serialized when its hibernation was requested; it becomes the replay once the pty is gone. */
   const hibernationSnapshots = useRef(new Map<string, string>())
   /** sessionId → serialize that session's screen. Registered by `TerminalView`. */
@@ -454,29 +479,31 @@ export function SessionsProvider({ children }: { children: React.ReactNode }): R
    * 的第一次喚醒會讀到一份還是空的 ref，然後什麼都不做。休眠與否由呼叫端判斷（它手上的
    * `SessionState` 是當下這一次渲染的），這裡只負責「同一個 session 不送出兩次」。
    */
-  const wake = useCallback((sessionId: string) => {
-    if (waking.current.has(sessionId)) return
+  const wake = useCallback((sessionId: string, options?: { quiet?: boolean }): Promise<WakeOutcome> => {
+    // A wake the user asks for is the user turning to the session: no held-back focus survives it.
+    if (options?.quiet) quietArrivals.current.set(sessionId, new Set<QuietConsumer>(['terminal', 'conversation']))
+    else quietArrivals.current.delete(sessionId)
+    if (waking.current.has(sessionId)) return Promise.resolve({ status: 'woken' })
     waking.current.add(sessionId)
 
-        const fail = (message: string): void => {
+        const fail = (message: string): WakeOutcome => {
       // A failed wake leaves the set: waking is only ever the user's explicit action now (nothing
       // calls it on re-render), so pressing Wake again is the retry.
       waking.current.delete(sessionId)
+      quietArrivals.current.delete(sessionId)
       setSessions((previous) =>
         previous.map((session) =>
           // session 維持休眠，並把原因呈現出來 —— 而不是靜默地什麼都不發生。
           session.id === sessionId ? { ...session, wakeError: message } : session,
         ),
       )
+      return { status: 'failed', message }
     }
 
-    void window.workspace.terminal
+    return window.workspace.terminal
       .wake(sessionId)
-      .then((result) => {
-        if (!result.ok) {
-          fail(result.message)
-          return
-        }
+      .then((result): WakeOutcome => {
+        if (!result.ok) return fail(result.message)
         setSessions((previous) =>
           previous.map((session) =>
             session.id === sessionId
@@ -484,11 +511,19 @@ export function SessionsProvider({ children }: { children: React.ReactNode }): R
               : session,
           ),
         )
+        return { status: 'woken' }
       })
       // IPC 本身 reject（罕見，但不是不可能）時，少了這個 catch，該 session 會永遠卡在
       // `waking` 集合裡、`wakeError` 也不會被設定 —— 使用者面對的是一個什麼都不做、也不說
       // 為什麼的分頁。
       .catch((error) => fail(String(error)))
+  }, [])
+
+  const takeQuietArrival = useCallback((sessionId: string, consumer: QuietConsumer): boolean => {
+    const pending = quietArrivals.current.get(sessionId)
+    if (!pending?.delete(consumer)) return false
+    if (pending.size === 0) quietArrivals.current.delete(sessionId)
+    return true
   }, [])
 
     const hibernate = useCallback((sessionId: string, token?: string) => {
@@ -528,7 +563,7 @@ export function SessionsProvider({ children }: { children: React.ReactNode }): R
     async (
       folderId: string,
       spawnTarget: SpawnTarget,
-      options?: { worktreeKey?: string; ticket?: string; background?: boolean },
+      options?: { worktreeKey?: string; ticket?: string; background?: boolean; quiet?: boolean },
     ): Promise<CreateOutcome> => {
       const worktreeKey = options?.worktreeKey
       const result = await window.workspace.terminal.create(folderId, spawnTarget, worktreeKey, options?.ticket)
@@ -538,9 +573,13 @@ export function SessionsProvider({ children }: { children: React.ReactNode }): R
       const ordinal = (nextOrdinal.current.get(folderId) ?? 0) + 1
       nextOrdinal.current.set(folderId, ordinal)
 
+      // Marked before the session is rendered, so its terminal sees the mark when it first evaluates.
+      if (options?.quiet) quietArrivals.current.set(sessionId, new Set<QuietConsumer>(['terminal']))
       setSessions((previous) =>
         placeChild([...previous, { id: sessionId, folderId, spawnTarget, status: 'running', ordinal, worktreeKey, lineage }], sessionId),
       )
+      // A quiet session changes nobody's focused session: it never replaces what the desktop displays.
+      if (options?.quiet) return { status: 'created', sessionId }
       setFocused((previous) => new Map(previous).set(folderId, sessionId))
       if (!options?.background) setAttention((n) => n + 1)
 
@@ -578,6 +617,8 @@ export function SessionsProvider({ children }: { children: React.ReactNode }): R
   const focus = useCallback((folderId: string, sessionId: string) => {
     setFocused((previous) => new Map(previous).set(folderId, sessionId))
     setAttention((n) => n + 1)
+    // The user turned to it: whatever focus a quiet arrival still held back is released.
+    quietArrivals.current.delete(sessionId)
   }, [])
 
   const setTitle = useCallback((sessionId: string, title: string) => {
@@ -713,6 +754,7 @@ export function SessionsProvider({ children }: { children: React.ReactNode }): R
       focus,
       create,
       wake,
+      takeQuietArrival,
       hibernate,
       registerSerializer,
       close,
@@ -732,6 +774,7 @@ export function SessionsProvider({ children }: { children: React.ReactNode }): R
       focus,
       create,
       wake,
+      takeQuietArrival,
       hibernate,
       registerSerializer,
       close,

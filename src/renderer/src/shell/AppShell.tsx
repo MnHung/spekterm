@@ -15,6 +15,7 @@ import { HandoffBriefProvider } from './terminal/HandoffBrief'
 import { LifecycleProvider } from './terminal/lifecycle'
 import { IntakeProvider } from './intake/intake-state'
 import { IntakeAutoAccept } from './intake/IntakeAutoAccept'
+import { RemoteRequests } from './remote/RemoteRequests'
 import { PrefillProvider } from './intake/prefill-state'
 import { folderSelection } from './types'
 import { useWorkspaceFolders } from './useWorkspaceFolders'
@@ -81,6 +82,8 @@ export function AppShell(): React.JSX.Element {
                 folderId === null ? select({ kind: 'global' }) : select(folderSelection(folderId))
               }
             />
+            {/* A paired device's create, wake and accept — carried out quietly (`remote-protocol`). Resident. */}
+            <RemoteRequests />
 
             <KeyboardNavigation
               folders={folders}

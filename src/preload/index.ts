@@ -39,6 +39,27 @@ import type { ExitReason, SpawnTarget } from '../main/terminal'
 type TerminalExitReason = Exclude<ExitReason, 'disposed'>
 import type { WatchBatch } from '../main/watch-service'
 import type { WorkspaceFolder } from '../main/workspace-store'
+import type { RemoteStateView } from '../main/remote-service'
+import type { HostAction as RemoteAction } from '../main/remote-protocol'
+import type { RendererOutcome as RemoteOutcome } from '../main/remote-host'
+
+/**
+ * A remote session action, narrowed here before the renderer sees it (`docs/lessons/slack.md` §10): the
+ * main process is trusted, but a shape check on both sides of a channel is how this repo keeps a typo on
+ * one side from becoming `undefined` on the other.
+ */
+function narrowRemoteAction(raw: unknown): RemoteAction | null {
+  if (typeof raw !== 'object' || raw === null) return null
+  const o = raw as Record<string, unknown>
+  if (o.kind === 'create' && (o.folderId === null || typeof o.folderId === 'string') && (o.target === 'claude' || o.target === 'shell')) {
+    return { kind: 'create', folderId: o.folderId as string | null, target: o.target }
+  }
+  if (o.kind === 'wake' && typeof o.sessionId === 'string') return { kind: 'wake', sessionId: o.sessionId }
+  if (o.kind === 'accept' && typeof o.adapter === 'string' && typeof o.id === 'string' && typeof o.folderId === 'string') {
+    return { kind: 'accept', adapter: o.adapter, id: o.id, folderId: o.folderId }
+  }
+  return null
+}
 
 /**
  * 主行程能力一律以具名白名單暴露（PRD §12）。
@@ -646,6 +667,49 @@ const workspaceApi = {
       ipcRenderer.on('workspace:intake:prefill', handler)
       return () => ipcRenderer.removeListener('workspace:intake:prefill', handler)
     },
+  },
+  /**
+   * Remote access (`remote-access`): the dialog's state and controls, and the bridge through which a paired
+   * device's session actions reach this renderer, which owns the session list (`remote-protocol`).
+   *
+   * The state is a field whitelist built in the main process — no credential, hash or key. The pairing code
+   * is the one secret in it, inside the pairing link, because the dialog must show it.
+   */
+  remote: {
+    state: (): Promise<RemoteStateView> => ipcRenderer.invoke('workspace:remote:state'),
+    setEnabled: (enabled: boolean): Promise<RemoteStateView> => ipcRenderer.invoke('workspace:remote:setEnabled', enabled),
+    setPort: (port: number): Promise<{ ok: boolean; state: RemoteStateView }> =>
+      ipcRenderer.invoke('workspace:remote:setPort', port),
+    /** `null` ＝ clear it. */
+    setAdditionalAddress: (address: string | null): Promise<{ ok: boolean; state: RemoteStateView }> =>
+      ipcRenderer.invoke('workspace:remote:setAdditionalAddress', address),
+    startPairing: (): Promise<RemoteStateView['pairing']> => ipcRenderer.invoke('workspace:remote:startPairing'),
+    /** The pairing view closed: its code stops working. */
+    cancelPairing: (): void => ipcRenderer.send('workspace:remote:cancelPairing'),
+    revoke: (deviceId: string): Promise<RemoteStateView> => ipcRenderer.invoke('workspace:remote:revoke', deviceId),
+    reset: (): Promise<RemoteStateView> => ipcRenderer.invoke('workspace:remote:reset'),
+    dismissNotice: (): void => ipcRenderer.send('workspace:remote:dismissNotice'),
+    onChanged: (listener: (state: RemoteStateView) => void): (() => void) => {
+      const handler = (_event: IpcRendererEvent, state: RemoteStateView): void => listener(state)
+      ipcRenderer.on('workspace:remote:changed', handler)
+      return () => ipcRenderer.removeListener('workspace:remote:changed', handler)
+    },
+    /** A paired device asks for a session action; answer with `reply` (the main process waits 15 s). */
+    onRequest: (listener: (requestId: string, action: RemoteAction) => void): (() => void) => {
+      const handler = (_event: IpcRendererEvent, requestId: unknown, raw: unknown): void => {
+        const action = narrowRemoteAction(raw)
+        if (typeof requestId !== 'string') return
+        if (!action) {
+          ipcRenderer.send('workspace:remote:reply', requestId, { ok: false, code: 'BAD_PARAMS' })
+          return
+        }
+        listener(requestId, action)
+      }
+      ipcRenderer.on('workspace:remote:request', handler)
+      return () => ipcRenderer.removeListener('workspace:remote:request', handler)
+    },
+    reply: (requestId: string, outcome: RemoteOutcome): void =>
+      ipcRenderer.send('workspace:remote:reply', requestId, outcome),
   },
 } as const
 

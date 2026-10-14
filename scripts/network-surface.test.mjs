@@ -34,8 +34,9 @@ const API_ALLOW = [
 ]
 
 /**
- * Packages and built-in modules the app's own code may import (`node:` prefix normalized away). Network
- * modules (`net`, `tls`, `http`, `https`, `http2`, `dgram`) and network packages are never on it.
+ * Packages and built-in modules the app's own code may import anywhere (`node:` prefix normalized away).
+ * Network modules (`net`, `tls`, `http`, `https`, `http2`, `dgram`) and network packages are never on it —
+ * they are only ever on `MODULE_ALLOW_FILES`, scoped to the one file that needs them.
  */
 const MODULE_ALLOW = new Set([
   'electron',
@@ -57,6 +58,16 @@ const MODULE_ALLOW = new Set([
   'path',
   'url',
 ])
+
+/**
+ * `{ file, module }` — a module allowed in one file only. The remote access listener is the only place a
+ * server is created (`remote-access`; `scripts/server-source.test.mjs`): `https` for TLS and `ws` for the
+ * WebSocket server. It accepts connections and makes none; the data and network page says so.
+ */
+const MODULE_ALLOW_FILES = [
+  { file: 'src/main/remote-server.ts', module: 'https' },
+  { file: 'src/main/remote-server.ts', module: 'ws' },
+]
 
 function sourceFiles() {
   const walk = (dir) =>
@@ -81,16 +92,24 @@ function scanRepository() {
 }
 
 /** The verdict for a scan against the allow-lists — shared by the real run and the control groups. */
-function verdict({ apis, modules }, { apiAllow = API_ALLOW, moduleAllow = MODULE_ALLOW } = {}) {
+function verdict(
+  { apis, modules },
+  { apiAllow = API_ALLOW, moduleAllow = MODULE_ALLOW, moduleAllowFiles = MODULE_ALLOW_FILES } = {},
+) {
   const allowed = (hit) => apiAllow.some((entry) => entry.file === hit.file && entry.api === hit.api)
   const unlistedApis = apis.filter((hit) => !allowed(hit)).map((hit) => `${hit.file}:${hit.line} ${hit.api}`)
-  const unlistedModules = modules
-    .filter((hit) => !moduleAllow.has(hit.module))
-    .map((hit) => `${hit.file}:${hit.line} ${hit.module}`)
+  const moduleAllowed = (hit) =>
+    moduleAllow.has(hit.module) || moduleAllowFiles.some((entry) => entry.file === hit.file && entry.module === hit.module)
+  const unlistedModules = modules.filter((hit) => !moduleAllowed(hit)).map((hit) => `${hit.file}:${hit.line} ${hit.module}`)
   const staleApis = apiAllow
     .filter((entry) => !apis.some((hit) => hit.file === entry.file && hit.api === entry.api))
     .map((entry) => `${entry.file} ${entry.api}`)
-  const staleModules = [...moduleAllow].filter((name) => !modules.some((hit) => hit.module === name))
+  const staleModules = [
+    ...[...moduleAllow].filter((name) => !modules.some((hit) => hit.module === name)),
+    ...moduleAllowFiles
+      .filter((entry) => !modules.some((hit) => hit.file === entry.file && hit.module === entry.module))
+      .map((entry) => `${entry.file} ${entry.module}`),
+  ]
   return { unlistedApis, unlistedModules, staleApis, staleModules }
 }
 
@@ -174,6 +193,8 @@ test('control: types, private names, and relative imports are not reported', () 
     `type Impl = typeof fetch`,
     `let socket: WebSocket | null = null`,
     `class A { #fetch = 1; fetchImpl = 2 }`,
+    `import { type WebSocket as Socket } from 'electron'`,
+    `import type { WebSocket } from 'electron'`,
   ].join('\n')
   const { unlistedApis, unlistedModules } = verdict(scanOf(text), { apiAllow: [], moduleAllow: ONLY_ELECTRON })
   assert.deepEqual(unlistedApis, [])
@@ -192,7 +213,43 @@ test('control: a stale allow-list entry is reported', () => {
   const { staleApis, staleModules } = verdict(scanOf(`const a = 1`), {
     apiAllow: [{ file: FILE, api: 'fetch' }],
     moduleAllow: new Set(['electron']),
+    moduleAllowFiles: [],
   })
   assert.deepEqual(staleApis, [`${FILE} fetch`])
   assert.deepEqual(staleModules, ['electron'])
+})
+
+test('control: a module scoped to one file is reported in another file', () => {
+  const { unlistedModules } = verdict(scanOf(`import { createServer } from 'node:https'`), {
+    apiAllow: [],
+    moduleAllow: ONLY_ELECTRON,
+    moduleAllowFiles: [{ file: 'src/main/remote-server.ts', module: 'https' }],
+  })
+  assert.deepEqual(unlistedModules, [`${FILE}:1 https`])
+})
+
+test('control: the same module in the file it is scoped to is not reported', () => {
+  const { unlistedModules } = verdict(scanOf(`import { createServer } from 'node:https'`), {
+    apiAllow: [],
+    moduleAllow: ONLY_ELECTRON,
+    moduleAllowFiles: [{ file: FILE, module: 'https' }],
+  })
+  assert.deepEqual(unlistedModules, [])
+})
+
+test('control: a stale file-scoped entry is reported', () => {
+  const { staleModules } = verdict(scanOf(`import { app } from 'electron'`), {
+    apiAllow: [],
+    moduleAllow: ONLY_ELECTRON,
+    moduleAllowFiles: [{ file: FILE, module: 'https' }],
+  })
+  assert.deepEqual(staleModules, [`${FILE} https`])
+})
+
+test('control: a type-only import does not hide a value import of the same name', () => {
+  const { unlistedApis } = verdict(scanOf(`import { type WebSocket } from 'ws'\nnew WebSocket('wss://example.com')`), {
+    apiAllow: [],
+    moduleAllow: new Set(['electron', 'ws']),
+  })
+  assert.equal(unlistedApis.length, 1)
 })

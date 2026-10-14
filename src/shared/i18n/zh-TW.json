@@ -766,5 +766,56 @@
       "single": "{{title}}：{{summary}}",
       "singleUntitled": "{{summary}}"
     }
+  },
+  "remote": {
+    "title": "遠端存取",
+    "enable": "允許已配對的裝置連線",
+    "powerStatement": "已配對的裝置能做你在 session 裡能做的任何事：讀取你的 agent 與 shell，也能對它們打字。在不信任的網路上請關閉遠端存取。",
+    "state": {
+      "off": "關閉",
+      "listening": "正在 port {{port}} 等待連線",
+      "inUse": "port {{port}} 已被佔用，請換一個 port。",
+      "denied": "沒有權限在 port {{port}} 等待連線，請換一個 port。",
+      "other": "無法在 port {{port}} 等待連線：{{message}}"
+    },
+    "port": "Port",
+    "applyPort": "使用這個 port",
+    "portInvalid": "請選擇 1024 到 65535 之間的 port。",
+    "additionalAddress": "額外位址",
+    "additionalAddressHint": "手機連得到這台電腦的另一個名稱或位址，例如 Tailscale 名稱，或 port forward 用的 DDNS 名稱。",
+    "additionalAddressInvalid": "請輸入主機名稱或 IP 位址。",
+    "saveAddress": "儲存位址",
+    "addresses": "位址",
+    "fingerprint": "憑證指紋",
+    "pair": "配對裝置",
+    "pairingLink": "配對連結",
+    "pairingHint": "用手機上的 spekterm app 掃描這個 QR code。只能用一次，五分鐘內有效，而且只在這個畫面開著時有效。",
+    "pairingExpires": "{{time}} 後失效",
+    "pairDone": "完成",
+    "qr": "配對 QR code",
+    "devices": "已配對的裝置",
+    "noDevices": "沒有已配對的裝置。",
+    "connected": "已連線",
+    "lastSeen": "最後連線：{{time}}",
+    "neverSeen": "從未連線",
+    "revoke": "撤銷 {{name}}",
+    "revokeButton": "撤銷",
+    "reset": "重設遠端存取",
+    "resetHint": "產生新的憑證並撤銷所有已配對的裝置，每台裝置都要重新配對。",
+    "resetConfirm": "重設並撤銷所有裝置",
+    "resetNotice": {
+      "key-missing": "遠端存取已重設，因為它的私鑰不見了。請重新配對你的裝置。",
+      "key-mismatch": "遠端存取已重設，因為它的私鑰與憑證不再相符。請重新配對你的裝置。"
+    },
+    "dismissNotice": "知道了",
+    "close": "關閉",
+    "indicator": "遠端存取：有裝置連線中",
+    "section": {
+      "label": "遠端存取",
+      "off": "關閉",
+      "on": "開啟 · 已配對裝置：{{devices}} · 已連線：{{connected}}",
+      "failed": "未在運作：{{cause}}",
+      "open": "開啟遠端存取"
+    }
   }
 }

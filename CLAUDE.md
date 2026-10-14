@@ -96,6 +96,21 @@ OpenSpec 結構的側欄，讓使用者不必另外開 IDE 就能一邊駕駛 ag
   is held to the app by `scripts/network-surface.test.mjs` — **a new network API or import in
   `src/main` / `src/preload` / `src/shared` fails it until the page is revisited**. How the site is
   built, checked, and deployed: `site/README.md`, `site/DEPLOY.md`.
+- **Remote access** (`mobile-remote-bridge`) — **off by default**. When the user turns it on, a companion
+  Android app (its own repository, built against `docs/remote-protocol.md`) reaches spekterm **directly**:
+  TLS WebSocket on one port, all interfaces, a self-signed certificate the phone pins, per-device credentials
+  stored as hashes. **No relay, no push service, no outbound connection**: the phone learns of attention
+  events only over its own connection, and a short in-memory log replays what it missed. Three rules that fail
+  silently if forgotten:
+  - **`src/main/remote-server.ts` is the only module that may create a server or import `https`/`ws`**
+    (`scripts/server-source.test.mjs`, file-scoped entries in `scripts/network-surface.test.mjs`). `probe:core`
+    runs on a throwaway profile because the real one may have remote access on.
+  - **The renderer stays the authority on sessions**: a device's create, wake and accept are requests to it
+    (`workspace:remote:request`), carried out **quietly** — no selection change, no focused-session change, no
+    keyboard focus (`takeQuietArrival`). "Already running" is answered by the main process from the pty; the
+    renderer's status lags a hibernation by a moment.
+  - **A device's operations are one allow-list** (`OPERATIONS` in `src/main/remote-protocol.ts`); the protocol
+    document must list exactly them (`scripts/remote-protocol-doc.test.mjs`).
 
 **以 MIT 開源**（`open-source-mit`：`LICENSE`、`CONTRIBUTING.md`、產物根目錄附本身與第三方的授權文字；
 公開前已改寫全部 git 歷史）。**Linux 打包已可用**（`npm run dist:linux` → AppImage，`npm run install:desktop` 裝進應用程式
@@ -187,7 +202,7 @@ SPEKTERM_SCAN_PATH=../spek npm run dev
 | | 是什麼 | 什麼時候跑 |
 |---|---|---|
 | `npm test`（＝ `test:unit`） | node:test —— headless、秒級、可平行、無副作用 | **隨時**。改完就跑 |
-| `npm run test:e2e` | 全部 13 支探針，走 CDP 或真 Electron 主行程，驗**被出貨的那份程式碼** | **驗收時**。約二十分鐘 |
+| `npm run test:e2e` | 全部 14 支探針，走 CDP 或真 Electron 主行程，驗**被出貨的那份程式碼** | **驗收時**。約二十分鐘 |
 | `npm run test:all` | 兩層都跑 | 封存前 |
 
 **`test:unit` 是一串寫死層數的 glob，而一支不在 glob 裡的測試從來不會被執行** —— 沒有錯誤、
@@ -253,6 +268,9 @@ npm run probe:intake    # agent-intake / intake-routing（收件匣的兩條入�
                         #   `runOpenedLifecycle`）：session 開在哪裡一律讀 pty 行程的
                         #   `/proc/<pid>/cwd`；「缺了確認的 folder 就拒絕」直接呼叫 IPC ——
                         #   經畫面的斷言對主行程恆綠（停用的按鈕點不到它）
+npm run probe:remote    # remote-access / remote-protocol / remote-notifications: the probe is the phone
+                        #   (`lib/remote-client.mjs` pins the certificate; pairs with the code the dialog shows).
+                        #   Listener ports come from `lib/ports.mjs`, never 47615 — the maintainer's own app may hold it
 npm run probe:slack     # slack-intake-source / secret-scope（替身是**真的 HTTPS 伺服器** ——
                         #   產品的端點白名單只認 https，而那條不為驗收放寬。信任錨走
                         #   `NODE_EXTRA_CA_CERTS`：實測 `--ignore-certificate-errors` 無效，
@@ -277,8 +295,8 @@ PROBE_SKIP_BUILD=1 npm run probe:keyboard         # 只改探針腳本時跳過�
 PROBE_DISPLAY=physical npm run probe:terminal     # 逃生口：畫在實體螢幕上
 ```
 
-**`probe:package` 自成第三個成本層級 —— 它不在上面那十三支裡，也刻意不併進 `test:e2e`。**
-它會先跑一次**完整打包**再啟動**真正的 AppImage**（其餘十三支驗的都是 `electron .` 載入 `out/`，
+**`probe:package` 自成第三個成本層級 —— 它不在上面那十四支裡，也刻意不併進 `test:e2e`。**
+它會先跑一次**完整打包**再啟動**真正的 AppImage**（其餘十四支驗的都是 `electron .` 載入 `out/`，
 那不是被出貨的東西）。層級是「**換版前跑一次**」。
 
 ```bash

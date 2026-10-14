@@ -790,5 +790,56 @@
       "single": "{{title}}: {{summary}}",
       "singleUntitled": "{{summary}}"
     }
+  },
+  "remote": {
+    "title": "Remote access",
+    "enable": "Allow paired devices to connect",
+    "powerStatement": "A paired device can do anything you can do in a session: it reads and types into your agents and shells. Turn remote access off on networks you do not trust.",
+    "state": {
+      "off": "Off",
+      "listening": "Listening on port {{port}}",
+      "inUse": "Port {{port}} is already in use. Choose another port.",
+      "denied": "Not permitted to listen on port {{port}}. Choose another port.",
+      "other": "Could not listen on port {{port}}: {{message}}"
+    },
+    "port": "Port",
+    "applyPort": "Use port",
+    "portInvalid": "Choose a port from 1024 to 65535.",
+    "additionalAddress": "Additional address",
+    "additionalAddressHint": "Another name or address your phone can reach this computer at, such as a Tailscale name or a DDNS name for a port forward.",
+    "additionalAddressInvalid": "Enter a host name or an IP address.",
+    "saveAddress": "Save address",
+    "addresses": "Addresses",
+    "fingerprint": "Certificate fingerprint",
+    "pair": "Pair a device",
+    "pairingLink": "Pairing link",
+    "pairingHint": "Scan this code with the spekterm app on your phone. It works once, for five minutes, while this view is open.",
+    "pairingExpires": "Expires in {{time}}",
+    "pairDone": "Done",
+    "qr": "Pairing QR code",
+    "devices": "Paired devices",
+    "noDevices": "No paired devices.",
+    "connected": "Connected",
+    "lastSeen": "Last seen {{time}}",
+    "neverSeen": "Never connected",
+    "revoke": "Revoke {{name}}",
+    "revokeButton": "Revoke",
+    "reset": "Reset remote access",
+    "resetHint": "Creates a new certificate and revokes every paired device; each must pair again.",
+    "resetConfirm": "Reset and revoke every device",
+    "resetNotice": {
+      "key-missing": "Remote access was reset because its private key was missing. Pair your devices again.",
+      "key-mismatch": "Remote access was reset because its private key no longer matched its certificate. Pair your devices again."
+    },
+    "dismissNotice": "Dismiss",
+    "close": "Close",
+    "indicator": "Remote access: a device is connected",
+    "section": {
+      "label": "Remote access",
+      "off": "Off",
+      "on": "On · paired devices: {{devices}} · connected: {{connected}}",
+      "failed": "Not running: {{cause}}",
+      "open": "Open remote access"
+    }
   }
 }

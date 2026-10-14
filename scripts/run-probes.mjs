@@ -27,7 +27,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..')
  * 一律經 `run-probe.mjs`，不直接 spawn 探針 —— 螢幕的選擇（虛擬／實體）與軟體 GL 的旗標收在
  * 那一層，這裡若自己 spawn，兩條路徑遲早會不一樣。
  */
-const ALL_PROBES = ['native', 'core', 'identity', 'shell', 'workspace', 'files', 'keyboard', 'insights', 'agent-view', 'intake', 'slack', 'openspec', 'terminal']
+const ALL_PROBES = ['native', 'core', 'identity', 'shell', 'workspace', 'files', 'keyboard', 'insights', 'agent-view', 'intake', 'slack', 'remote', 'openspec', 'terminal']
 
 /**
  * `PROBE_LIST=a,b,c` 縮減本輪要跑的探針。

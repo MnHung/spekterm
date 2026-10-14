@@ -241,6 +241,18 @@ export interface DrainResult {
    * 「正在被問什麼」，作答一律回終端 view（見 `agent-input-bridge`）。
    */
   pending: { tool: string; arg: string | null } | null
+  /**
+   * The batch contains the agent's turn-completion event (`Stop`). **Not derivable from `state`**: a turn
+   * that starts and ends within one batch folds to `ready` → `ready` (`remote-notifications`).
+   */
+  turnEnded: boolean
+  /**
+   * The tool of the batch's last `PermissionRequest`, or `null`. **Not derivable from `state` either**: an
+   * answered prompt followed by the next one (`PostToolUse` → `PreToolUse` → `PermissionRequest`) folds to
+   * `awaiting-choice` → `awaiting-choice`. Only `PermissionRequest` counts — the `Notification` the agent
+   * sends for the same prompt would raise it twice.
+   */
+  choiceRaised: { tool: string; arg: string | null } | null
 }
 
 /**
@@ -253,20 +265,22 @@ export interface DrainResult {
  */
 export function drainEvents(sessionId: string, current: WaitState): DrainResult {
   const dir = sessionDir(sessionId)
-  if (!dir) return { state: current, transcriptPath: null, count: 0, pending: null }
+  if (!dir) return { state: current, transcriptPath: null, count: 0, pending: null, turnEnded: false, choiceRaised: null }
 
   let names: string[]
   try {
     names = fs.readdirSync(dir).filter((name) => name.endsWith('.json')).sort()
   } catch {
     // 目錄不存在 ＝ 未注入或已清除。**不改變狀態** —— 呼叫端的初始值本來就是未知。
-    return { state: current, transcriptPath: null, count: 0, pending: null }
+    return { state: current, transcriptPath: null, count: 0, pending: null, turnEnded: false, choiceRaised: null }
   }
 
   let state = current
   let transcriptPath: string | null = null
   let count = 0
   let pending: DrainResult['pending'] = null
+  let turnEnded = false
+  let choiceRaised: DrainResult['choiceRaised'] = null
   for (const name of names) {
     const file = path.join(dir, name)
     let event: AgentEvent | null
@@ -284,12 +298,14 @@ export function drainEvents(sessionId: string, current: WaitState): DrainResult 
     if (!event) continue
     count += 1
     state = nextWaitState(event)
+    if (event.name === 'Stop') turnEnded = true
+    if (event.name === 'PermissionRequest') choiceRaised = { tool: event.toolName ?? '', arg: event.toolArg }
     if (event.transcriptPath) transcriptPath = event.transcriptPath
     // 只在「進入等待選擇」的那一則上取，離開時一併清掉 —— 否則畫面會留著一個已經被回答完的請求。
     pending =
       state === 'awaiting-choice' ? { tool: event.toolName ?? '', arg: event.toolArg } : null
   }
-  return { state, transcriptPath, count, pending }
+  return { state, transcriptPath, count, pending, turnEnded, choiceRaised }
 }
 
 /**

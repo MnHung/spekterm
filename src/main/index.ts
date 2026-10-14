@@ -17,7 +17,24 @@ import { broadcastLifecycle, registerHandoffHandlers, revealHandoffBrief } from 
 import { registerSettingsHandlers } from './ipc/settings'
 import { registerSlackHandlers } from './ipc/slack'
 import { registerShellHandlers } from './ipc/shell'
-import { currentRelationsWorld, liveSessionsOf, onPtyChange, registerTerminalHandlers, runningAgents } from './ipc/terminal'
+import {
+  currentRelationsWorld,
+  displayedSessionOf,
+  existingTerminalService,
+  liveSessionsOf,
+  onPtyChange,
+  registerTerminalHandlers,
+  remoteTerminalOutput,
+  runningAgents,
+  setRemoteWatched,
+} from './ipc/terminal'
+import { broadcastRemoteState, registerRemoteHandlers, requestRenderer } from './ipc/remote'
+import { onIntakeChanged } from './intake-changes'
+import { OpenSpecService } from './openspec-service'
+import { AttentionLog } from './remote-attention'
+import { createRemoteHost } from './remote-host'
+import { RemoteService } from './remote-service'
+import { RemoteStore } from './remote-store'
 import { applyNavigationGuards } from './navigation'
 import { formatScanSummary, scanRepo } from './openspec'
 import { type AskClose, type GuardedWindow, type QuitState, guardWindowClose } from './close-guard'
@@ -42,7 +59,7 @@ import { refreshIntros } from './handoff-injection'
 import { refreshRelations } from './handoff-relations'
 import { HandoffService, registerHandoffService } from './handoff-service'
 import { HandoffCompletion } from './handoff-completion'
-import { subscribeWait } from './agent-wait'
+import { observeWaits, subscribeWait } from './agent-wait'
 import { configureTicketLineage, ticketResolutionFor } from './handoff-ticket'
 import { preferredTitle } from '../shared/lineage/label'
 import { RoutingStore, routingFile } from './intake-routing'
@@ -96,6 +113,8 @@ interface WindowDeps {
   closeAsk?: AskClose
   /** Told when a window's renderer goes away (destroyed or reloaded), so it must say it is ready again. */
   presence?: WindowPresence
+  /** Told the same, for remote watches on that window's sessions (`remote-protocol`). */
+  onRendererGone?: () => void
 }
 
 /** Each live window's guard, by `webContents.id` — the macOS Quit item asks it to close for a quit. */
@@ -126,7 +145,7 @@ function applyApplicationMenu(): void {
   Menu.setApplicationMenu(template ? Menu.buildFromTemplate(template) : null)
 }
 
-function createWindow({ dirty, store, sessions, closeAsk, presence }: WindowDeps): BrowserWindow {
+function createWindow({ dirty, store, sessions, closeAsk, presence, onRendererGone }: WindowDeps): BrowserWindow {
   const window = new BrowserWindow({
     width: 1280,
     height: 800,
@@ -166,11 +185,13 @@ function createWindow({ dirty, store, sessions, closeAsk, presence }: WindowDeps
   window.webContents.on('did-navigate', () => {
     dirty.release(contentsId)
     presence?.rendererGone(contentsId)
+    onRendererGone?.()
   })
   window.webContents.once('destroyed', () => {
     dirty.release(contentsId)
     presence?.rendererGone(contentsId)
     guardedWindows.delete(contentsId)
+    onRendererGone?.()
   })
 
   window.on('ready-to-show', () => {
@@ -561,8 +582,84 @@ void app.whenReady().then(async () => {
   applyApplicationMenu()
   i18n.on('languageChanged', applyApplicationMenu)
 
-  windowDeps = { dirty, store, sessions: sessionStore, closeAsk, presence }
+  /**
+   * Remote access (`remote-access`, `remote-protocol`, `remote-notifications`). Off unless the user turned it
+   * on; then it listens after the window exists, as Slack starts after it. Everything it does to sessions goes
+   * through the window's renderer (`ipc/remote.ts`), and it opens no window of its own.
+   */
+  const remoteStore = new RemoteStore(join(app.getPath('userData'), 'remote.json'), secretStore)
+  remoteStore.load()
+  const remoteAttention = new AttentionLog({
+    now: Date.now,
+    sessionInfo: (sessionId) => {
+      const session = sessionStore.view().find((entry) => entry.session.id === sessionId)?.session
+      if (!session) return null
+      const folder = session.folderId === null ? undefined : store.list().find((f) => f.id === session.folderId)
+      return {
+        folderName: session.folderId === null ? null : (folder?.name ?? null),
+        title: preferredTitle(session) ?? `${session.spawnTarget} ${session.ordinal}`,
+      }
+    },
+    // The session the user is looking at: displayed in the window that has focus.
+    displayedInFocus: (sessionId) => {
+      const focused = BrowserWindow.getFocusedWindow()
+      return focused !== null && !focused.isDestroyed() && displayedSessionOf(focused.webContents.id) === sessionId
+    },
+  })
+  let remoteOpenSpec: OpenSpecService | null = null
+  const remoteService = new RemoteService({
+    store: remoteStore,
+    output: remoteTerminalOutput,
+    attention: remoteAttention,
+    serverInfo: () => ({ name: 'spekterm', version: app.getVersion() }),
+    onStateChanged: () => broadcastRemoteState(remoteService),
+    host: createRemoteHost({
+      window: () => liveWindow()?.webContents.id ?? null,
+      folders: store,
+      sessions: sessionStore,
+      terminal: existingTerminalService,
+      output: remoteTerminalOutput,
+      intake: intakeService,
+      routing: routingStore,
+      // Its own instance, so a phone's reads never touch the side panel's watches; read-only.
+      openspec: () => (remoteOpenSpec ??= new OpenSpecService(store, () => undefined)),
+      attention: remoteAttention,
+      request: requestRenderer,
+      setRemoteWatched,
+    }),
+  })
+  registerRemoteHandlers(remoteService)
+  remoteStore.subscribe(() => {
+    if (remoteStore.get().enabled || !remoteOpenSpec) return
+    void remoteOpenSpec.dispose()
+    remoteOpenSpec = null
+  })
+  // Every drained batch of every session: attention events, and the session list's wait states.
+  observeWaits((sessionId, snapshot, previous) => {
+    remoteAttention.onWait(sessionId, snapshot)
+    if (snapshot.state !== previous) remoteService.listChanged('sessions')
+  })
+  intakeService.onArrival((record) => remoteAttention.onIntake(record))
+  onIntakeChanged(() => remoteService.listChanged('inbox'))
+  sessionStore.subscribe(() => remoteService.listChanged('sessions'))
+  onPtyChange(() => remoteService.listChanged('sessions'))
+  store.subscribe(() => remoteService.listChanged('sessions'))
+  app.on('will-quit', () => {
+    void remoteService.stop()
+  })
+
+  windowDeps = {
+    dirty,
+    store,
+    sessions: sessionStore,
+    closeAsk,
+    presence,
+    onRendererGone: () => remoteService.windowGone(),
+  }
   createWindow(windowDeps)
+  void remoteService.apply().catch((error) => {
+    console.error(`[remote] failed to start: ${String(error)}`)
+  })
 
   /**
    * 檔案落點：**mkdir → 建立監看並等它就緒 → 掃描既有內容**。
@@ -601,7 +698,10 @@ void app.whenReady().then(async () => {
     subscribe: subscribeWait,
     onChange: (sessionId) => onCompletionChange?.(sessionId),
     // 完成的那一刻告訴使用者（`handoff-completion`）—— 與收件匣的通知共用同一個窗與上界。
-    onReported: (sessionId, title, summary) => notifier.completed(sessionId, title, summary),
+    onReported: (sessionId, title, summary) => {
+      notifier.completed(sessionId, title, summary)
+      remoteAttention.onReported(sessionId, title, summary)
+    },
   })
   const handoffService = new HandoffService({
     service: intakeService,
@@ -674,6 +774,8 @@ void app.whenReady().then(async () => {
   onCompletionChange = () => {
     refreshAllRelations()
     broadcastLifecycle()
+    remoteService.listChanged('handoffs')
+    remoteService.listChanged('sessions')
   }
 
   /**

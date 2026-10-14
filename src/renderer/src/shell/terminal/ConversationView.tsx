@@ -112,7 +112,7 @@ export function ConversationView({ sessionId, active, dormant, covered = false }
   const [draft, setDraft] = useState('')
   const [blocked, setBlocked] = useState<WaitState | null>(null)
     const bottomRef = useRef<HTMLDivElement | null>(null)
-  const { wake } = useSessions()
+  const { wake, takeQuietArrival } = useSessions()
   const rootRef = useRef<HTMLDivElement | null>(null)
   const wakeButtonRef = useRef<HTMLButtonElement | null>(null)
 
@@ -128,10 +128,13 @@ export function ConversationView({ sessionId, active, dormant, covered = false }
     const uncovered = wasCovered.current && !covered
     wasDormant.current = dormant
     wasCovered.current = covered
+    // A session woken for a paired device does not take the composer's focus (`remote-protocol`).
+    const quiet = was && !dormant && takeQuietArrival(sessionId, 'conversation')
     if (!active || covered) return
     if (dormant) wakeButtonRef.current?.focus()
+    else if (quiet) return
     else if (was || uncovered) rootRef.current?.querySelector('textarea')?.focus()
-  }, [active, dormant, covered])
+  }, [active, dormant, covered, sessionId, takeQuietArrival])
 
 
   useEffect(() => {

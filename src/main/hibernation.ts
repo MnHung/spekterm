@@ -32,7 +32,11 @@ export class HibernationTracker {
   readonly #deps: TrackerDeps
   readonly #sessions = new Map<string, Tracked>()
   /** Displayed session per renderer (`webContents.id`). */
-  readonly #displayed = new Map<number, string | null>()
+  /**
+   * What is on screen: each window's displayed session (keyed by `webContents.id`), and each remote watch
+   * (keyed by a string, `session-hibernation`'s "a session a paired device is watching counts as displayed").
+   */
+  readonly #displayed = new Map<number | string, string | null>()
   /** token → session it was issued for. Cleared on every tick: a token lives one tick at most. */
   readonly #tokens = new Map<string, string>()
 
@@ -75,7 +79,15 @@ export class HibernationTracker {
   }
 
   /** A renderer reports the session it displays. Becoming and ceasing to be displayed are both activity. */
-  setDisplayed(contentsId: number, sessionId: string | null): void {
+  /**
+   * A paired device started or stopped watching a session (`remote-protocol`). It counts as displayed, and
+   * starting or stopping is activity, exactly as a window turning to a session or away from it.
+   */
+  setRemoteWatched(watchKey: string, sessionId: string | null): void {
+    this.setDisplayed(watchKey, sessionId)
+  }
+
+  setDisplayed(contentsId: number | string, sessionId: string | null): void {
     const previous = this.#displayed.get(contentsId) ?? null
     if (previous === sessionId) return
     const now = this.#deps.now()
@@ -85,6 +97,11 @@ export class HibernationTracker {
     }
     if (sessionId === null) this.#displayed.delete(contentsId)
     else this.#displayed.set(contentsId, sessionId)
+  }
+
+  /** The session a window displays (by `webContents.id`), if any. */
+  displayedBy(contentsId: number): string | null {
+    return this.#displayed.get(contentsId) ?? null
   }
 
   isDisplayed(sessionId: string): boolean {

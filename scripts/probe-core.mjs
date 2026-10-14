@@ -216,10 +216,18 @@ async function runApp(scanPath) {
   // 基準線：app 尚未啟動時，本 netns 已存在的 LISTEN socket（機器上其他行程的）
   const baseline = onLinux ? hostListenTable() : new Map()
 
+  /*
+    **A throwaway profile** (`XDG_CONFIG_HOME` at an empty directory; no `--user-data-dir`, which is what this
+    probe has always launched without). On the maintainer's real profile remote access may be on, and then
+    the app listens by design — "no process holds a LISTEN socket" would be red for a correct app. With a
+    fresh profile it is the carrier of `remote-access`'s "A fresh profile does not listen".
+  */
+  const profile = mkdtempSync(join(tmpdir(), 'spekterm-core-profile-'))
+  tempDirs.push(profile)
   const child = spawn('electron', [...electronExtraArgs(), '.'], {
     cwd: PROJECT_ROOT,
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, SPEKTERM_SCAN_PATH: scanPath },
+    env: { ...process.env, SPEKTERM_SCAN_PATH: scanPath, XDG_CONFIG_HOME: profile },
   })
 
   let stdout = ''
@@ -318,7 +326,8 @@ const importsCore = /from '@spekjs\/core'/.test(mainSources)
 const callsScan = /scanOpenSpec\(/.test(mainSources)
 check(results, '主行程直接 import @spekjs/core', importsCore && callsScan,
   `import 到 @spekjs/core=${importsCore}；呼叫 scanOpenSpec()=${callsScan}`)
-check(results, '主行程未建立 server', !/createServer|\.listen\(/.test(mainSources))
+// "No server in the main process" moved to `scripts/server-source.test.mjs` with `mobile-remote-bridge`: one
+// module (the remote access listener) may create one now, and that rule is a source rule, not a run.
 
 const tempDirs = []
 function bail(message) {

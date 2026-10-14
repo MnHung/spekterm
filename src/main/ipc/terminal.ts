@@ -25,6 +25,13 @@ import { worktreesFor } from './openspec'
 import { pickCreateWorktree, pickWorktree } from '../worktree-pick'
 import type { FsResult } from './fs'
 import { disposeConversationFor } from './conversation'
+import { RemoteOutput } from '../remote-output'
+
+/**
+ * Recent pty output for remote terminal watches (`remote-protocol`). Fed from the same `data` path that
+ * feeds the renderer, so a phone sees what the desktop sees. It buffers only while remote access is on.
+ */
+export const remoteTerminalOutput = new RemoteOutput()
 
 export const TERMINAL_CHANNELS = {
   /** renderer → main：現在盯著哪個 session（`null` ＝ 停止）。狀態列只對 focused 的那一個求值。 */
@@ -94,6 +101,16 @@ const hibernation = new HibernationTracker({
   waitStateOf,
   hasUnconfirmedSubmission,
 })
+
+/** The session a window displays, as its renderer last reported it. */
+export function displayedSessionOf(contentsId: number): string | null {
+  return hibernation.displayedBy(contentsId)
+}
+
+/** A remote watch counts as displayed for automatic hibernation (`session-hibernation`). */
+export function setRemoteWatched(watchKey: string, sessionId: string | null): void {
+  hibernation.setRemoteWatched(watchKey, sessionId)
+}
 
 /** 所有服務中目前持有 pty 的 claude session —— 關係檔的「是否在執行」。 */
 export function runningAgents(): string[] {
@@ -238,11 +255,15 @@ function serviceFor(
     const service = new TerminalService(store, {
     data: (sessionId, chunk) => {
       hibernation.output(sessionId)
+      remoteTerminalOutput.data(sessionId, chunk)
       if (contents.isDestroyed()) return
       contents.send(TERMINAL_CHANNELS.data, sessionId, chunk)
     },
+    spawned: (sessionId) => remoteTerminalOutput.spawned(sessionId),
+    resized: (sessionId, cols, rows) => remoteTerminalOutput.resized(sessionId, cols, rows),
     exit: (sessionId, exitCode, reason) => {
       hibernation.untrack(sessionId)
+      remoteTerminalOutput.exited(sessionId)
       // The pty held any filled-in prompt; with it gone there is nothing left to confirm.
       forgetSubmission(sessionId)
       if (reason === 'hibernated') {

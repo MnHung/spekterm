@@ -47,6 +47,8 @@ export function scanSource(fileName, text) {
   const visit = (node) => {
     // Types open no connections: `typeof fetch` in an annotation, `WebSocket` as a type.
     if (ts.isTypeNode(node)) return
+    // A type-only import names a type, which cannot open a connection (`import { type WebSocket } from 'ws'`).
+    if (ts.isImportSpecifier(node) && (node.isTypeOnly || node.parent?.parent?.isTypeOnly)) return
 
     if (ts.isIdentifier(node) && (NETWORK_GLOBALS.has(node.text) || NETWORK_MEMBERS.has(node.text))) {
       apis.push({ api: node.text, line: lineOf(node) })

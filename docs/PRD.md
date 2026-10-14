@@ -139,7 +139,7 @@ Electron，目標產出 macOS / Windows / Linux 三平台安裝檔。
 | F7 | 打包發佈 | electron-builder 三平台安裝檔、主題、持久化 layout | Phase 6 |
 | F7b | UI 語言 | 介面文案可切換語言（`en` / `zh-TW`），立即生效且跨重啟保留；首次啟動取自作業系統的偏好語言。**寫給 agent 讀的文字不在地化**（見下） | Phase 6 ✅ |
 | F8 | Handoff（本機免費） | 寫 handoff → daemon probe → 同機自動開 session + context 注入 | Phase 7（moat）|
-| F9 | Handoff（跨機/跨人/編排，付費） | relay、跨人核准、自動編排 Claude→Codex→Gemini、稽核、遠端核准。**2026-09-29 已裁決不做**：同一人的跨機與手機核准已由官方覆蓋（§10） | —（不做） |
+| F9 | Handoff（跨機/跨人/編排，付費） | relay、跨人核准、自動編排 Claude→Codex→Gemini、稽核、遠端核准。**2026-09-29 已裁決不做**：同一人的跨機與手機核准已由官方覆蓋（§10）。**2026-10: same-person phone control is back** as an open-source feature with no relay and no paid tier — remote access and the companion Android app (`mobile-remote-bridge`, §10) | —（付費層不做） |
 
 ---
 
@@ -325,7 +325,7 @@ spek 背景 router 主動 probe → 比對 to 命中的 repo-B
    - **內容（payload）= 磁碟狀態快照（git diff／檔案）為底**；當工作對應到 change 時，再連到 repo 內的 OpenSpec change、不重抄（豐富內容跟著 repo 走 git、天然 spec 錨定）。無 change 時就只有磁碟快照。
    - **跨機 / 跨人 = relay**（spek 自己的中繼）：本機 daemon 把 outbox 同步到 relay，relay 送到別台機 / 別人的 daemon。
    - **不採**「主要存 repo 內用 git 傳」：解不了跨 repo 路由、又會弄髒版控。
-3. **Freemium**：本機單人 handoff 免費；跨機 / 跨人 / 自動編排 / 稽核 / 遠端核准付費（見 §10）。**2026-09-29 已裁決不做付費層**（§10）。
+3. **Freemium**：本機單人 handoff 免費；跨機 / 跨人 / 自動編排 / 稽核 / 遠端核准付費（見 §10）。**2026-09-29 已裁決不做付費層**（§10）。Phone access for the same person came back in 2026-10, free and direct (`mobile-remote-bridge`).
 
 ### 7.7 元件（work breakdown）
 
@@ -460,6 +460,13 @@ cross-person routing, remote approval from a phone, and automatic orchestration 
 2026-09 that plan was dropped — the same-person parts are now covered by first-party tooling, and a closed,
 paid local app has little room next to free open-source alternatives. The project was released as MIT
 instead (change `open-source-mit`), and Phase 8+ is not planned.
+
+**2026-10: the same-person phone part came back, free.** Daily use showed that the first-party remote control
+reaches one agent session at a time and sees none of what spekterm adds (every repo's sessions, the inbox and
+handoffs, the OpenSpec side panel), and says nothing when an agent starts waiting. Remote access
+(`mobile-remote-bridge`) lets a companion Android app (a separate repository) reach spekterm directly — LAN,
+Tailscale or a port forward — with a pinned certificate and per-device credentials. There is still no relay,
+no push service and no paid tier: the phone learns of events only over its own connection.
 
 The only income is sponsorship, which supports the maintainer personally and is not distributed based on
 contributions (see `CONTRIBUTING.md`).
@@ -725,7 +732,7 @@ session 脈絡裡送出的，彙整成一份跨數十天、跨數十個專案的
 
 - **Relay**：跨機 / 跨人中繼 + 身分 / Team registry + 存取控制 + 跨人核准。
 - **多 agent**：擴充 spawner 注入抽象至 Codex / Gemini；**自動編排** Claude→Codex→Gemini。
-- handoff 歷史 / 稽核、手機遠端核准。
+- handoff 歷史 / 稽核、手機遠端核准。**Phone access for the same person shipped free in 2026-10** (`mobile-remote-bridge`): direct, no relay; the Android app lives in its own repository.
 
 ---
 
@@ -745,6 +752,10 @@ session 脈絡裡送出的，彙整成一份跨數十天、跨數十個專案的
   - fs 寫入與 terminal cwd 限制在已加入的 workspace folders。
   - Electron `contextIsolation: true`、停用 `nodeIntegration`，所有能力走 preload 白名單。
   - handoff auto-spawn 受 §7.6 信任邊界約束（同機同人 vs 跨人核准）。
+  - **Remote access** (`mobile-remote-bridge`) is off by default. When on, one module listens (TLS on all
+    interfaces); a paired device has the user's power over agents — it can type into sessions — and nothing
+    else (no files outside OpenSpec reads, no settings, no credentials). Devices pin a self-signed certificate
+    and hold their own revocable credential, stored only as a hash; the feature makes no outbound connection.
 - **效能**：大目錄樹 lazy load；大檔案 Monaco 上限保護。
 
 ---

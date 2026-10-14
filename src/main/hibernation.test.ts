@@ -98,6 +98,29 @@ describe('HibernationTracker (session-hibernation)', () => {
     assert.equal(tracker.eligible('s', 'idle', HOUR), true)
   })
 
+  it('a session a paired device watches does not qualify, and does once the watch ends and the threshold passes', () => {
+    const { tracker, advance, setWait } = setup()
+    tracker.track('c', 'claude')
+    setWait('c', 'ready')
+    tracker.setRemoteWatched('remote:1:conversation', 'c')
+    advance(2 * HOUR)
+    assert.equal(tracker.eligible('c', 'idle', HOUR), false, 'watched from a phone')
+    tracker.setRemoteWatched('remote:1:conversation', null)
+    assert.equal(tracker.eligible('c', 'idle', HOUR), false, 'the watch ending is activity')
+    advance(HOUR)
+    assert.equal(tracker.eligible('c', 'idle', HOUR), true)
+  })
+
+  it('a remote watch and a window are counted separately', () => {
+    const { tracker, advance } = setup()
+    tracker.track('s', 'shell')
+    tracker.setDisplayed(1, 's')
+    tracker.setRemoteWatched('remote:1:terminal', 's')
+    tracker.setDisplayed(1, null)
+    advance(2 * HOUR)
+    assert.equal(tracker.eligible('s', 'idle', HOUR), false, 'the phone still watches it')
+  })
+
   it('an unconfirmed filled-in prompt keeps a ready agent', () => {
     const { tracker, advance, setWait, unconfirmed } = setup()
     tracker.track('c', 'claude')

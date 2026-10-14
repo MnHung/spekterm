@@ -32,6 +32,9 @@ agent writes to disk.
   and timeline, worktrees included.
 - **Conversation view, inbox, and handoffs** — read an agent as messages; Slack mentions become inbox
   items; agents can hand work to another repository.
+- **Remote access** (off by default) — a paired phone reaches spekterm directly, with no relay: sessions,
+  conversations, the inbox, and a notice when an agent waits for you. The Android app is in development; the
+  protocol is in [`docs/remote-protocol.md`](docs/remote-protocol.md).
 
 Everything is described in the [documentation](https://spekterm.com/docs/), including
 [keyboard shortcuts](https://spekterm.com/docs/reference/keyboard-shortcuts/),

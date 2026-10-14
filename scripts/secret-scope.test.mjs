@@ -81,8 +81,11 @@ const SECRET_FORBIDDEN = [
  * - `secret-store.ts` —— 它要把值寫進檔案。
  * - `slack-api.ts` —— 它要把憑證放進 `Authorization` header。**這是網路那條出口**
  *   （`secret-scope` 的第四條），因此這份白名單同時是「憑證會被送到哪裡」的清查起點。
+ * - `remote-store.ts` —— it reads the remote access listener's TLS private key (`remote.tlsKey`) to hand it
+ *   to the TLS server in the same process. That key never leaves the main process (`remote-access`); it is
+ *   not sent anywhere — the listener only presents the certificate.
  */
-const REVEAL_ALLOWLIST = [SECRET_MODULE, join('src', 'main', 'slack-api.ts')]
+const REVEAL_ALLOWLIST = [SECRET_MODULE, join('src', 'main', 'slack-api.ts'), join('src', 'main', 'remote-store.ts')]
 
 /** `reveal()` 的方法名。 */
 const REVEAL = 'reveal'

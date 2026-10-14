@@ -36,6 +36,13 @@
 export const STUB_PORTS = {
   /** 替身 Slack 的 HTTPS 伺服器。 */
   slack: 18443,
+  /**
+   * The remote access listener (`probe-remote.mjs`). **Never the product default 47615**: a maintainer's own
+   * Spekterm with remote access on holds that one, and the probe would talk to it. Two, because the probe
+   * moves the listener from one to the other and holds one itself to cause a conflict.
+   */
+  remoteListener: 18471,
+  remoteListenerAlt: 18472,
 }
 
 /** 探針名 → 該支所有 debugging port（鍵名說明它是哪一次啟動）。 */
@@ -85,6 +92,11 @@ export const PROBE_PORTS = {
    */
   intake: { main: 9241, restart: 9242 },
   package: { main: 9240 },
+  /**
+   * Two launches: the main one, and one **on the same profile after a restart** (the listener is on again
+   * with the same certificate). The second port follows the `intake` lesson above.
+   */
+  remote: { main: 9250, restart: 9251 },
   /** The macOS packaging acceptance (`probe-package-mac.mjs`), run on a Mac, never in `test:e2e`. */
   packageMac: { main: 9249 },
   /** Not a probe: the website's screenshot capture (`scripts/capture-screenshots.mjs`) drives the built app. */

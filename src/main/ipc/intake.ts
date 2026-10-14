@@ -16,6 +16,7 @@ import { OVERFLOW_KEY } from '../intake-service'
 import type { IntakeService } from '../intake-service'
 import type { FolderLookup } from '../workspace-store'
 import { existingTerminalService } from './terminal'
+import { dismissIntake, notifyIntakeChanged, onIntakeChanged } from '../intake-changes'
 
 /**
  * 收件匣的 IPC。
@@ -176,12 +177,15 @@ export function registerIntakeHandlers(deps: IntakeHandlerDeps): void {
 
   const knownIds = (): ReadonlySet<string> => new Set(folders.list().map((f) => f.id))
 
-  const broadcast = (): void => {
+  // Every inbox change, from either side, goes through the one signal (`intake-changes.ts`); this
+  // renderer-facing listener is one of its listeners, the remote server another.
+  onIntakeChanged(() => {
     for (const sender of senders) {
       if (sender.isDestroyed()) senders.delete(sender)
       else sender.send(INTAKE_CHANNELS.changed)
     }
-  }
+  })
+  const broadcast = notifyIntakeChanged
   service.subscribe(broadcast)
 
   ipcMain.handle(INTAKE_CHANNELS.list, (event) => {
@@ -264,8 +268,7 @@ export function registerIntakeHandlers(deps: IntakeHandlerDeps): void {
 
   ipcMain.handle(INTAKE_CHANNELS.dismiss, (_event, id: unknown, adapter: unknown) => {
     if (typeof id !== 'string' || typeof adapter !== 'string') return { ok: false, reason: 'unknown' }
-    service.store.setState(adapter, id, 'dismissed')
-    broadcast()
+    dismissIntake(service.store, adapter, id)
     return { ok: true }
   })
 

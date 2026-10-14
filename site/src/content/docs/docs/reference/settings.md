@@ -39,6 +39,12 @@ macOS, idle shells are never hibernated automatically. See
 
 The version, build time, and commit of the build you are running — useful when reporting a problem.
 
+## Remote access
+
+One line of state — off; on, with how many devices are paired and how many are connected; or why it is not
+running (for example, the port is in use) — and a button that opens the **Remote access** dialog, where you turn
+it on, pair a phone, and revoke devices. See [Remote access](/docs/using/remote-access/).
+
 ## Slack connection
 
 The Slack connection is not in Settings: it is set up from the **Handoffs** inbox. See

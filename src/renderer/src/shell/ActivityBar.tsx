@@ -4,6 +4,8 @@ import { InsightsOverlay } from './insights/InsightsOverlay'
 import { IntakeOverlay } from './intake/IntakeOverlay'
 import { useIntake } from './intake/intake-state'
 import { TerminalFontDialog } from './settings/TerminalFontDialog'
+import { RemoteAccessDialog } from './remote/RemoteAccessDialog'
+import { useRemoteState } from './remote/useRemoteState'
 
 const ICON_PROPS = {
   viewBox: '0 0 24 24',
@@ -106,6 +108,9 @@ export function ActivityBar(): React.JSX.Element {
   const { t } = useTranslation()
   const { pendingCount } = useIntake()
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [remoteOpen, setRemoteOpen] = useState(false)
+  const remote = useRemoteState()
+  const remoteConnected = remote?.devices.some((device) => device.connected) ?? false
   // 開啟 overlay 的那個按鈕 —— 關閉時焦點要還給它，否則落回 `<body>`，下一次按鍵什麼都不發生。
   const [insightsOpener, setInsightsOpener] = useState<HTMLElement | null>(null)
   const [intakeOpener, setIntakeOpener] = useState<HTMLElement | null>(null)
@@ -150,7 +155,26 @@ export function ActivityBar(): React.JSX.Element {
         const label = t(item.labelKey)
 
         return (
-          <div key={item.id} className={item.atBottom ? 'mt-auto' : undefined}>
+          <div key={item.id} className={item.atBottom ? 'mt-auto flex flex-col gap-1' : undefined}>
+            {/*
+              While a paired device is connected (`remote-access`): who can type into the sessions must be
+              visible. Shown only then, and **above** Settings inside the bottom group, so appearing or
+              disappearing never moves the Settings entry from under the pointer.
+            */}
+            {item.atBottom && remoteConnected ? (
+              <button
+                type="button"
+                aria-label={t('remote.indicator')}
+                title={t('remote.indicator')}
+                onClick={() => setRemoteOpen(true)}
+                className="flex h-9 w-9 items-center justify-center rounded-md text-accent"
+              >
+                <svg {...ICON_PROPS}>
+                  <rect x="7" y="2" width="10" height="20" rx="2" />
+                  <path d="M11 18h2" />
+                </svg>
+              </button>
+            ) : null}
             <button
               type="button"
               ref={item.id === 'handoffs' ? handoffsRef : undefined}
@@ -174,7 +198,17 @@ export function ActivityBar(): React.JSX.Element {
         )
       })}
 
-      {settingsOpen && <TerminalFontDialog onClose={() => setSettingsOpen(false)} />}
+
+      {settingsOpen && (
+        <TerminalFontDialog
+          onClose={() => setSettingsOpen(false)}
+          onOpenRemote={() => {
+            setSettingsOpen(false)
+            setRemoteOpen(true)
+          }}
+        />
+      )}
+      {remoteOpen && <RemoteAccessDialog initial={remote} onClose={() => setRemoteOpen(false)} />}
       {insightsOpener && <InsightsOverlay opener={insightsOpener} onClose={closeInsights} />}
       {intakeOpener && <IntakeOverlay opener={intakeOpener} onClose={closeIntake} />}
     </nav>

@@ -65,6 +65,10 @@ export interface TerminalSink {
    * 持久化，而持久化的落點也在主行程 —— 於是這個 sink 只通知擁有者「該把它記下來了」。
    */
   conversation(sessionId: string, conversationId: string): void
+  /** A new pty now serves the session (a spawn, a wake, or a heal). Remote terminal positions restart. */
+  spawned?(sessionId: string): void
+  /** The session's pty took a new size. */
+  resized?(sessionId: string, cols: number, rows: number): void
 }
 
 /** pty 初始尺寸。renderer 掛載後會 fit 並 resize 校正，這只是 spawn 當下的暫定值。 */
@@ -598,6 +602,8 @@ export class TerminalService {
       shellIdentity: target === 'shell' ? fileIdentity(resolveShell()) : null,
     })
 
+    this.sink.spawned?.(sessionId)
+
     let exited!: () => void
     lastExit.set(sessionId, new Promise<void>((resolve) => { exited = resolve }))
 
@@ -728,7 +734,15 @@ export class TerminalService {
       session.pty.resize(safeCols, safeRows)
     } catch {
       // 尺寸事件與 pty 結束競態時的殘留呼叫，忽略。
+      return
     }
+    this.sink.resized?.(sessionId, safeCols, safeRows)
+  }
+
+  /** The pty's current size, or `null` when the session has no pty. */
+  sizeOf(sessionId: string): { cols: number; rows: number } | null {
+    const session = this.#sessions.get(sessionId)
+    return session ? { cols: session.pty.cols, rows: session.pty.rows } : null
   }
 
     /**

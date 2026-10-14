@@ -9,6 +9,7 @@
     "docs/using/files",
     "docs/using/inbox-and-slack",
     "docs/using/handoffs",
+    "docs/using/remote-access",
     "docs/reference/keyboard-shortcuts",
     "docs/reference/settings",
     "docs/reference/data-and-network",
@@ -27,7 +28,8 @@
       "claude",
       "openspec",
       "openspec config set telemetry.enabled false",
-      "login shell"
+      "login shell",
+      "remote access"
     ],
     "zh-TW": [
       "Slack",
@@ -35,7 +37,8 @@
       "claude",
       "openspec",
       "openspec config set telemetry.enabled false",
-      "login shell"
+      "login shell",
+      "遠端存取"
     ]
   },
   "forbiddenPhrases": [

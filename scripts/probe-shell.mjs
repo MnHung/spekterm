@@ -238,6 +238,9 @@ const PROBE_EXPRESSION = `(async () => {
           'conversation',
           'intake',
           'slack',
+          // remote 於 mobile-remote-bridge 引入（remote-access 規格）：遠端存取對話框的狀態與控制，
+          // 以及裝置請求的橋接（主行程 → renderer 的請求、renderer → 主行程的回覆）。
+          'remote',
         ].includes(key),
     ),
     // conversation 於 agent-transcript-view 引入（agent-transcript-stream / agent-input-bridge
@@ -310,6 +313,27 @@ const PROBE_EXPRESSION = `(async () => {
     // 在畫面上完全相同。端點自己一個成員，不併進一個吃整份設定的 setter。
     surplusSlackKeys: Object.keys(api?.slack ?? {}).filter(
       (key) => !['get', 'setToken', 'setLookbackDays', 'setApiBaseUrl', 'onChanged'].includes(key),
+    ),
+    // remote 逐成員列舉，理由同 insights／intake／slack。**介面上沒有讀取憑證、雜湊或私鑰的方法**
+    // —— 狀態是主行程組出的欄位白名單，唯一的機密是配對連結裡那組只能用一次、五分鐘失效的配對碼
+    // （對話框必須顯示它）。onRequest／reply 是裝置請求的橋接：建立、喚醒、接受仍由 renderer
+    // 走它既有的路徑完成（session 清單的權威在它那裡），renderer 不因此得到任何新的詞彙。
+    surplusRemoteKeys: Object.keys(api?.remote ?? {}).filter(
+      (key) =>
+        ![
+          'state',
+          'setEnabled',
+          'setPort',
+          'setAdditionalAddress',
+          'startPairing',
+          'cancelPairing',
+          'revoke',
+          'reset',
+          'dismissNotice',
+          'onChanged',
+          'onRequest',
+          'reply',
+        ].includes(key),
     ),
     // **憑證的讀取方法絕不可出現在介面上。** 上一條 surplusSlackKeys 是白名單（多出即違規），
     // 這一條是針對這個特定危害的具名斷言 —— 兩者互補：白名單會在有人把成員名字加進清單時
@@ -461,6 +485,9 @@ try {
   check(results, 'slack 介面只暴露已定義邊界要求的能力',
     r?.surplusSlackKeys?.length === 0,
     r?.surplusSlackKeys?.length ? `多出：${r.surplusSlackKeys.join(', ')}` : '無多餘能力')
+  check(results, 'remote 介面只暴露已定義邊界要求的能力',
+    r?.surplusRemoteKeys?.length === 0,
+    r?.surplusRemoteKeys?.length ? `多出：${r.surplusRemoteKeys.join(', ')}` : '無多餘能力')
   check(results, 'slack 介面沒有讀取憑證的能力',
     r?.slackHasCredentialReader === false,
     r?.slackHasCredentialReader ? '介面上出現了讀取憑證的方法' : '憑證只以布林出現在回傳值裡')

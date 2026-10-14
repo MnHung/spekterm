@@ -21,6 +21,16 @@ itself, and the programs it starts that make connections of their own.
 Nothing else. In particular, spekterm turns off the spell checker built into its browser engine, which
 would otherwise download a dictionary from a third-party server at startup.
 
+## Remote access (off unless you turn it on)
+
+With **remote access** on, spekterm **listens** for connections on one port (47615 unless you change it) on
+every network interface, so the spekterm app on your phone can reach it — over your LAN, Tailscale, or a port
+you forward. Only devices you paired can use the connection: each connects over TLS to a certificate it
+checked when pairing, and authenticates with its own credential, which you can revoke. **Remote access makes
+no connection of its own**: it only answers your devices, and your phone is told of events only while it is
+connected. No push service, relay, or server of the project is involved. While remote access is off, nothing
+listens. See [Remote access](/docs/using/remote-access/).
+
 ## Programs spekterm starts, which connect on their own
 
 spekterm runs programs you installed. What they send is up to them, and **spekterm's own checks cannot
@@ -57,7 +67,10 @@ Everything spekterm keeps is on your machine, under `~/.config/Spekterm` on Linu
 - a copy of your Claude Code conversations for the conversation numbers and readings, and the readings
   you generated;
 - your Slack credentials, in their own file that only your user account can read or write. The file is
-  not encrypted; anyone who can read your files as you can read it.
+  not encrypted; anyone who can read your files as you can read it;
+- remote access: its settings, its certificate, and your paired devices (`remote.json`, readable only by your
+  user account; it stores a hash of each device's credential, not the credential), and the certificate's
+  private key in the same file as the Slack credentials.
 
 spekterm also **reads** Claude Code's own transcripts under `~/.claude/projects` to show the conversation
 view. It never writes there.
@@ -66,4 +79,5 @@ view. It never writes there.
 
 On macOS, closing the window does not quit spekterm. While it keeps running without a window, the inbox
 keeps receiving deliveries and, if you saved Slack credentials, spekterm keeps checking Slack every five
-minutes. Quit it (`Cmd+Q`) to stop both.
+minutes. If remote access is on, it keeps listening, and a paired phone can still connect and see the inbox
+(sessions need the window). Quit it (`Cmd+Q`) to stop all of this.

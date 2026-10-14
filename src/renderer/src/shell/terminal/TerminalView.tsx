@@ -61,7 +61,7 @@ export function TerminalView({
   const { t } = useTranslation()
   // 解構出穩定的 callback。若依賴整個 api 物件，session 清單一變動就會重建 xterm
   // （連同 scrollback 一起消失）。
-    const { attach, setTitle, restoredScrollbackOf, registerFocus, registerSerializer, wake } = useSessions()
+    const { attach, setTitle, restoredScrollbackOf, registerFocus, registerSerializer, wake, takeQuietArrival } = useSessions()
   const { terminal: termPrefs, gpuEnabled } = usePreferences()
   const hostRef = useRef<HTMLDivElement | null>(null)
     const handleRef = useRef<XtermHandle | null>(null)
@@ -344,14 +344,24 @@ export function TerminalView({
   // same transition, and the two renderers measure different cells (DOM ≈ 9.63px, webgl 9px wide):
   // a fit there would send the pty a size computed from the renderer that is not the one in use, and
   // the agent would reflow for nothing (measured: 63 → 57 columns on maximize + restore).
+  //
+  // **A session that arrived quietly** (created or woken for a paired device, `remote-protocol`) holds back
+  // only the `focus()` of the moment it arrives — the fit still runs, or the pty would stay 80×24 and
+  // output at the wrong width would stay in history. The mark is asked for only at that moment (the first
+  // evaluation, or a status change): if the terminal is not on screen then, the mark is simply dropped, and
+  // the user's later activation focuses as usual.
   const previousStatus = useRef(status)
   // `false` at first, so the first run with a box fits.
   const previousActive = useRef(false)
+  const evaluated = useRef(false)
   useEffect(() => {
     const was = previousStatus.current
     const wasActive = previousActive.current
+    const arriving = !evaluated.current || was !== status
+    evaluated.current = true
     previousStatus.current = status
     previousActive.current = active
+    const quiet = arriving && takeQuietArrival(sessionId, 'terminal')
     if (!active) return
     if (!wasActive || was !== status) {
       const size = handleRef.current?.fit()
@@ -359,9 +369,10 @@ export function TerminalView({
     }
     if (covered) return
     if (was !== status && was !== 'dormant' && status !== 'dormant') return
+    if (quiet) return
     if (status === 'dormant') wakeButtonRef.current?.focus()
     else handleRef.current?.focus()
-  }, [active, covered, sessionId, status])
+  }, [active, covered, sessionId, status, takeQuietArrival])
 
   /**
    * GPU 加速：**只給當下顯示的那一個終端**，且使用者可以整個關掉。
