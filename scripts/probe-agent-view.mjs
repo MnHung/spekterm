@@ -1335,6 +1335,121 @@ async function runBusyIndicator(_mode, _config, context) {
 }
 
 /**
+ * **A text-only answer shows busy** (`agent-event-bridge`, companion-test-fixes).
+ *
+ * The stub writes its answer after `answerSeconds` and reports no tool event at all, so the only thing that
+ * can make the state busy is the submission event itself. `runBusyIndicator` cannot carry this: its stub
+ * fires `PreToolUse`, which was busy before this change too.
+ */
+async function runTextOnlyBusy(_mode, _config, context) {
+  if (context.app) await context.app.close()
+  const repo = mkTemp('spekterm-agentview-repoT-')
+  const configDir = mkTemp('spekterm-agentview-configT-')
+  const stub = makeStubAgent(mkTemp, configDir, { answerSeconds: 5 })
+  const profile = seedProfile(repo)
+  const app = await launch({ profile, configDir, stub, port: PORT })
+  context.app = app
+
+  await openConversation(app, repo.split('/').pop())
+  await sendFromConversation(app, 'TEXT-ONLY-PROBE')
+  const busyText = copy('conversation.busy').toUpperCase()
+  const busy = await pollFor({
+    read: () => app.client.evaluate(VIEW_STATE),
+    settled: (state) => state.text.toUpperCase().includes(busyText),
+    timeoutMs: 15_000,
+    label: 'a text-only answer shows busy',
+  })
+  check(
+    results,
+    'a text-only answer (no tool event) shows the agent busy',
+    busy.text.toUpperCase().includes(busyText),
+    `busy shown=${busy.text.toUpperCase().includes(busyText)}`,
+  )
+  const done = await pollFor({
+    read: () => app.client.evaluate(VIEW_STATE),
+    settled: (state) => state.text.includes('STUB-ANSWER-1') && !state.text.toUpperCase().includes(busyText),
+    timeoutMs: 25_000,
+    label: 'the answer arrives and busy clears',
+  })
+  check(
+    results,
+    'the busy indicator clears when the answer ends',
+    done.text.includes('STUB-ANSWER-1') && !done.text.toUpperCase().includes(busyText),
+    `answer shown=${done.text.includes('STUB-ANSWER-1')}, still busy=${done.text.toUpperCase().includes(busyText)}`,
+  )
+}
+
+/** Every user entry in the conversation view: its label (as written, not as CSS-transformed) and its text. */
+const USER_ENTRIES = `(() => {
+  const stage = document.querySelector('[aria-label="${copy('stage.terminal')}"]')
+  const labels = new Set([${JSON.stringify(copy('conversation.userMessage'))}, ${JSON.stringify(copy('conversation.metaMessage'))}])
+  return [...(stage?.querySelectorAll('.conversation-enter') ?? [])]
+    .map((row) => ({ label: row.firstElementChild?.textContent ?? '', text: row.textContent ?? '' }))
+    .filter((entry) => labels.has(entry.label))
+})()`
+
+/**
+ * **A message delivered mid-turn is the user's; a background-task notice is not** (`agent-transcript-stream`).
+ *
+ * The stub records the sent line only as a `queued_command` attachment (`queuedDelivery`), never as a `user`
+ * record — so the "not confirmed" label can clear, and the text can show under "You", only through the
+ * attachment's projection. The notice is a `user` record shaped like the agent's (system prompt source,
+ * non-human origin, no `isMeta`), appended by the stub on request.
+ */
+async function runMidTurnDelivery(_mode, _config, context) {
+  if (context.app) await context.app.close()
+  const repo = mkTemp('spekterm-agentview-repoQ-')
+  const configDir = mkTemp('spekterm-agentview-configQ-')
+  const stub = makeStubAgent(mkTemp, configDir, { queuedDelivery: true, echoDelaySeconds: 3 })
+  const profile = seedProfile(repo)
+  const app = await launch({ profile, configDir, stub, port: PORT })
+  context.app = app
+
+  await openConversation(app, repo.split('/').pop())
+  const conversation = stub.peerNames().at(-1)?.conversation
+  await sendFromConversation(app, 'MIDTURN-PROBE')
+  const marker = copy('conversation.unconfirmed').toUpperCase()
+  const confirmed = await pollFor({
+    read: () => app.client.evaluate(`({ view: ${VIEW_STATE}, entries: ${USER_ENTRIES} })`),
+    settled: (state) =>
+      !state.view.text.toUpperCase().includes(marker) && state.entries.some((e) => e.text.includes('MIDTURN-PROBE')),
+    timeoutMs: 25_000,
+    label: 'the mid-turn delivery appears and confirms the sent message',
+  })
+  const delivered = confirmed.entries.find((e) => e.text.includes('MIDTURN-PROBE'))
+  check(
+    results,
+    'a message recorded as a mid-turn delivery shows as the user\'s message',
+    delivered?.label === copy('conversation.userMessage'),
+    `label=${JSON.stringify(delivered?.label ?? null)}`,
+  )
+  check(
+    results,
+    'the mid-turn delivery clears the "not confirmed" label',
+    !confirmed.view.text.toUpperCase().includes(marker),
+    `still unconfirmed=${confirmed.view.text.toUpperCase().includes(marker)}`,
+  )
+
+  stub.command(
+    conversation,
+    `printf '%s\\n' '{"type":"user","uuid":"notice-1","timestamp":"2026-09-06T00:00:03.000Z","promptSource":"system","origin":{"kind":"task-notification","producer":"session-task"},"message":{"role":"user","content":"<task-notification><task-id>NOTICE-PROBE</task-id><status>completed</status></task-notification>"}}' >> "$tp"`,
+  )
+  const noticed = await pollFor({
+    read: () => app.client.evaluate(USER_ENTRIES),
+    settled: (entries) => entries.some((e) => e.text.includes('NOTICE-PROBE')),
+    timeoutMs: 15_000,
+    label: 'the task notice arrives',
+  })
+  const notice = noticed.find((e) => e.text.includes('NOTICE-PROBE'))
+  check(
+    results,
+    'a background-task notice is not shown as the user\'s message',
+    notice?.label === copy('conversation.metaMessage'),
+    `label=${JSON.stringify(notice?.label ?? null)}`,
+  )
+}
+
+/**
  * Automatic hibernation of agent sessions (session-hibernation design D4), threshold seeded as
  * seconds. Which sessions an agent's state keeps running depends on that state being current for
  * sessions nobody watches — the always-on subscription. Two sessions carry it: one never watched (it
@@ -1586,7 +1701,9 @@ const SECTIONS = [
   { name: 'runCoveredReleasesQuota', run: runCoveredReleasesQuota },
   { name: 'runMaximizeCover', run: runMaximizeCover },
   { name: 'runRelocateByEvent', run: runRelocateByEvent },
-    { name: 'runBusyIndicator', run: runBusyIndicator },
+  { name: 'runBusyIndicator', run: runBusyIndicator },
+  { name: 'runTextOnlyBusy', run: runTextOnlyBusy },
+  { name: 'runMidTurnDelivery', run: runMidTurnDelivery },
   { name: 'runAutoHibernateAgent', run: runAutoHibernateAgent },
   { name: 'runCloseConfirmAgent', run: runCloseConfirmAgent },
 ]

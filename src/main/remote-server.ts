@@ -50,6 +50,11 @@ export interface RemoteServerOptions {
   /** The listen state or the set of connected devices changed. */
   onChange?: () => void
   serverInfo: () => { name: string; version: string }
+  /**
+   * Where this desktop may be reached now, the same list as the pairing link's (`remote-protocol`). Sent in
+   * the `hello` and `pair` answers only — never before authentication.
+   */
+  addresses: () => string[]
   pingIntervalMs?: number
   authTimeoutMs?: number
   failureDelayMs?: number
@@ -365,7 +370,9 @@ export class RemoteServer {
     connection.authTimer = null
     connection.deviceId = deviceId
     this.#options.store.touchDevice(deviceId)
-    ws.send(resultFrame(frame.id, { protocol, server: this.#options.serverInfo(), ...extra }))
+    ws.send(
+      resultFrame(frame.id, { protocol, server: this.#options.serverInfo(), addresses: this.#options.addresses(), ...extra }),
+    )
     const handle: RemoteConnection = {
       id: connection.id,
       deviceId,

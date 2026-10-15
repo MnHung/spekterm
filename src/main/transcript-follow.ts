@@ -109,8 +109,11 @@ export type ViewEvent =
  * 來源是 agent 的內部格式而非公開介面：實測單一檔案就有十餘種頂層 `type`，多數是隨版本陸續長
  * 出來的。黑名單式的排除會在下一次更新時把新類型當成資料處理。本條使失效方向恆為「少呈現一種
  * 東西」，而不是「呈現錯的東西」。
+ *
+ * `attachment` is admitted for **one subtype only** (`queuedPrompt()`): a message the user typed while the
+ * agent ran tools. Every other attachment still yields nothing.
  */
-const RECORD_TYPES = new Set(['user', 'assistant'])
+const RECORD_TYPES = new Set(['user', 'assistant', 'attachment'])
 
 /**
  * 內容區塊同樣是白名單。`thinking` 保留（使用者要看得到 agent 在想什麼），但與 `text` 分開 ——
@@ -135,6 +138,44 @@ function identifyingArg(input: unknown): string | null {
     if (typeof v === 'string' && v.trim()) return v
   }
   return null
+}
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null
+}
+
+/**
+ * A message the user typed while the agent was running tools, or `null`.
+ *
+ * The agent does not write it as a `user` record (measured, CLI 2.1.300): it writes an `attachment` record
+ * of subtype `queued_command`, when it absorbs the message into the running turn. The same subtype also
+ * carries background-task notices (`commandMode: "task-notification"`) and messages from other sessions
+ * (`origin.kind: "peer"`), so **all four conditions** are required. A record missing any of them is not shown:
+ * the white-list's failure direction.
+ *
+ * **The text is returned unchanged** — a client confirms its message arrived by matching this text against
+ * what it sent (`ConversationView`'s "not confirmed yet", and the phone's).
+ */
+function queuedPrompt(r: Record<string, unknown>): string | null {
+  const attachment = record(r.attachment)
+  if (!attachment || attachment.type !== 'queued_command' || attachment.commandMode !== 'prompt') return null
+  if (record(attachment.origin)?.kind !== 'human') return null
+  const prompt = attachment.prompt
+  return typeof prompt === 'string' && prompt.trim() ? prompt : null
+}
+
+/**
+ * The record says the user did not type it (`agent-transcript-stream`).
+ *
+ * `isMeta` alone is not enough: background-task notices are written with `promptSource: "system"` and a
+ * non-human `origin`, and a compacted conversation's summary with `isCompactSummary`, none of them flagged
+ * `isMeta` (measured, CLI 2.1.300). **These only add reasons to mark a record**: a record with none of the
+ * fields (older CLI versions, slash commands, `!` input) keeps the `isMeta` verdict.
+ */
+function notTypedByUser(r: Record<string, unknown>): boolean {
+  if (r.isMeta === true || r.isCompactSummary === true || r.promptSource === 'system') return true
+  const kind = record(r.origin)?.kind
+  return typeof kind === 'string' && kind !== 'human'
 }
 
 function resultText(content: unknown): string {
@@ -178,6 +219,10 @@ export function project(raw: unknown): ViewEvent[] {
 
   const uuid = str(r.uuid) ?? ''
   const at = Date.parse(str(r.timestamp) ?? '') || 0
+  if (type === 'attachment') {
+    const text = queuedPrompt(r)
+    return text === null ? [] : [{ kind: 'user', uuid, at, text, meta: false }]
+  }
   const message = r.message
   if (message === null || typeof message !== 'object') return []
   const content = (message as Record<string, unknown>).content
@@ -186,7 +231,7 @@ export function project(raw: unknown): ViewEvent[] {
     // 使用者的訊息可能是字串，也可能是帶 `tool_result` 的陣列 —— 後者不是使用者打的字。
     if (typeof content === 'string') {
       return content.trim()
-        ? [{ kind: 'user', uuid, at, text: content, meta: r.isMeta === true }]
+        ? [{ kind: 'user', uuid, at, text: content, meta: notTypedByUser(r) }]
         : []
     }
     if (!Array.isArray(content)) return []

@@ -4,6 +4,8 @@ import { createServer as createNetServer } from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
+// @ts-expect-error — the probe's phone stand-in is plain JavaScript.
+import { helloRemote, openRemote, pairRemote } from '../../scripts/lib/remote-client.mjs'
 import { AttentionLog } from './remote-attention'
 import { RemoteOutput } from './remote-output'
 import type { RemoteHost } from './remote-protocol'
@@ -19,7 +21,7 @@ async function freePort(): Promise<number> {
   return port
 }
 
-async function rig() {
+async function rig(options: { interfaceAddresses?: () => string[]; reconcileMs?: number } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'remote-service-'))
   const secrets = new SecretStore(path.join(dir, 'secrets.json'))
   const store = new RemoteStore(path.join(dir, 'remote.json'), secrets)
@@ -37,8 +39,9 @@ async function rig() {
     store,
     output,
     attention,
-    host: {} as RemoteHost,
+    host: { sessionList: () => ({ window: false, folders: [], sessions: [] }), setWatched: () => undefined } as unknown as RemoteHost,
     serverInfo: () => ({ name: 't', version: '0' }),
+    ...options,
   })
   const epoch = () => {
     attention.onWait('s', { state: 'ready', turnEnded: true, choiceRaised: null })
@@ -113,4 +116,74 @@ test('the pairing link format', () => {
     pairingLink({ addresses: ['10.0.0.2', 'home.example'], port: 47615, fingerprint: 'AB:CD', code: 'CODE', name: 'my desk' }),
     'spekterm://pair?v=1&a=10.0.0.2%2Chome.example&p=47615&fp=ABCD&c=CODE&n=my+desk',
   )
+})
+
+async function pairedClient(r: Awaited<ReturnType<typeof rig>>) {
+  const target = { port: r.store.get().port, fingerprint: r.store.fingerprint() }
+  const { code } = r.service.pairing.start()
+  const paired = await pairRemote(target, { code })
+  assert.equal(paired.response.ok, true, JSON.stringify(paired.response))
+  return { target, paired }
+}
+
+test('both authentication answers carry the current addresses, ending with the additional one', async () => {
+  const r = await rig({ interfaceAddresses: () => ['192.0.2.10', '2001:db8::10'] })
+  try {
+    await r.service.setEnabled(true)
+    r.service.setAdditionalAddress('desk.example.ts.net')
+    const expected = ['192.0.2.10', '2001:db8::10', 'desk.example.ts.net']
+    const { target, paired } = await pairedClient(r)
+    assert.deepEqual(paired.response.r.addresses, expected, 'pair answer')
+    paired.client.close()
+    await paired.client.closed
+    const hello = await helloRemote(target, {
+      deviceId: paired.response.r.deviceId,
+      deviceSecret: paired.response.r.deviceSecret,
+    })
+    assert.deepEqual(hello.response.r.addresses, expected, 'hello answer')
+    hello.client.close()
+    await hello.client.closed
+  } finally {
+    await r.done()
+  }
+})
+
+test('a changed address list reaches authenticated connections only, once, and an unchanged one is not sent', async () => {
+  let interfaces = ['192.0.2.10']
+  const r = await rig({ interfaceAddresses: () => interfaces, reconcileMs: 50 })
+  try {
+    await r.service.setEnabled(true)
+    const { target, paired } = await pairedClient(r)
+    const waiting = await openRemote(target) // open, never authenticates
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    assert.equal(paired.client.eventsOf('addresses.changed').length, 0, 'an unchanged list is not announced')
+
+    interfaces = ['192.0.2.77']
+    const event = await paired.client.waitEvent('addresses.changed', { timeoutMs: 2000 })
+    assert.deepEqual(event?.d, { addresses: ['192.0.2.77'] })
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    assert.equal(paired.client.eventsOf('addresses.changed').length, 1, 'announced once')
+    assert.deepEqual(waiting.events, [], 'a connection that has not authenticated receives nothing')
+
+    waiting.close()
+    paired.client.close()
+    await Promise.all([waiting.closed, paired.client.closed])
+  } finally {
+    await r.done()
+  }
+})
+
+test('changing the additional address is announced at once', async () => {
+  const r = await rig({ interfaceAddresses: () => ['192.0.2.10'], reconcileMs: 60_000 })
+  try {
+    await r.service.setEnabled(true)
+    const { paired } = await pairedClient(r)
+    r.service.setAdditionalAddress('desk.example.ts.net')
+    const event = await paired.client.waitEvent('addresses.changed', { timeoutMs: 1000 })
+    assert.deepEqual(event?.d, { addresses: ['192.0.2.10', 'desk.example.ts.net'] })
+    paired.client.close()
+    await paired.client.closed
+  } finally {
+    await r.done()
+  }
 })

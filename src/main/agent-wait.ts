@@ -115,7 +115,7 @@ function tick(sessionId: string): void {
   const entry = entries.get(sessionId)
   if (!entry) return
   const previous = waitStateOf(sessionId)
-  const result = drainEvents(sessionId, previous)
+  const result = drainEvents(sessionId, previous, pendingRequestOf(sessionId))
   const snapshot = foldDrain(sessionId, result)
   // **無論有沒有變化都通知** —— 跟進器要靠每一次 tick 主動 poll 一次紀錄，
   // 那是它「監看負責延遲、主動讀負責保證」的那一半。

@@ -10,7 +10,7 @@ import {
 import { join } from 'node:path'
 
 /**
- * 替身 agent —— **兩支探針共用**（`probe-agent-view` 與 `probe-intake`）。
+ * 替身 agent —— shared by `probe-agent-view`, `probe-intake`, `probe-remote` and `capture-screenshots`.
  *
  * 抽出來的理由不是「避免重複」：這支替身的每一個選項都對應一條實測結論
  * （逐位元組讀取為何不能換成 `exec cat`、`< /dev/tty` 為何不可省、就緒延遲為何必須可控），
@@ -35,6 +35,18 @@ export function makeStubAgent(
     unreadable = false,
     relocateAfterInput = false,
     busySeconds = 0,
+    /**
+     * A text-only answer: after the submission, wait this long, write an assistant message and report
+     * `Stop`, with **no tool event** in between. The wait state is busy for that time only because the
+     * submission itself is reported (`UserPromptSubmit`) — that is what this option exists to show.
+     */
+    answerSeconds = 0,
+    /**
+     * Record each input line as the agent records a message typed while it runs tools: a `queued_command`
+     * attachment **instead of** the `user` record (measured, CLI 2.1.300). Writing both would let the `user`
+     * record clear the "not confirmed" label by itself, and the projection would never be exercised.
+     */
+    queuedDelivery = false,
     /**
      * `fire SessionStart` 之前先等這麼久，並在 fire 的當下寫一個 receipt 檔。
      *
@@ -195,14 +207,23 @@ export function makeStubAgent(
     dropFirstSubmit ? `    if [ ! -e "${perSessionDir}/$sid.dropped" ]; then : > "${perSessionDir}/$sid.dropped"; continue; fi` : '',
     `    printf '%s\\n' "$line" >> "${inputLog}"`,
     `    printf '%s\\n' "$line" >> "${perSessionDir}/$sid.lines"`,
+    // The real agent reports every submitted prompt at once, before any record is written (measured,
+    // CLI 2.1.300). Not an option: a probe that never sees it cannot show it was injected.
+    '    fire UserPromptSubmit',
     // 延遲補寫紀錄 —— 用來驗「送出後在它出現於紀錄之前標示為未確認」。
     echoDelaySeconds ? `  sleep ${echoDelaySeconds}` : '',
     // Every record gets its own `uuid`: resuming a conversation names the last one received.
     '    nuser=$((nuser+1))',
-    `    printf '{"type":"user","uuid":"u-%s-%s","timestamp":"2026-09-06T00:00:01.000Z","message":{"role":"user","content":"%s"}}\\n' "$$" "$nuser" "$line" >> "$tp"`,
+    queuedDelivery
+      ? `    printf '{"type":"attachment","uuid":"q-%s-%s","timestamp":"2026-09-06T00:00:01.000Z","attachment":{"type":"queued_command","prompt":"%s","commandMode":"prompt","origin":{"kind":"human"}}}\\n' "$$" "$nuser" "$line" >> "$tp"`
+      : `    printf '{"type":"user","uuid":"u-%s-%s","timestamp":"2026-09-06T00:00:01.000Z","message":{"role":"user","content":"%s"}}\\n' "$$" "$nuser" "$line" >> "$tp"`,
     // `busySeconds`：先宣告忙碌、停一段時間再宣告就緒 —— 供「忙碌時呈現忙碌、閒置後消失」。
     busySeconds ? '  fire PreToolUse' : '',
     busySeconds ? `  sleep ${busySeconds}` : '',
+    answerSeconds ? `  sleep ${answerSeconds}` : '',
+    answerSeconds
+      ? `  printf '{"type":"assistant","uuid":"ans-%s-%s","timestamp":"2026-09-06T00:00:02.000Z","message":{"role":"assistant","content":[{"type":"text","text":"STUB-ANSWER-%s"}]}}\\n' "$$" "$nuser" "$nuser" >> "$tp"`
+      : '',
     /*
       `relocateAfterInput`：**換一份紀錄**，並以事件回報新的位置。
 

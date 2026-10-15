@@ -46,6 +46,7 @@ async function rig(options: Partial<ConstructorParameters<typeof RemoteServer>[0
     pairing,
     throttle,
     serverInfo: () => ({ name: 'test', version: '0' }),
+    addresses: () => ['192.0.2.10', 'desk.example.ts.net'],
     openSession: (connection) => {
       const session = { deviceId: connection.deviceId, disposed: false }
       sessions.push(session)
@@ -106,6 +107,7 @@ test('pairing yields a credential that authenticates; a wrong one is refused', a
     const { client, response } = await helloRemote(r.target, credential)
     assert.equal(response.ok, true)
     assert.equal(response.r.protocol, 1)
+    assert.deepEqual(response.r.addresses, ['192.0.2.10', 'desk.example.ts.net'])
     assert.ok((r.store.device(credential.deviceId)?.lastSeenAt ?? 0) > seenBefore, 'connecting updates the last-seen time')
     const echoed = await client.call('anything', {})
     assert.equal(echoed.r.echo, 'anything')
@@ -114,6 +116,8 @@ test('pairing yields a credential that authenticates; a wrong one is refused', a
 
     const wrong = await helloRemote(r.target, { deviceId: credential.deviceId, deviceSecret: 'nope' })
     assert.equal(wrong.response.e.code, 'AUTH_FAILED')
+    assert.ok(!JSON.stringify(wrong.response).includes('192.0.2.10'), 'a refused connection learns no addresses')
+    assert.deepEqual(wrong.client.events, [])
     await wrong.client.closed
   } finally {
     await r.done()

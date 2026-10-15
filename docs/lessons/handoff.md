@@ -347,6 +347,9 @@ session 裡啟動，外層的名字與落點會被繼承）。**測試或使用�
   （第十三節）。原文：收件的 agent 一收到訊息就開始工作，而那正是
   「已送出」唯一的判準。自我介紹要求 agent 在使用者送出第一則 prompt 之前不要傳訊息給剛交接出去的
   session；根本的修正（以 `UserPromptSubmit` 作為真正的送出事件）未做。
+  **Update (`companion-test-fixes`)**: `UserPromptSubmit` is now injected and sets busy, but the submission
+  check still reads the wait state, so a peer message that makes the agent work still counts as submitted.
+  Whether a peer message reports `UserPromptSubmit` was not measured.
 - **在 claude 裡用它自己的 `/rename` 會改掉名字**，直到下一次 spawn 被 spekterm 指定回來。
 - **休眠的 session 收不到訊息**（沒有行程）；關係檔以 `running: false` 標明，spekterm 不代為喚醒。
 

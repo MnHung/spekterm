@@ -44,6 +44,9 @@ export interface RemoteServiceDeps {
   now?: () => number
   /** For the tests: listener timings. */
   serverTimings?: { pingIntervalMs?: number; authTimeoutMs?: number; failureDelayMs?: number }
+  /** For the tests: the interface addresses (default `reachableAddresses()`) and the reconcile interval. */
+  interfaceAddresses?: () => string[]
+  reconcileMs?: number
 }
 
 /** How often the session list is recomputed while a device is connected, to catch changes nothing signals. */
@@ -91,6 +94,8 @@ export class RemoteService {
   #pendingLists = new Set<ListKind>()
   #reconcileTimer: NodeJS.Timeout | null = null
   #lastSessionList = ''
+  /** The address list connected devices were last told, as JSON; set when the first device connects. */
+  #lastAddresses = ''
 
   constructor(deps: RemoteServiceDeps) {
     this.#deps = deps
@@ -102,6 +107,7 @@ export class RemoteService {
       pairing: this.pairing,
       throttle: this.throttle,
       serverInfo: deps.serverInfo,
+      addresses: () => this.currentAddresses(),
       ...deps.serverTimings,
       openSession: (connection) => {
         const handle = openRemoteSession(deps.host, connection)
@@ -146,8 +152,19 @@ export class RemoteService {
 
   setAdditionalAddress(address: unknown): boolean {
     const taken = this.#deps.store.setAdditionalAddress(address)
+    this.#checkAddresses()
     this.#changed()
     return taken
+  }
+
+  /**
+   * Where this desktop may be reached now: interface addresses, then the user's additional address. **One
+   * list** for the pairing link, the authentication answers and `addresses.changed` (`remote-protocol`).
+   */
+  currentAddresses(): string[] {
+    const settings = this.#deps.store.get()
+    const interfaces = (this.#deps.interfaceAddresses ?? reachableAddresses)()
+    return [...interfaces, ...(settings.additionalAddress ? [settings.additionalAddress] : [])]
   }
 
   /** Opens the pairing view: a new code. Only while remote access is on. */
@@ -197,7 +214,7 @@ export class RemoteService {
     const settings = this.#deps.store.get()
     const connected = new Set(this.server.connectedDeviceIds())
     const fingerprint = this.#deps.store.fingerprint() ?? null
-    const addresses = [...reachableAddresses(), ...(settings.additionalAddress ? [settings.additionalAddress] : [])]
+    const addresses = this.currentAddresses()
     const live = this.#pairingOpen ? this.pairing.current() : null
     if (this.#pairingOpen && !live) this.#pairingOpen = false
     return {
@@ -253,6 +270,21 @@ export class RemoteService {
     for (const { connection } of this.#sessions.values()) connection.send(frame)
   }
 
+  /**
+   * Tells connected devices the address list when it changed since they were last told. Node has no
+   * network-change event, so this rides the reconcile tick (and runs at once after the additional address
+   * changes). **Only authenticated connections**: `#sessions` holds nothing else.
+   */
+  #checkAddresses(): void {
+    if (this.#sessions.size === 0) return
+    const addresses = this.currentAddresses()
+    const text = JSON.stringify(addresses)
+    if (text === this.#lastAddresses) return
+    this.#lastAddresses = text
+    const frame = eventFrame('addresses.changed', { addresses })
+    for (const { connection } of this.#sessions.values()) connection.send(frame)
+  }
+
   /** While a device is connected, recompute the session list now and then and send it when it changed. */
   #syncReconcile(): void {
     if (this.#sessions.size === 0) {
@@ -261,7 +293,12 @@ export class RemoteService {
     }
     if (this.#reconcileTimer) return
     this.#lastSessionList = JSON.stringify(this.#deps.host.sessionList())
-    this.#reconcileTimer = setInterval(() => this.#sendList('sessions'), LIST_RECONCILE_MS)
+    // The first device was just answered with this list.
+    this.#lastAddresses = JSON.stringify(this.currentAddresses())
+    this.#reconcileTimer = setInterval(() => {
+      this.#sendList('sessions')
+      this.#checkAddresses()
+    }, this.#deps.reconcileMs ?? LIST_RECONCILE_MS)
     this.#reconcileTimer.unref()
   }
 

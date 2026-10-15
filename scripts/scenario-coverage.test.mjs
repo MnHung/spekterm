@@ -58,6 +58,7 @@ const COVERED_CHANGES = [
   'macos-dmg-packaging',
   'spek-demo-on-the-website',
   'mobile-remote-bridge',
+  'companion-test-fixes',
 ]
 
 /** change 的所在 —— 封存後它會搬到 `archive/` 之下，兩處都找。 */
@@ -2149,6 +2150,53 @@ export const TABLE = [
     'watched not counted as displayed', 'a few-second threshold seeded in preferences.json; unit level too: hibernation.test.ts'],
   ['A session hibernates once the device stops watching', 'a session hibernates once the device stops watching', false,
     'a watch that never ends in the tracker', ''],
+
+  // ── companion-test-fixes ───────────────────────────────────────────────────
+  // agent-transcript-stream
+  ['A message typed during a tool run appears', 'a message recorded as a mid-turn delivery shows as the user', false,
+    'drop the queued_command projection', '**Ran** (tasks 4.3): red, and the "not confirmed" label stays. The stub writes the attachment instead of the user record (`queuedDelivery`), so nothing else can clear it. Unit level: transcript-follow.test.ts, which also pins the text unchanged (red when it is trimmed)'],
+  ["Other deliveries of the same record type are not the user's", 'other mid-turn deliveries and other attachments are not shown', true,
+    'drop the origin check', '**Ran**: red. Green if the projection were absent (nothing shown at all); the mutation is what proves the conditions'],
+  ['Other records of that type stay ignored', 'other mid-turn deliveries and other attachments are not shown', true,
+    'accept every attachment subtype', '**Ran**: red. Green if the projection were absent, as above'],
+  ["A background-task notice is not the user's message", 'a background-task notice is not shown as the user', false,
+    'decide meta from isMeta alone', '**Ran** (tasks 4.3): red, label "You". Unit level too: transcript-follow.test.ts'],
+  ["A compacted conversation's summary is not the user's message", 'records the user did not type are marked, typed ones are not', false,
+    'drop the isCompactSummary marker', '**Ran**: red'],
+  ["A typed prompt is still the user's message", 'records the user did not type are marked, typed ones are not', true,
+    'treat any origin kind, human included, as not the user', '**Ran**: red. Green if the rule were absent (that was the old behavior); it guards against over-marking'],
+  ["A record without origin fields keeps the meta flag's verdict", 'records the user did not type are marked, typed ones are not', true,
+    'treat a record with no origin as not human', '**Ran**: red. Green if the rule were absent, as above'],
+  // agent-event-bridge
+  ['A text-only answer shows the agent busy', 'a text-only answer (no tool event) shows the agent busy', false,
+    'drop UserPromptSubmit from HOOKED_EVENTS', '**Ran** (tasks 4.2): red. The stub reports no tool event, so only the submission can make it busy'],
+  ['A failed tool leaves the choice', 'the injection names the submission, tool-failure and failed-turn hooks', false,
+    'drop PostToolUseFailure from HOOKED_EVENTS', '**Ran**: red. The mapping is pinned by "a submitted prompt and a failed tool are busy" (red when it is removed). No probe: the stub has no failing tool'],
+  ['A failed turn makes the agent ready', 'a failed turn does not count as a turn completion', false,
+    'map StopFailure to unknown', '**Ran**: red. Dropping it from HOOKED_EVENTS turns the injection test red'],
+  ["A subagent's failed turn does not make the agent ready", 'failed turn during a choice does not allow sending', false,
+    'map every StopFailure to ready', '**Ran**: red'],
+  ["The prompt's later notice does not erase the tool", 'later notice keeps the tool, in separate drains with an empty drain between', false,
+    'recompute the pending request from each event', '**Ran**: red, with the same-drain and missing-location cases'],
+  ['A view opened during the prompt shows the tool', 'still names the tool after ticks that found nothing, for a view opened later', false,
+    'the tick does not pass the held request', '**Ran**: red. Main-process level: `pendingRequestOf` is what conversation-follow hands a view that opens; the view rendering the tool is unchanged code'],
+  ['The next request replaces the pending one', 'the next request replaces the held one, and leaving the choice clears it', true,
+    'keep the held request when a new one names a tool', '**Ran**: red (the case of a second request while the first is held). Green if the carry were absent: recomputing per event also replaced it'],
+  ['Typing after a denied prompt recovers the state', 'a prompt submitted after a denied permission prompt leaves awaiting-choice', false,
+    'map UserPromptSubmit to nothing', '**Ran**: red. A denial itself sends no event (measured), so the carrier starts from awaiting-choice'],
+  // remote-protocol
+  ['The answer to an authenticated connection carries the addresses', 'the pair and hello answers carry the current addresses, ending with the additional address', false,
+    'drop addresses from the answer', 'The probe acts as the phone against the real app. The mutation was run at unit level (remote-server.test.ts and remote-service.test.ts: red)'],
+  ['A pairing connection receives the addresses too', 'both authentication answers carry the current addresses, ending with the additional one', false,
+    'drop addresses from the answer', '**Ran**: red'],
+  ['A change while connected is announced', 'a changed address list reaches authenticated connections only, once, and an unchanged one is not sent', false,
+    'never check the addresses on the tick', '**Ran**: red. The immediate check after an additional-address change has its own test (red when it is removed)'],
+  ['An unchanged list is not announced', 'a changed address list reaches authenticated connections only, once, and an unchanged one is not sent', true,
+    'announce on every tick', '**Ran**: red. Green if the event were absent altogether'],
+  ['A refused connection learns no addresses', 'a refused connection learns no addresses', true,
+    'put the addresses in the refusal', '**Ran**: red. Green if the field were absent altogether'],
+  ['A connection that has not yet authenticated receives no address event', 'a connection that has not authenticated receives nothing', true,
+    'announce to every socket when it connects', '**Ran**: red. Green if the event were absent altogether. A refused socket cannot tell this apart: it closes before any change'],
 ]
 
 /**

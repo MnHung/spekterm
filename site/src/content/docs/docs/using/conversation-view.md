@@ -35,10 +35,12 @@ says **Conversation is unavailable** instead of showing an empty conversation.
 
 ## Sending a message
 
-Type in **Message the agent** and press **Send**. spekterm only lets you send while the agent is waiting
-for your input:
+Type in **Message the agent** and press **Send**. Whether you can send depends on what the agent is doing:
 
-- **Working…** — the agent is busy. Wait for it to finish, or interrupt it from the terminal view.
+- **Waiting for your input** — send.
+- **Working…** — the agent is busy, also while it writes an answer without using any tool. You can still send:
+  Claude Code takes the message in while it works, and the message appears in the conversation where the
+  agent picked it up.
 - **The agent is asking to use a tool, or is waiting for a choice.** The view shows what it is waiting for.
   Answer it in the terminal view — the conversation view does not send free text into a permission prompt
   or a menu.

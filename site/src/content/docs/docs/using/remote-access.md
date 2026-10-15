@@ -45,6 +45,11 @@ The phone connects to the addresses in the pairing code, whichever works:
 - **A port forward** — forward the port on your router and add your public name (for example a DDNS name) as
   the additional address.
 
+Each time the phone connects, by whatever route works, spekterm tells it the computer's current addresses,
+and tells it again if they change while it is connected. A phone app that keeps that list does not need to
+pair again when your computer's local address changes: once it has connected some other way (Tailscale, or
+the additional address), it has the new local address for next time.
+
 If none of them reaches your computer — away from home, with no Tailscale and no port forward — the phone
 cannot connect, and it is told nothing.
 

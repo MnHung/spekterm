@@ -22,6 +22,24 @@ import type { InjectionContribution } from './agent-injection'
  * | `Notification` | 次要訊號 | **必須依 `notification_type` 分派**，見下 |
  * | `Stop` | 就緒 | |
  * | `SessionStart` / `SessionEnd` | 重新定位 | 帶著 `transcript_path` |
+ * | `UserPromptSubmit` | busy | the only start signal for a text-only answer; see below |
+ * | `PostToolUseFailure` | busy | an approved tool that fails sends this, not `PostToolUse` |
+ * | `StopFailure` | ready | a turn whose requests kept failing ends with this, not `Stop` |
+ *
+ * ### `UserPromptSubmit`, measured (2026-10-15, CLI 2.1.300)
+ *
+ * Reported at submission, also mid-turn and during a text-only answer. Not reported for `!` input, `/cost`
+ * or `/clear`. **Not reported for text typed into an open permission prompt or question** — the text and
+ * Enter answer the prompt. That last fact is what makes busy safe here: a submission cannot arrive while a
+ * prompt is open, so it cannot move the state out of awaiting-choice early. Re-measure it on a CLI upgrade
+ * (`docs/lessons/transcript.md`).
+ *
+ * **The hook command must print nothing**: the agent adds a `UserPromptSubmit` hook's stdout to the prompt.
+ *
+ * ### What reports nothing (known gaps, `agent-event-bridge`)
+ *
+ * A denied permission prompt (Esc or "No") and an interrupted turn send no event at all. The state stays what
+ * the turn last reported until the next event, usually the user's next prompt.
  *
  * ### 兩個實測出來的陷阱，兩個都會靜默地把狀態算成「可以送出」
  *
@@ -77,8 +95,11 @@ export const HOOKED_EVENTS = [
   'PermissionRequest',
   'PreToolUse',
   'PostToolUse',
+  'PostToolUseFailure',
   'Notification',
+  'UserPromptSubmit',
   'Stop',
+  'StopFailure',
   'SessionStart',
   'SessionEnd',
 ] as const
@@ -144,6 +165,11 @@ export interface AgentEvent {
    * 只取一個給人看的值，而呈現層把它當成不可導覽的純文字。
    */
   toolArg: string | null
+  /**
+   * Set when a subagent reported the event, not the agent itself. Subagent hook events share the stream
+   * (measured: a subagent's `PreToolUse` after the turn's `Stop`). An identifier, not a path.
+   */
+  agentId: string | null
 }
 
 function str(value: unknown): string | null {
@@ -169,6 +195,7 @@ export function parseEvent(raw: unknown): AgentEvent | null {
     notificationType: str(o.notification_type),
     toolName: str(o.tool_name),
     toolArg: identifyingArg(o.tool_input),
+    agentId: str(o.agent_id),
   }
 }
 
@@ -207,6 +234,13 @@ export function nextWaitState(event: AgentEvent): WaitState {
       return 'busy'
     case 'PreToolUse':
       return 'busy'
+    case 'PostToolUseFailure':
+      // An approved tool that failed. Without it the state stays awaiting-choice until the turn ends.
+      return 'busy'
+    case 'UserPromptSubmit':
+      // The only start signal for a text-only answer. Safe because it is not reported for text typed into
+      // an open prompt (see the module comment).
+      return 'busy'
     case 'Notification':
       if (event.notificationType === 'permission_prompt') return 'awaiting-choice'
       if (event.notificationType === 'idle_prompt') return 'ready'
@@ -214,6 +248,11 @@ export function nextWaitState(event: AgentEvent): WaitState {
       return 'unknown'
     case 'Stop':
       return 'ready'
+    case 'StopFailure':
+      // The agent's own failed turn: it stopped and waits for input. **A subagent's is unknown** — whether
+      // subagents report it was not measured, and it could arrive while the agent waits on a choice, where
+      // ready would allow sending into the prompt.
+      return event.agentId === null ? 'ready' : 'unknown'
     case 'SessionStart':
       return 'ready'
     case 'SessionEnd':
@@ -262,23 +301,44 @@ export interface DrainResult {
  * 後綴（pid）決定，那是任意的但穩定；本狀態機沒有任何一對事件會因為順序顛倒而得到相反的結論。
  *
  * 讀完即刪，於是**去重由結構保證**，不必維護一份已讀清單（而那份清單會需要自己的持久化與清理）。
+ *
+ * ## The pending request is carried, not recomputed per event
+ *
+ * `currentPending` is the request held before this drain. While the state stays awaiting-choice, an event
+ * that names no tool keeps it, and **every return path returns it** — the empty drain and the two early
+ * returns included. The prompt's own `Notification` arrives about six seconds after `PermissionRequest`
+ * and names no tool, and most drains (every 400 ms) find nothing; recomputing from the last event erased the
+ * tool both ways (`agent-event-bridge`).
  */
-export function drainEvents(sessionId: string, current: WaitState): DrainResult {
+export function drainEvents(
+  sessionId: string,
+  current: WaitState,
+  currentPending: DrainResult['pending'] = null,
+): DrainResult {
+  const held = current === 'awaiting-choice' ? currentPending : null
+  const unchanged: DrainResult = {
+    state: current,
+    transcriptPath: null,
+    count: 0,
+    pending: held,
+    turnEnded: false,
+    choiceRaised: null,
+  }
   const dir = sessionDir(sessionId)
-  if (!dir) return { state: current, transcriptPath: null, count: 0, pending: null, turnEnded: false, choiceRaised: null }
+  if (!dir) return unchanged
 
   let names: string[]
   try {
     names = fs.readdirSync(dir).filter((name) => name.endsWith('.json')).sort()
   } catch {
     // 目錄不存在 ＝ 未注入或已清除。**不改變狀態** —— 呼叫端的初始值本來就是未知。
-    return { state: current, transcriptPath: null, count: 0, pending: null, turnEnded: false, choiceRaised: null }
+    return unchanged
   }
 
   let state = current
   let transcriptPath: string | null = null
   let count = 0
-  let pending: DrainResult['pending'] = null
+  let pending: DrainResult['pending'] = held
   let turnEnded = false
   let choiceRaised: DrainResult['choiceRaised'] = null
   for (const name of names) {
@@ -301,9 +361,11 @@ export function drainEvents(sessionId: string, current: WaitState): DrainResult 
     if (event.name === 'Stop') turnEnded = true
     if (event.name === 'PermissionRequest') choiceRaised = { tool: event.toolName ?? '', arg: event.toolArg }
     if (event.transcriptPath) transcriptPath = event.transcriptPath
-    // 只在「進入等待選擇」的那一則上取，離開時一併清掉 —— 否則畫面會留著一個已經被回答完的請求。
-    pending =
-      state === 'awaiting-choice' ? { tool: event.toolName ?? '', arg: event.toolArg } : null
+    // 離開等待選擇時清掉 —— 否則畫面會留著一個已經被回答完的請求。While it stays, only an event that
+    // names a tool replaces the request.
+    if (state !== 'awaiting-choice') pending = null
+    else if (event.toolName !== null) pending = { tool: event.toolName, arg: event.toolArg }
+    else pending ??= { tool: '', arg: null }
   }
   return { state, transcriptPath, count, pending, turnEnded, choiceRaised }
 }

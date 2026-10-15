@@ -39,9 +39,10 @@ import { subscribeWait, waitStateOf } from './agent-wait'
 /**
  * 預填之後，**使用者送出了嗎**。
  *
- * 「使用者按下 Enter」發生在 pty 之內，renderer 與主行程都收不到自己發出的訊號；而注入的 hooks
- * **不含 `UserPromptSubmit`**（`agent-events.ts` 的 `HOOKED_EVENTS`），所以送出本身沒有事件。
- * 唯一的線索是 agent **開始工作了** —— 等待狀態成為忙碌或等待選擇。
+ * 「使用者按下 Enter」發生在 pty 之內，renderer 與主行程都收不到自己發出的訊號。The injected hooks
+ * include `UserPromptSubmit` since `companion-test-fixes`, and it sets the wait state to busy at once — so
+ * the clue is still that the agent **started working** (busy or awaiting-choice), now also for a submission
+ * that uses no tool.
  *
  * ## `unknown` 不算
  *

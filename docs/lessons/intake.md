@@ -308,20 +308,22 @@ spec 只承諾「內容 SHALL **可**過期」，所以它不算違規 —— �
 ## 「已送出」沒有事件，而判定的後果從暫時變成了持久
 
 `intake-inbox-usability` 讓已開好的項目在 prompt 送出之後離開收件匣（落盤 `settledAt`）。
-「使用者按下 Enter」發生在 pty 之內，**而注入的 hooks 不含 `UserPromptSubmit`**
-（`agent-events.ts` 的 `HOOKED_EVENTS`）—— 送出本身沒有任何事件。唯一的線索是 agent
-開始工作了（等待狀態成為忙碌或等待選擇）。
+「使用者按下 Enter」發生在 pty 之內。~~注入的 hooks 不含 `UserPromptSubmit`~~ —— **since
+`companion-test-fixes` they do**, and a submission sets the wait state to busy at once. The check below
+did not change: it still reads busy / awaiting-choice, and now also sees a submission that uses no tool.
 
 - **此前的判定是「不再是 ready」**，那把落回 `unknown` 的事件（不認得種類的 `Notification`、
   `SessionEnd`、不認得的事件）一併當成送出。那在過去只撤掉一個暫時的「待送出」標示；
   **落盤之後，一次誤判就把交接的本文從它唯一的呈現位置永久移除**，而且沒有復原的入口。
   判定因此收窄為 `busy` / `awaiting-choice`（`intake-prefill.ts` 的 `isSubmitted`），
   **標示與了結共用這一個判定** —— 兩處各自判斷的話，標示消失而項目還在（或反之）。
-- **代價**：送出之後 agent 若一個工具都沒用就回答完，不會被判為送出。收件匣的 prompt 必然要求
-  先讀 context 檔（⇒ 一次 `PreToolUse`），所以在這條管線上不會發生；**換一條不經工具的路徑時
-  這個前提就不成立了**，那時該做的是注入 `UserPromptSubmit`，不是放寬判定。
-- **替身要 `busySeconds` 才走得到這條路**：預設的替身收到一行只 fire `Stop`（ready → ready），
-  等待狀態從不離開就緒 —— 「送出之後離開收件匣」在那個替身上**永遠等不到**。
+- **代價（已由 `UserPromptSubmit` 清償）**：送出之後 agent 若一個工具都沒用就回答完，此前不會被判為送出。
+  Now the submission event makes it busy before any tool. The check was not loosened; the missing
+  event was added, as this note said it should be.
+- **替身要 `busySeconds` 才走得到這條路** —— still true, for a different reason. The stub now reports
+  `UserPromptSubmit` for every line, but then `Stop` within milliseconds, and the two almost always land in
+  one drain (busy → ready folds to ready). A probe that needs "submitted" must hold busy with `busySeconds`
+  (or `answerSeconds`), not rely on the default stub.
 
 ## 移除一個 folder 不會關閉它的 session
 

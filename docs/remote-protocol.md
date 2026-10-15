@@ -27,7 +27,9 @@ spekterm://pair?v=1&a=<addresses>&p=<port>&fp=<fingerprint>&c=<code>&n=<name>
 | `n` | The desktop's host name, for display. |
 
 Try the addresses in order until one connects. Keep all of them with the pairing: the reachable one changes
-as the phone moves between networks.
+as the phone moves between networks. After pairing, the desktop sends its current list on every connection
+(section 4) and whenever it changes while you are connected (section 6). Keep that latest list too, and try
+it first: it is how a desktop whose address changed stays reachable without pairing again.
 
 ## 2. Transport and certificate pinning
 
@@ -101,12 +103,17 @@ chosen. This document is version 1.
 
 ### `hello`
 
-`p`: `{ "protocol": [1], "deviceId": "…", "deviceSecret": "…" }` → `r`: `{ "protocol": 1, "server": { "name", "version" } }`
+`p`: `{ "protocol": [1], "deviceId": "…", "deviceSecret": "…" }` → `r`: `{ "protocol": 1, "server": { "name", "version" }, "addresses": [string] }`
+
+`addresses`: where the desktop may be reached now, built the same way as the pairing link's `a` list (its
+non-loopback interface addresses, IPv4 first, then IPv6 other than link-local, then the user's additional
+address if set). It is sent only in the answer to a successful `hello` or `pair`, never to a connection that
+has not authenticated.
 
 ### `pair`
 
 `p`: `{ "protocol": [1], "code": "<c from the link>", "deviceName": "…", "deviceModel": "…" }`
-→ `r`: `{ "protocol": 1, "server": { … }, "deviceId": "…", "deviceSecret": "…" }`
+→ `r`: `{ "protocol": 1, "server": { … }, "addresses": [string], "deviceId": "…", "deviceSecret": "…" }`
 
 The credential is given **once**; spekterm keeps only its SHA-256. Store it in the platform's protected
 storage. The pairing connection is authenticated as the new device and may continue with operations. Names
@@ -156,6 +163,12 @@ answers at once. Errors: `NOT_FOUND`, `NO_WINDOW`, `CREATE_FAILED`, `TIMEOUT`.
 `Entry` is one of: `{ kind: "user", uuid, at, text, meta }`, `{ kind: "text", uuid, at, text }`,
 `{ kind: "thinking", uuid, at, text }`, `{ kind: "tool", uuid, at, id, name, arg }`,
 `{ kind: "result", uuid, at, id, text, error }`.
+
+A `user` entry is something the agent received as a user message. `meta: false` means the user typed it,
+including a message typed while the agent was working, which appears where the agent took it in. `meta: true`
+means the agent says the user did not type it: a skill's text, a message from another session, a
+background-task notice, a compacted conversation's summary. Show those as context, not as the user's words.
+Entries arrive in the order the agent recorded them; `at` is not an ordering key.
 
 One connection watches at most one conversation; watching another ends the previous one. Errors:
 `NOT_FOUND` (no such session, or not running), `NO_CONVERSATION` (a shell).
@@ -254,9 +267,14 @@ See section 7. Watching again on the same connection replaces the earlier watch.
 
 ## 6. List events
 
-`sessions.changed`, `inbox.changed` and `handoffs.changed` reach **every** authenticated connection, without
-subscribing, each carrying the complete list (the shape of the matching operation's result). On reconnecting,
-call the list operations again.
+These events reach **every** authenticated connection, without subscribing, and always carry the complete
+current value, never a difference:
+
+- `sessions.changed`, `inbox.changed` and `handoffs.changed` carry the shape of the matching operation's
+  result. On reconnecting, call those operations again.
+- `addresses.changed`: `{ "addresses": [string] }`, the same list as in the `hello` answer, sent when it changes
+  while you are connected (checked every few seconds). There is no operation for it: on reconnecting, the
+  `hello` answer carries the current list.
 
 ## 7. Attention events and resuming
 
@@ -310,3 +328,8 @@ open (on Android, a foreground service), and reconnect with backoff when the net
 4. **Do not notify for a suppressed attention event**, and summarize an incomplete attention answer.
 5. **Reduce nothing further** in attention text: the desktop already did, and doing it twice mangles it.
 6. **Store the device credential in protected storage**; forget it on close code 4004.
+7. **Ignore what you do not know.** A field you do not recognize, in any frame, and an event kind you do not
+   recognize, are not errors. New fields and events are added within a protocol version.
+8. **Keep the pairing link's addresses and the latest list received** (sections 1, 4 and 6), and try the
+   latest first. Do not replace the stored list outright: a laptop moves between networks, so the address it
+   has now is not the only one it will have.

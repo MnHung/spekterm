@@ -5,7 +5,16 @@ import path from 'node:path'
 import { after, describe, it } from 'node:test'
 
 import { configureAgentEvents, prepareEventInjection } from './agent-events'
-import { activeWaitSessions, clearWait, lastTranscriptPathOf, observeWaits, subscribeWait, waitStateOf, type WaitSnapshot } from './agent-wait'
+import {
+  activeWaitSessions,
+  clearWait,
+  lastTranscriptPathOf,
+  observeWaits,
+  pendingRequestOf,
+  subscribeWait,
+  waitStateOf,
+  type WaitSnapshot,
+} from './agent-wait'
 
 const bases: string[] = []
 after(() => {
@@ -187,5 +196,33 @@ describe('turn and choice reports (remote-notifications)', () => {
     stopObserving()
     off()
     clearWait(sessionId)
+  })
+})
+
+describe('the pending request (agent-event-bridge)', () => {
+  it('still names the tool after ticks that found nothing, for a view opened later', async () => {
+    const base = configure()
+    const sessionId = 'P1'
+    prepareEventInjection(sessionId, true)
+    let ticks = 0
+    const off = subscribeWait(sessionId, () => {
+      ticks += 1
+    })
+    // A failed assertion must not leave the tick's interval running: it keeps the test process alive.
+    try {
+      fire(base, sessionId, { hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'ls' } })
+      await waitFor('the request', () => waitStateOf(sessionId) === 'awaiting-choice')
+      const seen = ticks
+      await waitFor('two more ticks with no event', () => ticks >= seen + 2)
+      // What `conversation-follow` hands a view that opens now.
+      assert.deepEqual(pendingRequestOf(sessionId), { tool: 'Bash', arg: 'ls' })
+      fire(base, sessionId, { hook_event_name: 'Notification', notification_type: 'permission_prompt' })
+      const after = ticks
+      await waitFor('the notice drained', () => ticks > after + 1)
+      assert.deepEqual(pendingRequestOf(sessionId), { tool: 'Bash', arg: 'ls' })
+    } finally {
+      off()
+      clearWait(sessionId)
+    }
   })
 })

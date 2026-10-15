@@ -29,6 +29,7 @@ const ev = (name: string, extra: Partial<AgentEvent> = {}): AgentEvent => ({
   notificationType: null,
   toolName: null,
   toolArg: null,
+  agentId: null,
   ...extra,
 })
 
@@ -75,7 +76,7 @@ test('payload 以白名單取欄位，絕對路徑不外流（transcript_path �
     tool_input: { file_path: '/home/u/secret/file.ts' },
   })
   assert.ok(parsed)
-  assert.deepEqual(Object.keys(parsed).sort(), ['name', 'notificationType', 'toolArg', 'toolName', 'transcriptPath'])
+  assert.deepEqual(Object.keys(parsed).sort(), ['agentId', 'name', 'notificationType', 'toolArg', 'toolName', 'transcriptPath'])
   // `toolArg` 是**單一辨識參數**，其值本身可能是路徑 —— 那是刻意的（使用者要看得出 agent 在動
   // 哪個檔）。真正必須不外流的是**其餘一切**：工作目錄、暫存目錄、以及參數裡的其他欄位。
   assert.equal(parsed.toolArg, '/home/u/secret/file.ts')
@@ -107,6 +108,57 @@ test('啟用時注入 hooks 並以環境變數指定落點', () => {
   assert.deepEqual(Object.keys(part.hooks ?? {}).sort(), [...HOOKED_EVENTS].sort())
   assert.ok(part.env.SPEKTERM_EVENT_DIR.endsWith(path.join('agent-events', 's1')))
   assert.equal(fs.existsSync(part.env.SPEKTERM_EVENT_DIR), true)
+})
+
+test('the injection names the submission, tool-failure and failed-turn hooks', () => {
+  configureAgentEvents(tmp())
+  const hooks = Object.keys(prepareEventInjection('s1', true)?.hooks ?? {})
+  // Named literally: comparing with `HOOKED_EVENTS` stays green when an event is dropped from the list.
+  for (const name of ['UserPromptSubmit', 'PostToolUseFailure', 'StopFailure', 'PermissionRequest', 'Stop']) {
+    assert.ok(hooks.includes(name), `${name} is injected (got ${hooks.join(', ')})`)
+  }
+})
+
+test('a submitted prompt and a failed tool are busy; a failed turn is ready, a subagent\'s unknown', () => {
+  assert.equal(nextWaitState(ev('UserPromptSubmit')), 'busy')
+  assert.equal(nextWaitState(ev('PostToolUseFailure', { toolName: 'Bash' })), 'busy')
+  assert.equal(nextWaitState(ev('StopFailure')), 'ready')
+  assert.equal(nextWaitState(ev('StopFailure', { agentId: 'a5a6' })), 'unknown')
+  assert.equal(parseEvent({ hook_event_name: 'StopFailure', agent_id: 'a5a6' })?.agentId, 'a5a6')
+})
+
+test('a failed turn does not count as a turn completion', () => {
+  const root = tmp()
+  configureAgentEvents(root)
+  const dir = prepareEventInjection('s1', true)!.env.SPEKTERM_EVENT_DIR
+  fs.writeFileSync(path.join(dir, '100-1.json'), '{"hook_event_name":"UserPromptSubmit","prompt":"hi"}')
+  fs.writeFileSync(path.join(dir, '200-1.json'), '{"hook_event_name":"StopFailure","error":"server_error"}')
+  const result = drainEvents('s1', 'ready')
+  assert.equal(result.state, 'ready')
+  assert.equal(result.turnEnded, false)
+})
+
+test('a subagent\'s failed turn during a choice does not allow sending', () => {
+  const root = tmp()
+  configureAgentEvents(root)
+  const dir = prepareEventInjection('s1', true)!.env.SPEKTERM_EVENT_DIR
+  fs.writeFileSync(path.join(dir, '100-1.json'), '{"hook_event_name":"PermissionRequest","tool_name":"Bash"}')
+  fs.writeFileSync(path.join(dir, '200-1.json'), '{"hook_event_name":"StopFailure","agent_id":"a5a6"}')
+  assert.equal(drainEvents('s1', 'unknown').state, 'unknown')
+})
+
+test('a prompt submitted after a denied permission prompt leaves awaiting-choice', () => {
+  const root = tmp()
+  configureAgentEvents(root)
+  const dir = prepareEventInjection('s1', true)!.env.SPEKTERM_EVENT_DIR
+  // A denial sends nothing (measured), so the next thing the drainer sees is the user's next prompt.
+  fs.writeFileSync(path.join(dir, '100-1.json'), '{"hook_event_name":"PermissionRequest","tool_name":"Bash"}')
+  const asked = drainEvents('s1', 'unknown')
+  assert.equal(asked.state, 'awaiting-choice')
+  fs.writeFileSync(path.join(dir, '200-1.json'), '{"hook_event_name":"UserPromptSubmit","prompt":"do it differently"}')
+  const after = drainEvents('s1', asked.state, asked.pending)
+  assert.equal(after.state, 'busy')
+  assert.equal(after.pending, null)
 })
 
 test('新 session 不繼承上一輪的殘留', () => {
@@ -238,6 +290,16 @@ test('注入的 hook 命令真的跑得起來，且把 payload 原子地寫成�
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, written[0]), 'utf8')), JSON.parse(payload))
 })
 
+test('the hook command prints nothing (a UserPromptSubmit hook\'s stdout is added to the prompt)', () => {
+  const result = spawnSync('sh', ['-c', EVENT_COMMAND], {
+    input: '{"hook_event_name":"UserPromptSubmit","prompt":"hi"}',
+    env: { ...process.env, SPEKTERM_EVENT_DIR: tmp() },
+    encoding: 'utf8',
+  })
+  assert.equal(result.status, 0, `stderr: ${result.stderr}`)
+  assert.equal(result.stdout, '')
+})
+
 test('未設定落點時 hook 命令是無操作，不報錯', () => {
   const result = spawnSync('sh', ['-c', EVENT_COMMAND], {
     input: '{"hook_event_name":"Stop"}',
@@ -270,6 +332,62 @@ test('等待選擇時回報「正在被問什麼」，離開後清掉', () => {
   const after = drainEvents('s1', asked.state)
   assert.equal(after.state, 'busy')
   assert.equal(after.pending, null)
+})
+
+test('the prompt\'s later notice keeps the tool, in separate drains with an empty drain between', () => {
+  const root = tmp()
+  configureAgentEvents(root)
+  const dir = prepareEventInjection('s1', true)!.env.SPEKTERM_EVENT_DIR
+  fs.writeFileSync(
+    path.join(dir, '100-1.json'),
+    JSON.stringify({ hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'rmdir /tmp/x' } }),
+  )
+  const asked = drainEvents('s1', 'unknown')
+  assert.deepEqual(asked.pending, { tool: 'Bash', arg: 'rmdir /tmp/x' })
+  const quiet = drainEvents('s1', asked.state, asked.pending)
+  assert.equal(quiet.count, 0)
+  assert.deepEqual(quiet.pending, { tool: 'Bash', arg: 'rmdir /tmp/x' }, 'an empty drain keeps it')
+  // Measured: about six seconds later, naming no tool.
+  fs.writeFileSync(
+    path.join(dir, '200-1.json'),
+    '{"hook_event_name":"Notification","notification_type":"permission_prompt","message":"Claude needs your permission"}',
+  )
+  const noticed = drainEvents('s1', quiet.state, quiet.pending)
+  assert.equal(noticed.state, 'awaiting-choice')
+  assert.deepEqual(noticed.pending, { tool: 'Bash', arg: 'rmdir /tmp/x' }, 'the notice keeps it')
+})
+
+test('the prompt\'s notice in the same drain keeps the tool', () => {
+  const root = tmp()
+  configureAgentEvents(root)
+  const dir = prepareEventInjection('s1', true)!.env.SPEKTERM_EVENT_DIR
+  fs.writeFileSync(path.join(dir, '100-1.json'), '{"hook_event_name":"PermissionRequest","tool_name":"Write"}')
+  fs.writeFileSync(path.join(dir, '200-1.json'), '{"hook_event_name":"Notification","notification_type":"permission_prompt"}')
+  assert.deepEqual(drainEvents('s1', 'unknown').pending, { tool: 'Write', arg: null })
+})
+
+test('a missing event location keeps the held request', () => {
+  configureAgentEvents(tmp())
+  const held = { tool: 'Bash', arg: 'ls' }
+  assert.deepEqual(drainEvents('never-injected', 'awaiting-choice', held).pending, held)
+  // Outside a choice nothing is held.
+  assert.equal(drainEvents('never-injected', 'busy', held).pending, null)
+})
+
+test('the next request replaces the held one, and leaving the choice clears it', () => {
+  const root = tmp()
+  configureAgentEvents(root)
+  const dir = prepareEventInjection('s1', true)!.env.SPEKTERM_EVENT_DIR
+  const held = { tool: 'Bash', arg: 'ls' }
+  fs.writeFileSync(path.join(dir, '100-1.json'), '{"hook_event_name":"PostToolUse","tool_name":"Bash"}')
+  fs.writeFileSync(path.join(dir, '200-1.json'), '{"hook_event_name":"PreToolUse","tool_name":"Write"}')
+  fs.writeFileSync(path.join(dir, '300-1.json'), '{"hook_event_name":"PermissionRequest","tool_name":"Write"}')
+  assert.deepEqual(drainEvents('s1', 'awaiting-choice', held).pending, { tool: 'Write', arg: null })
+  fs.writeFileSync(path.join(dir, '400-1.json'), '{"hook_event_name":"PostToolUse","tool_name":"Write"}')
+  assert.equal(drainEvents('s1', 'awaiting-choice', held).pending, null)
+  // A second request while the first is still held (parallel tool calls): the new one wins.
+  fs.writeFileSync(path.join(dir, '500-1.json'), '{"hook_event_name":"PermissionRequest","tool_name":"Edit"}')
+  assert.deepEqual(drainEvents('s1', 'awaiting-choice', held).pending, { tool: 'Edit', arg: null })
 })
 
 test('許可提示出現中不得歸為忙碌或就緒（本 change 最承重的一條）', () => {

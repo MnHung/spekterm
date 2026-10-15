@@ -153,6 +153,65 @@ test('isMeta 的使用者訊息保留但標示，不丟棄', () => {
   assert.equal(e.meta, true)
 })
 
+// Shapes measured on CLI 2.1.300 (`docs/lessons/transcript.md`); identifiers shortened, paths removed.
+function queued(attachment: Record<string, unknown>): Record<string, unknown> {
+  return {
+    type: 'attachment',
+    uuid: 'att-1',
+    timestamp: '2026-10-15T01:14:33.936Z',
+    isSidechain: false,
+    attachment: {
+      type: 'queued_command',
+      prompt: '  what is 6 times 7?  ',
+      source_uuid: 'src-1',
+      delivery_id: 'del-1',
+      commandMode: 'prompt',
+      origin: { kind: 'human' },
+      ...attachment,
+    },
+  }
+}
+
+test('a message typed while tools ran is the user\'s message, text unchanged', () => {
+  assert.deepEqual(project(queued({})), [
+    { kind: 'user', uuid: 'att-1', at: Date.parse('2026-10-15T01:14:33.936Z'), text: '  what is 6 times 7?  ', meta: false },
+  ])
+})
+
+test('other mid-turn deliveries and other attachments are not shown', () => {
+  const cases: [string, Record<string, unknown>][] = [
+    ['task notice', queued({ commandMode: 'task-notification', origin: { kind: 'task-notification' } })],
+    ['peer message', queued({ origin: { kind: 'peer', name: 'other-1234' } })],
+    ['no origin', queued({ origin: undefined })],
+    ['non-string prompt', queued({ prompt: [{ type: 'text', text: 'x' }] })],
+    ['blank prompt', queued({ prompt: '   ' })],
+    ['other subtype', queued({ type: 'edited_text_file' })],
+    ['no attachment', { ...queued({}), attachment: undefined }],
+  ]
+  for (const [name, rec] of cases) assert.deepEqual(project(rec), [], name)
+})
+
+test('records the user did not type are marked, typed ones are not', () => {
+  const meta = (extra: Record<string, unknown>, content = 'x'): boolean => {
+    const [e] = project({ ...userRec, message: { role: 'user', content }, ...extra }) as [
+      Extract<ViewEvent, { kind: 'user' }>,
+    ]
+    return e.meta
+  }
+  const notice = '<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n</task-notification>'
+  assert.equal(
+    meta({ promptSource: 'system', origin: { kind: 'task-notification', producer: 'session-task' } }, notice),
+    true,
+    'task notice',
+  )
+  assert.equal(meta({ promptSource: 'system' }, notice), true, 'system source alone')
+  assert.equal(meta({ origin: { kind: 'peer' } }), true, 'non-human origin alone')
+  assert.equal(meta({ isCompactSummary: true, isVisibleInTranscriptOnly: true }), true, 'compaction summary')
+  assert.equal(meta({ promptSource: 'typed', origin: { kind: 'human' } }), false, 'typed prompt')
+  assert.equal(meta({ promptSource: 'queued', origin: { kind: 'human' } }), false, 'queued prompt')
+  assert.equal(meta({}, '<command-name>/clear</command-name>'), false, 'slash command, no origin fields')
+})
+
 test('subagent 的記錄被略過', () => {
   assert.deepEqual(project({ ...userRec, isSidechain: true }), [])
 })

@@ -425,3 +425,74 @@ claude`，6 次）：
 
 **一條只斷言「命令字串包含某些片段」的測試擋不住它。唯一擋得住的是執行它**
 （`agent-events.test.ts` 以 `sh -c` 真的跑一次，斷言檔案出現、內容正確、`.tmp` 沒殘留）。
+
+## Who typed it, and what the hook events do not say (`companion-test-fixes`, CLI 2.1.300, 2026-10-15)
+
+Measured with a real `claude` driven through a pty, hooks injected through `--settings` with matcher `''`,
+plus a survey of a maintainer's local transcripts. **Agent CLI behavior: re-measure after a CLI upgrade**,
+above all the `UserPromptSubmit` row of the table below.
+
+### A message typed while tools run is not a `user` record
+
+It is written as an `attachment` record, at the moment the agent absorbs it into the running turn (after the
+tool result it rides in with), with the submission time as its timestamp:
+
+```json
+{"type":"attachment","uuid":"…","timestamp":"…","attachment":{"type":"queued_command","prompt":"<the text>",
+ "source_uuid":"…","delivery_id":"…","commandMode":"prompt","origin":{"kind":"human"}}}
+```
+
+`queue-operation` records (`enqueue`, `remove` with `reason: "absorbed_mid_turn"`) accompany it; they have no
+`uuid`. No `user` record is written for it. A message typed during a **text-only** answer is different: an
+ordinary `user` record with `promptSource: "queued"`, written when the next turn starts.
+
+**The same subtype carries other things.** About 1,340 local `queued_command` records: about 950
+`commandMode: "task-notification"`, about 130 human prompts, and a few prompts from other origins
+(`origin.kind: "peer"`, one `"auto-continuation"`). So the projection needs all of `queued_command`,
+`commandMode: "prompt"` and `origin.kind: "human"`; anything less shows a notice or another session's message
+as the user's. No delivery was also written as a `user` record (no `source_uuid` equals a `user` uuid), so
+nothing is de-duplicated.
+
+### `isMeta` is not the only "not typed by the user" marker
+
+String-content `user` records not flagged `isMeta`:
+
+| What | `promptSource` | `origin.kind` | Other |
+|---|---|---|---|
+| typed prompt | `typed` / `queued` / `suggestion_accepted` | `human` | |
+| background-task notice (`<task-notification>…`) | `system` | `task-notification` | |
+| compacted conversation's summary | — | — | `isCompactSummary: true` |
+| slash command, `!` input and its output | — | — | |
+
+`transcript-follow` marks the second and third as meta. The last row carries no marker at all, which is why
+`!` output and local command output still show as the user's. Insights (`transcript-extract`) does its own
+classification and strips notices by text; the two are deliberately separate.
+
+### Hook events, measured
+
+| Action | Events that followed |
+|---|---|
+| prompt submitted, text-only answer | `UserPromptSubmit` at once, `Stop` at the end |
+| `!echo hi` | `Stop` only |
+| `/cost` | none |
+| `/clear` | `SessionEnd`, `SessionStart` |
+| message typed while a tool runs | `UserPromptSubmit` at once, mid-turn |
+| message typed during a text-only answer | `UserPromptSubmit` at once; `Stop`, then a second turn and `Stop` (1.8 s later) |
+| tool needing permission | `PreToolUse`, `PermissionRequest` (+0.2 s), `Notification`/`permission_prompt` (+6.0 s, all five prompts) **with no `tool_name`** |
+| prompt approved, tool fails | `PostToolUseFailure` (not `PostToolUse`), then `Stop` |
+| agent service unreachable | `UserPromptSubmit`; `StopFailure` after ten retries (+175 s), no `Stop`; `idle_prompt` 60 s later |
+| prompt denied (Esc, or "No") | **nothing** in 70 s |
+| text-only answer interrupted (Esc) | **nothing** in 70 s |
+| question tool (`AskUserQuestion`) | `PreToolUse`, `PermissionRequest` |
+| after a turn ended (once in five runs) | a subagent's `PreToolUse` (it carries `agent_id`), nothing after it |
+
+Three consequences, each in `agent-events.ts`:
+
+- **Text typed into an open permission prompt or question, then Enter, answers it** (the tool ran) and
+  reports no `UserPromptSubmit`. That is what makes `UserPromptSubmit` → busy safe: it cannot arrive while a
+  prompt is open. It is also why sending into a prompt is refused: free text approves.
+- **A denial and an interruption are invisible.** The state stays what the turn last reported until the next
+  event, usually the user's next prompt.
+- **The injected hook command must print nothing.** The agent adds a `UserPromptSubmit` hook's stdout to the
+  prompt, so an `echo` in `EVENT_COMMAND` would ride along with every prompt.
+  `agent-events.test.ts` pins an empty stdout.

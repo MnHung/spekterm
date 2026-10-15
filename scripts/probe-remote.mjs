@@ -517,10 +517,15 @@ async function runListener(_mode, _config, context) {
   }
 }
 
+/** A documentation-range host name (`remote-protocol`: the address answers). */
+const ADDITIONAL_ADDRESS = 'desk.example.test'
+
 /** remote-access: pairing, credentials, revoke, reset, the renderer's view, a key that went missing. */
 async function runPairing(_mode, _config, context) {
   const repos = makeRepos()
-  const profile = seedProfile(repos, { remote: { enabled: true, port: LISTEN_A } })
+  // The additional address is the one entry of the address list the probe controls (the rest are this
+  // machine's interfaces), so the answers are checked by it.
+  const profile = seedProfile(repos, { remote: { enabled: true, port: LISTEN_A, additionalAddress: ADDITIONAL_ADDRESS } })
   const { app } = await start(context, profile)
 
   await openRemoteDialog(app)
@@ -575,6 +580,12 @@ async function runPairing(_mode, _config, context) {
   check(results, 'a silent connection is closed after ten seconds', silentClosed?.code === 4001, `after ${Date.now() - started} ms, ${JSON.stringify(silentClosed)}`)
 
   const connected = await helloRemote(target, credentialOf(first.response.r))
+  check(
+    results,
+    'the pair and hello answers carry the current addresses, ending with the additional address',
+    first.response.r?.addresses?.at(-1) === ADDITIONAL_ADDRESS && connected.response.r?.addresses?.at(-1) === ADDITIONAL_ADDRESS,
+    `pair=${JSON.stringify(first.response.r?.addresses)} hello=${JSON.stringify(connected.response.r?.addresses)}`,
+  )
   const second = await startPairing(app)
   const other = await pairRemote(target, { code: second.code, deviceName: 'Probe Tablet' })
   await clickSelector(app.client, `${DIALOG} button${label('remote.revoke', { name: 'Probe Pixel' })}`, 'Revoke Probe Pixel')
