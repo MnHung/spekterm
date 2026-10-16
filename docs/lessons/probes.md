@@ -493,9 +493,12 @@ pty 已存在」「切換前終端裡確實有已知內容」「檔案到底寫�
 
 > **flaky 的驗證要連跑，不能只跑一輪。** 第一輪 9/9 全綠時我已經準備收工了。
 
-**已知未解的偶發有三條，撞到時先單獨重跑確認，不要當成自己剛改壞的**：`probe:terminal` 的
+**已知未解的偶發有四條，撞到時先單獨重跑確認，不要當成自己剛改壞的**：`probe:terminal` 的
 「持久化檔案損毀」（**#8**，單獨連跑為 1 紅 1 綠）、`test:all` 於 app relaunch 時 CDP WebSocket
-連線失敗（**#7**）、`probe:workspace` 的「全域 session `cd` 後狀態列呈現分支」（**#30**）。
+連線失敗（**#7**）、`probe:workspace` 的「全域 session `cd` 後狀態列呈現分支」（**#30**），以及
+`probe:remote` `runListener` 的 "a port in use is stated in the dialog" (**#84**: red only when another
+section runs in the same probe run — `PROBE_ONLY=runListener,runAnswer` is red about one run in two, alone it is
+green; seen on the tree before `agent-session-control` too).
 **它們記在這裡就是為了不再被重新調查一次** —— 一條沒有被追蹤的已知紅燈，下一個人只能從頭查起。
 
 > **#30 已經被重新調查過一次了，所以它的現場寫在這裡。** 重現不必跑完整 `test:e2e`：
