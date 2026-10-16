@@ -14,7 +14,7 @@ import type { WaitState } from './agent-events'
  * - `handoff-done`: a handoff report adopted (the moment the desktop notification uses);
  * - `intake`: an inbox arrival.
  *
- * Both batch facts come from the drain itself (`DrainResult.turnEnded` / `choiceRaised`), never from
+ * Both batch facts come from the drain itself (`DrainResult.turnEnded` / `choicesRaised`), never from
  * comparing states: a short turn folds to `ready` → `ready`, and an answered prompt followed by the next
  * folds to `awaiting-choice` → `awaiting-choice`.
  *
@@ -105,10 +105,13 @@ export class AttentionLog {
   }
 
   /** A drained batch of one session (`observeWaits`). */
-  onWait(sessionId: string, batch: { state: WaitState; turnEnded: boolean; choiceRaised: { tool: string } | null }): void {
+  onWait(sessionId: string, batch: { state: WaitState; turnEnded: boolean; choicesRaised: { tool: string }[] }): void {
     if (!this.enabled()) return
-    if (batch.choiceRaised && batch.state === 'awaiting-choice') {
-      this.#sessionEvent('choice', sessionId, { tool: reduceForNotification(batch.choiceRaised.tool) })
+    if (batch.choicesRaised.length > 0 && batch.state === 'awaiting-choice') {
+      // One event per request: two requests in one batch are two prompts (`remote-notifications`).
+      for (const choice of batch.choicesRaised) {
+        this.#sessionEvent('choice', sessionId, { tool: reduceForNotification(choice.tool) })
+      }
     } else if (batch.turnEnded && batch.state !== 'awaiting-choice') {
       this.#sessionEvent('waiting', sessionId, {})
     }

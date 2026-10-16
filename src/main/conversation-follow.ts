@@ -1,5 +1,5 @@
-import type { WaitState } from './agent-events'
-import { lastTranscriptPathOf, pendingRequestOf, subscribeWait, waitStateOf, type WaitSnapshot } from './agent-wait'
+import type { OpenRequest, WaitState } from './agent-events'
+import { lastTranscriptPathOf, openRequestsOf, pendingRequestOf, subscribeWait, waitStateOf, type WaitSnapshot } from './agent-wait'
 import { transcriptPathFor } from './transcript-follow'
 import { type FollowUpdate, TranscriptFollower } from './transcript-follow-service'
 
@@ -12,7 +12,8 @@ export interface AgentSource {
 /** Where a follow delivers: the desktop's renderer, or a remote connection (`remote-protocol`). */
 export interface FollowSink {
   update(update: FollowUpdate): void
-  wait(state: WaitState, pending: { tool: string; arg: string | null } | null): void
+  /** `requests`: the open permission requests, first = the prompt on screen (`agent-event-bridge`). */
+  wait(state: WaitState, pending: { tool: string; arg: string | null } | null, requests: OpenRequest[]): void
   /** `false` once the consumer is gone; nothing more is delivered. */
   alive(): boolean
 }
@@ -52,10 +53,10 @@ export function startFollow(sessionId: string, source: AgentSource | null, sink:
   const unsubscribe = subscribeWait(sessionId, (snapshot) => {
     const previous = lastSent
     lastSent = snapshot.state
-    onWait(sink, follower, snapshot, () => previous)
+    onWait(sink, follower, snapshot, previous)
   })
   // 沿用這個 session 既有的狀態（切走再切回不該退回未知）。
-  sink.wait(waitStateOf(sessionId), pendingRequestOf(sessionId))
+  sink.wait(waitStateOf(sessionId), pendingRequestOf(sessionId), openRequestsOf(sessionId))
   // 算出來的位置是初始值；事件帶來的 `transcript_path` 一旦到達即取代它。
   // An event may already have relocated it while no view was open: the wait state is drained for
   // every running claude session (`session-hibernation`), so start from the last reported location.
@@ -83,13 +84,15 @@ function onWait(
   sink: FollowSink,
   follower: TranscriptFollower,
   snapshot: WaitSnapshot,
-  previous: () => WaitState,
+  previous: WaitState,
 ): void {
   if (!sink.alive()) return
   if (snapshot.transcriptPath) follower.relocate(snapshot.transcriptPath)
   // **監看負責延遲，這裡負責保證。** 監看有一整類靜默的失效方式，而它們的徵狀都是
   // 「畫面安靜地停住」—— 那比沒有 view 更糟。
   follower.poll()
-  if (snapshot.count === 0 && snapshot.state === previous()) return
-  sink.wait(snapshot.state, snapshot.pending)
+  // A poke is a change with no event: a request answered or dismissed, or the session typed into, so whether a
+  // device may answer the open prompt changed (`remote-protocol`).
+  if (snapshot.count === 0 && snapshot.state === previous && !snapshot.poke) return
+  sink.wait(snapshot.state, snapshot.pending, snapshot.requests)
 }

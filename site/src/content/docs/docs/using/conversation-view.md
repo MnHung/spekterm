@@ -43,7 +43,8 @@ Type in **Message the agent** and press **Send**. Whether you can send depends o
   agent picked it up.
 - **The agent is asking to use a tool, or is waiting for a choice.** The view shows what it is waiting for.
   Answer it in the terminal view — the conversation view does not send free text into a permission prompt
-  or a menu.
+  or a menu. This includes a prompt from an agent running in the background: while any prompt is open, the
+  view keeps waiting for it, even when the agent itself has finished its turn.
 - **The agent's state is unknown.** This happens right after a session starts, or when Claude Code is not
   reporting events. The view refuses to send rather than guess; switch to the terminal view to see what the
   agent is doing.
@@ -72,3 +73,8 @@ spekterm adds its own settings to each `claude` session it starts, so Claude Cod
 working and when it waits. Your own Claude Code settings, hooks, and status line keep working; spekterm
 adds to them and does not change your settings files. Agent sessions started outside spekterm are not
 affected.
+
+The settings also allow Claude Code to read the files your phone attaches to a message (see
+[Remote access](/docs/using/remote-access/)), which spekterm keeps in its own data folder, so reading them
+asks no permission. Only reading is allowed there. When you turn agent event reporting off, this permission
+is not added either.

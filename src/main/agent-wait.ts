@@ -1,4 +1,16 @@
-import { drainEvents, type DrainResult, type WaitState } from './agent-events'
+import { randomUUID } from 'node:crypto'
+
+import {
+  drainEvents,
+  type DrainResult,
+  type FinishedCall,
+  type HeldWait,
+  heldWait,
+  type OpenRequest,
+  pendingOf,
+  stateOf,
+  type WaitState,
+} from './agent-events'
 
 /**
  * 等待狀態的求值 —— **per session、訂閱式，而且只有一個 drainer**。
@@ -32,14 +44,23 @@ const WAIT_TICK_MS = 400
 export interface WaitSnapshot {
   state: WaitState
   pending: { tool: string; arg: string | null } | null
+  /** The open permission requests, first = the prompt the terminal shows (`agent-event-bridge`). */
+  requests: OpenRequest[]
   /** 最後一次事件回報的紀錄位置（若有）。跟進器據它重新定位。 */
   transcriptPath: string | null
   /** 這一次 drain 讀到幾則事件。 */
   count: number
   /** The batch contained a turn completion (`DrainResult.turnEnded`). */
   turnEnded: boolean
-  /** The batch's last permission request (`DrainResult.choiceRaised`). */
-  choiceRaised: { tool: string; arg: string | null } | null
+  /** One entry per permission request in the batch (`DrainResult.choicesRaised`). */
+  choicesRaised: { tool: string; arg: string | null }[]
+  /** Tool calls that ended in the batch (`DrainResult.finished`). */
+  finished: FinishedCall[]
+  /**
+   * Published with no event (`pokeWait`): a request was answered or dismissed, or the session was typed into.
+   * What a device may answer can have changed, so followers send it again.
+   */
+  poke: boolean
 }
 
 type Subscriber = (snapshot: WaitSnapshot) => void
@@ -54,9 +75,10 @@ interface SessionEntry {
  *
  * 把它放在訂閱物件裡的話，使用者切走再切回時狀態重設為未知，**而重建它所需的事件早已被前一次
  * 訂閱讀走刪掉** —— agent 正閒著、不再產生新事件，於是狀態永遠停在未知。
+ *
+ * It is the whole `HeldWait`: the base state, the open requests and the unmatched tool starts.
  */
-const waitStates = new Map<string, WaitState>()
-const pendingRequests = new Map<string, { tool: string; arg: string | null } | null>()
+const helds = new Map<string, HeldWait>()
 const entries = new Map<string, SessionEntry>()
 /**
  * The last transcript location an event reported, per session.
@@ -68,32 +90,62 @@ const entries = new Map<string, SessionEntry>()
  */
 const transcriptPaths = new Map<string, string>()
 
+let newId: () => string = randomUUID
+
+/** For the tests: a deterministic request id source. */
+export function setRequestIdSource(source: (() => string) | null): void {
+  newId = source ?? randomUUID
+}
+
+function heldOf(sessionId: string): HeldWait {
+  return helds.get(sessionId) ?? heldWait()
+}
+
 /** The last transcript location an event reported for this session, if any. */
 export function lastTranscriptPathOf(sessionId: string): string | null {
   return transcriptPaths.get(sessionId) ?? null
 }
 
 export function waitStateOf(sessionId: string): WaitState {
-  return waitStates.get(sessionId) ?? 'unknown'
+  return stateOf(heldOf(sessionId))
 }
 
 export function pendingRequestOf(sessionId: string): { tool: string; arg: string | null } | null {
-  return pendingRequests.get(sessionId) ?? null
+  return pendingOf(heldOf(sessionId))
+}
+
+/** The open permission requests of a session, first = the one the terminal shows. */
+export function openRequestsOf(sessionId: string): OpenRequest[] {
+  return heldOf(sessionId).requests.map((request) => ({ ...request }))
+}
+
+function snapshotOf(sessionId: string, extra: Partial<WaitSnapshot> = {}): WaitSnapshot {
+  const held = heldOf(sessionId)
+  return {
+    state: stateOf(held),
+    pending: pendingOf(held),
+    requests: held.requests.map((request) => ({ ...request })),
+    transcriptPath: null,
+    count: 0,
+    turnEnded: false,
+    choicesRaised: [],
+    finished: [],
+    poke: false,
+    ...extra,
+  }
 }
 
 /** 讓測試與其他消費者共用同一個折疊結果。 */
 export function foldDrain(sessionId: string, result: DrainResult): WaitSnapshot {
-    waitStates.set(sessionId, result.state)
-  pendingRequests.set(sessionId, result.pending)
+  helds.set(sessionId, result.held)
   if (result.transcriptPath) transcriptPaths.set(sessionId, result.transcriptPath)
-  return {
-    state: result.state,
-    pending: result.pending,
+  return snapshotOf(sessionId, {
     transcriptPath: result.transcriptPath,
     count: result.count,
     turnEnded: result.turnEnded,
-    choiceRaised: result.choiceRaised,
-  }
+    choicesRaised: result.choicesRaised,
+    finished: result.finished,
+  })
 }
 
 /** Sees every drained batch of every session, with the state before it. */
@@ -111,15 +163,8 @@ export function observeWaits(observer: WaitObserver): () => void {
   return () => observers.delete(observer)
 }
 
-function tick(sessionId: string): void {
-  const entry = entries.get(sessionId)
-  if (!entry) return
-  const previous = waitStateOf(sessionId)
-  const result = drainEvents(sessionId, previous, pendingRequestOf(sessionId))
-  const snapshot = foldDrain(sessionId, result)
-  // **無論有沒有變化都通知** —— 跟進器要靠每一次 tick 主動 poll 一次紀錄，
-  // 那是它「監看負責延遲、主動讀負責保證」的那一半。
-  for (const subscriber of entry.subscribers) subscriber(snapshot)
+function publish(sessionId: string, snapshot: WaitSnapshot, previous: WaitState): void {
+  for (const subscriber of entries.get(sessionId)?.subscribers ?? []) subscriber(snapshot)
   for (const observer of observers) {
     try {
       observer(sessionId, snapshot, previous)
@@ -127,6 +172,66 @@ function tick(sessionId: string): void {
       console.error(`[agent-wait] observer failed: ${String(error)}`)
     }
   }
+}
+
+function tick(sessionId: string): WaitSnapshot {
+  const previous = waitStateOf(sessionId)
+  const result = drainEvents(sessionId, heldOf(sessionId), { newId })
+  const snapshot = foldDrain(sessionId, result)
+  // **無論有沒有變化都通知** —— 跟進器要靠每一次 tick 主動 poll 一次紀錄，
+  // 那是它「監看負責延遲、主動讀負責保證」的那一半。
+  publish(sessionId, snapshot, previous)
+  return snapshot
+}
+
+/**
+ * Reads the session's events now, through the same drain the timer runs (D4 of
+ * `remote-prompts-attachments-rename`): a device answer re-checks the open request before every key. The
+ * single-drainer rule holds — this is the same code path, and its batch reaches subscribers and observers as
+ * any other. A session with no timer (no running process) is not drained; its stored state is returned.
+ */
+export function refreshWait(sessionId: string): WaitSnapshot {
+  if (!entries.has(sessionId)) return snapshotOf(sessionId)
+  return tick(sessionId)
+}
+
+/**
+ * Tells subscribers that what they show may have changed with no event: a request was answered, dismissed,
+ * or the desktop typed into its session (`remote-protocol`, the open prompt's answerability).
+ */
+export function pokeWait(sessionId: string): void {
+  if (!entries.has(sessionId) && !helds.has(sessionId)) return
+  const previous = waitStateOf(sessionId)
+  publish(sessionId, snapshotOf(sessionId, { poke: true }), previous)
+}
+
+/** Marks that a device's answer wrote its first key to this request. `false` when it is not open. */
+export function markAnswered(sessionId: string, requestId: string, at: number): boolean {
+  const held = helds.get(sessionId)
+  const request = held?.requests.find((candidate) => candidate.id === requestId)
+  if (!request) return false
+  request.answeredAt ??= at
+  pokeWait(sessionId)
+  return true
+}
+
+/**
+ * The desktop wrote a device's denial (Esc) to this request: it is no longer open (`agent-event-bridge`, a
+ * denied prompt). For the agent's own request, its unmatched tool starts go too and the base state becomes
+ * ready — dismissing the agent's own prompt ended its turn in every measured case. A subagent's request
+ * leaves the base state alone; its `SubagentStop` follows.
+ */
+export function dismissRequest(sessionId: string, requestId: string): boolean {
+  const held = helds.get(sessionId)
+  const request = held?.requests.find((candidate) => candidate.id === requestId)
+  if (!held || !request) return false
+  held.requests = held.requests.filter((candidate) => candidate.id !== requestId)
+  if (request.agentId === null) {
+    held.starts = held.starts.filter((start) => start.agentId !== null)
+    held.base = 'ready'
+  }
+  pokeWait(sessionId)
+  return true
 }
 
 /**
@@ -156,6 +261,15 @@ export function subscribeWait(sessionId: string, subscriber: Subscriber): () => 
   }
 }
 
+/**
+ * The session's process ended (any reason): no prompt of it can be on screen any more. The open requests and
+ * the state go; the last transcript location stays, so a view or a wake still follows the right file.
+ */
+export function forgetRequests(sessionId: string): void {
+  if (!helds.has(sessionId)) return
+  helds.set(sessionId, heldWait())
+}
+
 /** session 結束時清除。**agent 回報的「對話結束」不是這個訊號。** */
 export function clearWait(sessionId: string): void {
   const entry = entries.get(sessionId)
@@ -163,8 +277,7 @@ export function clearWait(sessionId: string): void {
     clearInterval(entry.timer)
     entries.delete(sessionId)
   }
-    waitStates.delete(sessionId)
-  pendingRequests.delete(sessionId)
+  helds.delete(sessionId)
   transcriptPaths.delete(sessionId)
 }
 

@@ -1,5 +1,8 @@
 import { preferredTitle } from '../shared/lineage/label'
-import { waitStateOf } from './agent-wait'
+import { dismissRequest, markAnswered, openRequestsOf, refreshWait, subscribeWait, waitStateOf } from './agent-wait'
+import type { FinishedCall } from './agent-events'
+import { lastKeystrokeAt } from './pty-input'
+import { promptView, writeAnswer } from './remote-answer'
 import { startFollow } from './conversation-follow'
 import { readBriefFor } from './handoff-brief'
 import { lifecycleViewOf } from './handoff-lifecycle-view'
@@ -11,7 +14,8 @@ import type { IntakeService } from './intake-service'
 import type { OpenSpecService } from './openspec-service'
 import { OpenSpecServiceError } from './openspec-service'
 import type { AttentionLog } from './remote-attention'
-import { sendReply } from './remote-conversation'
+import type { AttachmentStore } from './remote-attachments'
+import { runQueued, sendReply } from './remote-conversation'
 import { RemoteError, type ErrorCode } from './remote-frames'
 import type { RemoteOutput } from './remote-output'
 import type { FolderView, HostAction, RemoteHost, SessionList, SessionView } from './remote-protocol'
@@ -45,6 +49,8 @@ export interface HostDeps {
   /** Asks the window's interface to carry out an action; resolves with its outcome or rejects on timeout. */
   request: (contentsId: number, action: HostAction) => Promise<RendererOutcome>
   setRemoteWatched: (watchKey: string, sessionId: string | null) => void
+  /** Where a device's attachments are stored (`remote-attachments.ts`); `null` until configured. */
+  attachments?: AttachmentStore | null
   delay?: (ms: number) => Promise<void>
 }
 
@@ -122,7 +128,11 @@ export function createRemoteHost(deps: HostDeps): RemoteHost {
       const source = terminal.agentSourceOf(sessionId)
       if (!source) return null
       let alive = true
-      const follow = startFollow(sessionId, source, { update: sink.update, wait: sink.wait, alive: () => alive })
+      const follow = startFollow(sessionId, source, {
+        update: sink.update,
+        wait: (state, pending, requests) => sink.wait(state, pending, promptView(requests, lastKeystrokeAt(sessionId))),
+        alive: () => alive,
+      })
       if (!follow) return 'none'
       return {
         stop: () => {
@@ -132,7 +142,23 @@ export function createRemoteHost(deps: HostDeps): RemoteHost {
       }
     },
 
-    reply(watching, sessionId, text) {
+    putAttachment(sessionId, p) {
+      const session = record(sessionId)
+      if (!session) throw new RemoteError('NOT_FOUND', `no session ${sessionId}`)
+      if (session.spawnTarget === 'shell') throw new RemoteError('NO_CONVERSATION', 'this session has no conversation (a shell)')
+      if (!deps.attachments) throw new RemoteError('INTERNAL', 'attachments are not available')
+      return deps.attachments.put(sessionId, p)
+    },
+
+    reply(watching, sessionId, text, attachments) {
+      const store = deps.attachments
+      const take =
+        attachments.length === 0
+          ? undefined
+          : () => {
+              if (!store) throw new RemoteError('NOT_FOUND', 'no such attachment')
+              return store.reserve(sessionId, attachments)
+            }
       return sendReply(
         {
           waitStateOf,
@@ -148,6 +174,52 @@ export function createRemoteHost(deps: HostDeps): RemoteHost {
         watching,
         sessionId,
         text,
+        take,
+      )
+    },
+
+    answer(watching, sessionId, promptId, decision, selections) {
+      if (watching !== sessionId) {
+        return Promise.reject(new RemoteError('NOT_WATCHING', 'answer only the conversation this connection watches'))
+      }
+      return runQueued(sessionId, () =>
+        writeAnswer(
+          {
+            refresh: (id) => {
+              refreshWait(id)
+              return openRequestsOf(id)
+            },
+            lastKeystrokeAt,
+            write: (id, key) => {
+              const terminal = service()
+              if (!terminal || terminal.sizeOf(id) === null) return false
+              terminal.write(id, key, 'answer')
+              return true
+            },
+            markAnswered: (id, requestId, at) => void markAnswered(id, requestId, at),
+            dismiss: (id, requestId) => void dismissRequest(id, requestId),
+            awaitFinished: (id, toolUseId, ms) =>
+              new Promise<FinishedCall | null>((resolve) => {
+                const timer = setTimeout(() => {
+                  off()
+                  resolve(null)
+                }, ms)
+                const off = subscribeWait(id, (snapshot) => {
+                  const finished = snapshot.finished.find((call) => call.toolUseId === toolUseId)
+                  if (!finished) return
+                  clearTimeout(timer)
+                  off()
+                  resolve(finished)
+                })
+              }),
+            delay,
+            now: Date.now,
+          },
+          sessionId,
+          promptId,
+          decision,
+          selections,
+        ),
       )
     },
 

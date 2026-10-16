@@ -235,3 +235,32 @@ test('初次附掛超過上限時只送最近一段並標示', () => {
   assert.equal(b.truncated, false)
   assert.equal(b.events.length, 10)
 })
+
+const userRecord = (content: string) => ({
+  type: 'user',
+  uuid: 'u1',
+  timestamp: '2026-10-15T00:00:00Z',
+  message: { role: 'user', content },
+  promptSource: 'typed',
+  origin: { kind: 'human' },
+})
+
+test('a message that is one paste is shown as the pasted text (the measured shape)', () => {
+  const sent = 'a long reply\n\nwith paragraphs and a path `/home/me/x.png`'
+  const recorded = `\n\n<pasted_content id="55b5">\n${sent}\n</pasted_content id="55b5">\n`
+  const [event] = project(userRecord(recorded))
+  assert.equal(event.kind, 'user')
+  assert.equal((event as { text: string }).text, sent)
+})
+
+test('a paste among typed text, or with a mismatched closing id, is shown as recorded', () => {
+  const mixed = 'typed first\n\n<pasted_content id="a1">\npasted\n</pasted_content id="a1">\n'
+  assert.equal((project(userRecord(mixed))[0] as { text: string }).text, mixed)
+  const mismatched = '<pasted_content id="a1">\npasted\n</pasted_content id="b2">\n'
+  assert.equal((project(userRecord(mismatched))[0] as { text: string }).text, mismatched)
+})
+
+test('a path in a message is delivered as written', () => {
+  const text = 'look at /home/me/repo/src/x.ts please'
+  assert.equal((project(userRecord(text))[0] as { text: string }).text, text)
+})

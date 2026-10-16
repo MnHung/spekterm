@@ -91,3 +91,22 @@ test('同名的環境變數被貢獻兩次同樣是明確的失敗', () => {
 test('全部不參與時不注入', () => {
   assert.equal(composeInjection(tmpSettingsFile(), [null, null]), null)
 })
+
+test('the attachment read rule composes with the event hooks, as a read rule and not a working directory', async () => {
+  const { configureAgentEvents, prepareEventInjection } = await import('./agent-events')
+  const { configureAttachments, prepareAttachmentAccess } = await import('./remote-attachments')
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'inject-'))
+  configureAgentEvents(userData)
+  configureAttachments(userData)
+  const file = tmpSettingsFile()
+  const injection = composeInjection(file, [prepareEventInjection('s1', true), prepareAttachmentAccess(true)])
+  assert.ok(injection)
+  const settings = JSON.parse(fs.readFileSync(file, 'utf8'))
+  const store = path.join(userData, 'remote-attachments')
+  assert.deepEqual(settings.permissions, { allow: [`Read(/${store}/**)`] })
+  assert.ok(String(settings.permissions.allow[0]).startsWith('Read(//'), 'an absolute path rule starts with //')
+  assert.equal(settings.permissions.additionalDirectories, undefined)
+  assert.ok(settings.hooks.PermissionRequest, 'the hooks are still there')
+  assert.equal(prepareAttachmentAccess(false), null)
+  fs.rmSync(userData, { recursive: true, force: true })
+})

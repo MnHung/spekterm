@@ -4,6 +4,8 @@ import os from 'node:os'
 import { type IPty, spawn } from 'node-pty'
 import { clearAgentStatus, prepareInjection } from './agent-status'
 import { clearAgentEvents, prepareEventInjection } from './agent-events'
+import { noteWrite, type WriteOrigin } from './pty-input'
+import { prepareAttachmentAccess } from './remote-attachments'
 import { type Injection, type InjectionContribution, composeInjection } from './agent-injection'
 import { isWithin } from './fs-boundary'
 import { readPtyCwd } from './pty-cwd'
@@ -562,6 +564,8 @@ export class TerminalService {
         ? composeInjection(this.settingsFile(), [
             prepareInjection(sessionId, this.agentStatusEnabled()),
             prepareEventInjection(sessionId, this.agentEventsEnabled()),
+            // Reading a device's attachments without a prompt; only with events, as replies need them.
+            prepareAttachmentAccess(this.agentEventsEnabled()),
             // **排在事件橋接之後** —— 見上方註解：對照組的鑑別力取決於這個順序。
             this.prepareHandoff(sessionId),
           ])
@@ -713,10 +717,17 @@ export class TerminalService {
     return cwd
   }
 
-  /** renderer → pty。未知或已結束的 session 靜默忽略（renderer 可能有時序落差）。 */
-  write(sessionId: string, data: string): void {
+  /**
+   * renderer → pty。未知或已結束的 session 靜默忽略（renderer 可能有時序落差）。
+   *
+   * Every write is reported to `pty-input.ts`, which keeps the time of the last keystroke: a device may
+   * answer an open prompt only while nothing was typed since it appeared. A device answer's own keys pass
+   * `origin: 'answer'`.
+   */
+  write(sessionId: string, data: string, origin?: WriteOrigin): void {
     const session = this.#sessions.get(sessionId)
     if (!session) return
+    noteWrite(sessionId, data, origin)
     try {
       session.pty.write(data)
     } catch {

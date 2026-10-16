@@ -47,6 +47,7 @@ async function rig(options: Partial<ConstructorParameters<typeof RemoteServer>[0
     throttle,
     serverInfo: () => ({ name: 'test', version: '0' }),
     addresses: () => ['192.0.2.10', 'desk.example.ts.net'],
+    operations: () => ['conversation.answer', 'sessions.list'],
     openSession: (connection) => {
       const session = { deviceId: connection.deviceId, disposed: false }
       sessions.push(session)
@@ -79,6 +80,7 @@ async function paired(r: Rig): Promise<{ deviceId: string; deviceSecret: string 
   const { code } = r.pairing.start()
   const { client, response } = await pairRemote(r.target, { code })
   assert.equal(response.ok, true, JSON.stringify(response))
+  assert.deepEqual(response.r.operations, ['conversation.answer', 'sessions.list'], 'the pairing answer lists the operations')
   client.close()
   await client.closed
   return { deviceId: response.r.deviceId, deviceSecret: response.r.deviceSecret }
@@ -108,6 +110,7 @@ test('pairing yields a credential that authenticates; a wrong one is refused', a
     assert.equal(response.ok, true)
     assert.equal(response.r.protocol, 1)
     assert.deepEqual(response.r.addresses, ['192.0.2.10', 'desk.example.ts.net'])
+    assert.deepEqual(response.r.operations, ['conversation.answer', 'sessions.list'])
     assert.ok((r.store.device(credential.deviceId)?.lastSeenAt ?? 0) > seenBefore, 'connecting updates the last-seen time')
     const echoed = await client.call('anything', {})
     assert.equal(echoed.r.echo, 'anything')

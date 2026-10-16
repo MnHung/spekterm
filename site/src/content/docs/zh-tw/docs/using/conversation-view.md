@@ -37,7 +37,8 @@ spekterm 絕不讀終端畫面來組成這個 view。畫面輸出是給人看的
 - **處理中…** —— agent 正在忙，連它不用任何工具、只是在寫回答時也算。這時仍然可以送出：Claude Code
   會在工作中收下這則訊息，訊息會出現在對話裡 agent 收下它的位置。
 - **agent 正在請求使用某個工具，或在等一個選擇。** view 會顯示它在等什麼。請在終端 view 回答它 ——
-  對話 view 不會把自由文字送進許可提示或選單。
+  對話 view 不會把自由文字送進許可提示或選單。在背景執行的 agent 跳出的提示也一樣：只要還有提示開著，
+  view 就會一直等它，即使 agent 本身已經結束這一輪。
 - **agent 的狀態未知。** 這發生在 session 剛啟動時，或 Claude Code 沒有回報事件時。view 寧可拒絕送出
   也不猜；切到終端 view 看看 agent 在做什麼。
 
@@ -62,3 +63,7 @@ spekterm 絕不讀終端畫面來組成這個 view。畫面輸出是給人看的
 spekterm 會替它啟動的每個 `claude` session 加上自己的設定，讓 Claude Code 回報何時開始工作、何時在
 等待。你自己的 Claude Code 設定、hook 與 status line 照常運作；spekterm 是附加上去，不會改動你的設定
 檔。在 spekterm 之外啟動的 agent session 不受影響。
+
+這份設定也允許 Claude Code 讀取你從手機附加到訊息裡的檔案（見[遠端存取](/zh-tw/docs/using/remote-access/)）。
+spekterm 把它們放在自己的資料資料夾裡，所以讀取時不會跳出許可提示；那裡只允許讀取。關掉 agent 事件回報時，
+這項許可也不會加上。

@@ -210,6 +210,19 @@ function resultText(content: unknown): string {
  * 另一個目錄。防禦性地略過帶該旗標的記錄，但**不要據此以為 subagent 會被呈現** —— 它不會，
  * 而那是刻意的範圍決定。
  */
+/**
+ * A message that is exactly one paste, as the agent records it (measured, CLI 2.1.300):
+ * `\n\n<pasted_content id="X">\n<the text>\n</pasted_content id="X">\n`. A long reply is taken as a paste, so
+ * without this the conversation showed the markers and the reply never matched what was sent ("not
+ * confirmed"). Only the whole-message shape is unwrapped; a paste among typed text is shown as recorded.
+ */
+const ONE_PASTE = /^\n*<pasted_content id="([^"\n]+)">\n([\s\S]*)\n<\/pasted_content id="\1">\n?$/
+
+export function unwrapPaste(content: string): string {
+  const match = ONE_PASTE.exec(content)
+  return match ? match[2] : content
+}
+
 export function project(raw: unknown): ViewEvent[] {
   if (raw === null || typeof raw !== 'object') return []
   const r = raw as Record<string, unknown>
@@ -230,8 +243,9 @@ export function project(raw: unknown): ViewEvent[] {
   if (type === 'user') {
     // 使用者的訊息可能是字串，也可能是帶 `tool_result` 的陣列 —— 後者不是使用者打的字。
     if (typeof content === 'string') {
-      return content.trim()
-        ? [{ kind: 'user', uuid, at, text: content, meta: notTypedByUser(r) }]
+      const text = unwrapPaste(content)
+      return text.trim()
+        ? [{ kind: 'user', uuid, at, text, meta: notTypedByUser(r) }]
         : []
     }
     if (!Array.isArray(content)) return []

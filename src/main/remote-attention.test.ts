@@ -22,7 +22,7 @@ function rig(overrides: Partial<AttentionSources> = {}) {
 const batch = (state: 'ready' | 'busy' | 'awaiting-choice', turnEnded = false, tool: string | null = null) => ({
   state,
   turnEnded,
-  choiceRaised: tool === null ? null : { tool },
+  choicesRaised: tool === null ? [] : [{ tool }],
 })
 
 test('derivations: a finished turn, a choice, an adopted report, an arrival', () => {
@@ -53,6 +53,13 @@ test('a turn inside one batch (ready → ready) still raises waiting; a busy bat
   assert.equal(r.seen.length, 0)
   r.log.onWait('s', batch('ready', true))
   assert.deepEqual(r.seen.map((e) => e.kind), ['waiting'])
+})
+
+test('two requests in one batch raise two events', () => {
+  const r = rig()
+  r.listen()
+  r.log.onWait('s', { state: 'awaiting-choice', turnEnded: false, choicesRaised: [{ tool: 'Read' }, { tool: 'Bash' }] })
+  assert.deepEqual(r.seen.map((e) => e.tool), ['Read', 'Bash'])
 })
 
 test('a second prompt while already waiting on a choice raises its own event', () => {

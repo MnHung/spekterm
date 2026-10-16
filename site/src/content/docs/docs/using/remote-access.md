@@ -1,14 +1,15 @@
 ---
 title: Remote access
-description: Reach spekterm from your phone — see your sessions, read and answer agents, start sessions, and get told when an agent waits for you. Directly, with no relay.
+description: Reach spekterm from your phone — see your sessions, read and answer agents, attach photos and files, answer their prompts, start and rename sessions, and get told when an agent waits for you. Directly, with no relay.
 sidebar:
   order: 7
 ---
 
 Remote access lets the spekterm app on your phone reach spekterm on your computer **directly**: no account,
 no relay, no push service. From the phone you can see every folder and session, read an agent's
-conversation and reply to it, answer a permission prompt in the terminal, start or wake a session, handle the
-inbox, follow your handoffs, and read your OpenSpec changes. You are told when an agent waits for you.
+conversation and reply to it, attach photos and files to a reply, answer an agent's permission prompts and
+questions, start, wake or rename a session, handle the inbox, follow your handoffs, and read your OpenSpec
+changes. You are told when an agent waits for you.
 
 It is **off** until you turn it on.
 
@@ -19,7 +20,33 @@ It is **off** until you turn it on.
 
 A paired phone can do what you can do in a session: read your agents and shells and **type into them**. Agents
 have a shell, so treat a paired phone like your keyboard. It cannot edit files outside a session, change
-settings, see your Slack connection or any credential, or close and hibernate sessions.
+settings, see your Slack connection or any credential, or close and hibernate sessions. The only files it can
+put on your computer are attachments, and only into spekterm's own data folder, under names spekterm chooses.
+
+### Answering prompts from the phone
+
+When an agent asks permission or asks you a question, the phone shows it and can answer:
+
+- **A permission prompt**: allow it once, or deny it. Allowing is offered for running commands, editing,
+  writing and reading files, and fetching web pages — the prompts whose first option is a one-time "Yes". The
+  "always allow" options are not offered; use the terminal for those.
+- **A question** the agent asks with choices: pick the options.
+- **A plan** the agent wants to carry out: read it, then approve it (asking before each edit, or with auto
+  mode) or deny it to keep planning.
+
+spekterm presses the keys you would press, one at a time, and never sends text or Enter into a prompt. Before
+each key it checks that the prompt is still the same one and still open. The phone cannot answer when more than
+one prompt is waiting, or once you typed into that session on your computer; answer those on the computer.
+
+### Attaching files
+
+A reply from the phone can carry photos, screenshots, PDFs and text files (up to 10 per reply, 10 MB each).
+spekterm keeps them in its own data folder and tells the agent where they are; the agent reads them without a
+permission prompt. They are deleted when you close the session, and after 30 days at the latest.
+
+### Renaming a session
+
+Renaming from the phone works as on the computer: an empty name gives the session back its agent's title.
 
 Starting or waking a session from the phone **never takes your desktop away from you**: the session appears in
 its folder, but what you are looking at and where you are typing stay as they were.

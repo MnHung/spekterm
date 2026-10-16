@@ -10,6 +10,8 @@ import {
   configureAgentEvents,
   drainEvents,
   encodeInput, encodePrefill,
+  fileTimeOf,
+  heldWait,
   EVENT_COMMAND,
   HOOKED_EVENTS,
   nextWaitState,
@@ -30,6 +32,14 @@ const ev = (name: string, extra: Partial<AgentEvent> = {}): AgentEvent => ({
   toolName: null,
   toolArg: null,
   agentId: null,
+  toolUseId: null,
+  inputHash: null,
+  questions: null,
+  answers: null,
+  plan: null,
+  permissionMode: null,
+  source: null,
+  runningAgents: null,
   ...extra,
 })
 
@@ -76,11 +86,16 @@ test('payload 以白名單取欄位，絕對路徑不外流（transcript_path �
     tool_input: { file_path: '/home/u/secret/file.ts' },
   })
   assert.ok(parsed)
-  assert.deepEqual(Object.keys(parsed).sort(), ['agentId', 'name', 'notificationType', 'toolArg', 'toolName', 'transcriptPath'])
+  assert.deepEqual(Object.keys(parsed).sort(), [
+    'agentId', 'answers', 'inputHash', 'name', 'notificationType', 'permissionMode', 'plan', 'questions',
+    'runningAgents', 'source', 'toolArg', 'toolName', 'toolUseId', 'transcriptPath',
+  ])
   // `toolArg` 是**單一辨識參數**，其值本身可能是路徑 —— 那是刻意的（使用者要看得出 agent 在動
   // 哪個檔）。真正必須不外流的是**其餘一切**：工作目錄、暫存目錄、以及參數裡的其他欄位。
   assert.equal(parsed.toolArg, '/home/u/secret/file.ts')
   const serialized = JSON.stringify({ ...parsed, transcriptPath: undefined, toolArg: undefined })
+  // The input is kept only as a hash.
+  assert.match(parsed.inputHash ?? '', /^[0-9a-f]{32}$/)
   assert.ok(!serialized.includes('/home/u/secret'), serialized)
   assert.ok(!serialized.includes('/tmp/scratch'), serialized)
 })
@@ -133,7 +148,7 @@ test('a failed turn does not count as a turn completion', () => {
   const dir = prepareEventInjection('s1', true)!.env.SPEKTERM_EVENT_DIR
   fs.writeFileSync(path.join(dir, '100-1.json'), '{"hook_event_name":"UserPromptSubmit","prompt":"hi"}')
   fs.writeFileSync(path.join(dir, '200-1.json'), '{"hook_event_name":"StopFailure","error":"server_error"}')
-  const result = drainEvents('s1', 'ready')
+  const result = drainEvents('s1', heldWait('ready'))
   assert.equal(result.state, 'ready')
   assert.equal(result.turnEnded, false)
 })
@@ -144,7 +159,9 @@ test('a subagent\'s failed turn during a choice does not allow sending', () => {
   const dir = prepareEventInjection('s1', true)!.env.SPEKTERM_EVENT_DIR
   fs.writeFileSync(path.join(dir, '100-1.json'), '{"hook_event_name":"PermissionRequest","tool_name":"Bash"}')
   fs.writeFileSync(path.join(dir, '200-1.json'), '{"hook_event_name":"StopFailure","agent_id":"a5a6"}')
-  assert.equal(drainEvents('s1', 'unknown').state, 'unknown')
+  const state = drainEvents('s1', heldWait()).state
+  assert.notEqual(state, 'ready')
+  assert.notEqual(state, 'busy')
 })
 
 test('a prompt submitted after a denied permission prompt leaves awaiting-choice', () => {
@@ -153,10 +170,10 @@ test('a prompt submitted after a denied permission prompt leaves awaiting-choice
   const dir = prepareEventInjection('s1', true)!.env.SPEKTERM_EVENT_DIR
   // A denial sends nothing (measured), so the next thing the drainer sees is the user's next prompt.
   fs.writeFileSync(path.join(dir, '100-1.json'), '{"hook_event_name":"PermissionRequest","tool_name":"Bash"}')
-  const asked = drainEvents('s1', 'unknown')
+  const asked = drainEvents('s1', heldWait())
   assert.equal(asked.state, 'awaiting-choice')
   fs.writeFileSync(path.join(dir, '200-1.json'), '{"hook_event_name":"UserPromptSubmit","prompt":"do it differently"}')
-  const after = drainEvents('s1', asked.state, asked.pending)
+  const after = drainEvents('s1', asked.held)
   assert.equal(after.state, 'busy')
   assert.equal(after.pending, null)
 })
@@ -175,15 +192,15 @@ test('連續多筆事件全部被讀到、各只處理一次，順序即發生�
   const root = tmp()
   configureAgentEvents(root)
   const dir = prepareEventInjection('s1', true)!.env.SPEKTERM_EVENT_DIR
-  fs.writeFileSync(path.join(dir, '100-1.json'), '{"hook_event_name":"PreToolUse"}')
-  fs.writeFileSync(path.join(dir, '200-1.json'), '{"hook_event_name":"PermissionRequest"}')
-  fs.writeFileSync(path.join(dir, '300-1.json'), '{"hook_event_name":"PostToolUse"}')
+  fs.writeFileSync(path.join(dir, '100-1.json'), '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_use_id":"t1"}')
+  fs.writeFileSync(path.join(dir, '200-1.json'), '{"hook_event_name":"PermissionRequest","tool_name":"Bash"}')
+  fs.writeFileSync(path.join(dir, '300-1.json'), '{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_use_id":"t1"}')
 
-  const first = drainEvents('s1', 'unknown')
+  const first = drainEvents('s1', heldWait())
   assert.equal(first.count, 3)
   assert.equal(first.state, 'busy')
   // 讀完即刪 ⇒ 去重由結構保證。
-  const second = drainEvents('s1', first.state)
+  const second = drainEvents('s1', first.held)
   assert.equal(second.count, 0)
   assert.equal(second.state, 'busy')
 })
@@ -194,7 +211,7 @@ test('損毀的單筆被忽略，其餘照常處理', () => {
   const dir = prepareEventInjection('s1', true)!.env.SPEKTERM_EVENT_DIR
   fs.writeFileSync(path.join(dir, '100-1.json'), '{"hook_event_na')
   fs.writeFileSync(path.join(dir, '200-1.json'), '{"hook_event_name":"Stop"}')
-  const result = drainEvents('s1', 'unknown')
+  const result = drainEvents('s1', heldWait())
   assert.equal(result.count, 1)
   assert.equal(result.state, 'ready')
 })
@@ -207,13 +224,13 @@ test('事件帶來的紀錄位置被回報出來（定位的權威來源）', ()
     path.join(dir, '100-1.json'),
     JSON.stringify({ hook_event_name: 'SessionStart', transcript_path: '/p/new.jsonl' }),
   )
-  assert.equal(drainEvents('s1', 'unknown').transcriptPath, '/p/new.jsonl')
+  assert.equal(drainEvents('s1', heldWait()).transcriptPath, '/p/new.jsonl')
 })
 
 test('未注入時等待狀態不變（呼叫端的初始值本來就是未知）', () => {
   const root = tmp()
   configureAgentEvents(root)
-  assert.equal(drainEvents('never-injected', 'unknown').state, 'unknown')
+  assert.equal(drainEvents('never-injected', heldWait()).state, 'unknown')
 })
 
 test('session 結束後落點被清除', () => {
@@ -313,23 +330,19 @@ test('等待選擇時回報「正在被問什麼」，離開後清掉', () => {
   const root = tmp()
   configureAgentEvents(root)
   const dir = prepareEventInjection('s1', true)!.env.SPEKTERM_EVENT_DIR
-  fs.writeFileSync(
-    path.join(dir, '100-1.json'),
-    JSON.stringify({
-      hook_event_name: 'PermissionRequest',
-      tool_name: 'Write',
-      tool_input: { file_path: '/x/y.ts', other: '/private/should-not-leak' },
-    }),
-  )
-  const asked = drainEvents('s1', 'unknown')
+  const input = { file_path: '/x/y.ts', other: '/private/should-not-leak' }
+  fs.writeFileSync(path.join(dir, '050-1.json'), JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Write', tool_use_id: 'w1', tool_input: input }))
+  fs.writeFileSync(path.join(dir, '100-1.json'), JSON.stringify({ hook_event_name: 'PermissionRequest', tool_name: 'Write', tool_input: input }))
+  const asked = drainEvents('s1', heldWait())
   assert.equal(asked.state, 'awaiting-choice')
   assert.deepEqual(asked.pending, { tool: 'Write', arg: '/x/y.ts' })
   // **只有辨識參數**，其餘參數不外流。
   assert.ok(!JSON.stringify(asked.pending).includes('should-not-leak'))
 
   // 離開等待選擇時必須清掉 —— 否則畫面會留著一個已經被回答完的請求。
-  fs.writeFileSync(path.join(dir, '200-1.json'), '{"hook_event_name":"PostToolUse"}')
-  const after = drainEvents('s1', asked.state)
+  assert.ok(!JSON.stringify(asked.held.requests).includes('should-not-leak'))
+  fs.writeFileSync(path.join(dir, '200-1.json'), '{"hook_event_name":"PostToolUse","tool_name":"Write","tool_use_id":"w1"}')
+  const after = drainEvents('s1', asked.held)
   assert.equal(after.state, 'busy')
   assert.equal(after.pending, null)
 })
@@ -342,9 +355,9 @@ test('the prompt\'s later notice keeps the tool, in separate drains with an empt
     path.join(dir, '100-1.json'),
     JSON.stringify({ hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'rmdir /tmp/x' } }),
   )
-  const asked = drainEvents('s1', 'unknown')
+  const asked = drainEvents('s1', heldWait())
   assert.deepEqual(asked.pending, { tool: 'Bash', arg: 'rmdir /tmp/x' })
-  const quiet = drainEvents('s1', asked.state, asked.pending)
+  const quiet = drainEvents('s1', asked.held)
   assert.equal(quiet.count, 0)
   assert.deepEqual(quiet.pending, { tool: 'Bash', arg: 'rmdir /tmp/x' }, 'an empty drain keeps it')
   // Measured: about six seconds later, naming no tool.
@@ -352,9 +365,10 @@ test('the prompt\'s later notice keeps the tool, in separate drains with an empt
     path.join(dir, '200-1.json'),
     '{"hook_event_name":"Notification","notification_type":"permission_prompt","message":"Claude needs your permission"}',
   )
-  const noticed = drainEvents('s1', quiet.state, quiet.pending)
+  const noticed = drainEvents('s1', quiet.held)
   assert.equal(noticed.state, 'awaiting-choice')
   assert.deepEqual(noticed.pending, { tool: 'Bash', arg: 'rmdir /tmp/x' }, 'the notice keeps it')
+  assert.equal(noticed.held.requests[0].id, asked.held.requests[0].id, 'the identity is kept')
 })
 
 test('the prompt\'s notice in the same drain keeps the tool', () => {
@@ -363,31 +377,39 @@ test('the prompt\'s notice in the same drain keeps the tool', () => {
   const dir = prepareEventInjection('s1', true)!.env.SPEKTERM_EVENT_DIR
   fs.writeFileSync(path.join(dir, '100-1.json'), '{"hook_event_name":"PermissionRequest","tool_name":"Write"}')
   fs.writeFileSync(path.join(dir, '200-1.json'), '{"hook_event_name":"Notification","notification_type":"permission_prompt"}')
-  assert.deepEqual(drainEvents('s1', 'unknown').pending, { tool: 'Write', arg: null })
+  assert.deepEqual(drainEvents('s1', heldWait()).pending, { tool: 'Write', arg: null })
 })
 
 test('a missing event location keeps the held request', () => {
   configureAgentEvents(tmp())
-  const held = { tool: 'Bash', arg: 'ls' }
-  assert.deepEqual(drainEvents('never-injected', 'awaiting-choice', held).pending, held)
+  const held = heldWait('busy')
+  held.requests.push({ id: 'r1', toolUseId: 't1', agentId: null, tool: 'Bash', arg: 'ls', questions: null, plan: null, at: 1, answeredAt: null, stirred: false })
+  const result = drainEvents('never-injected', held)
+  assert.deepEqual(result.pending, { tool: 'Bash', arg: 'ls' })
+  assert.equal(result.state, 'awaiting-choice')
+  assert.equal(result.held.requests[0].id, 'r1')
   // Outside a choice nothing is held.
-  assert.equal(drainEvents('never-injected', 'busy', held).pending, null)
+  assert.equal(drainEvents('never-injected', heldWait('busy')).pending, null)
 })
 
-test('the next request replaces the held one, and leaving the choice clears it', () => {
+test('the next request after an answered one is the pending one, and leaving the choice clears it', () => {
   const root = tmp()
   configureAgentEvents(root)
   const dir = prepareEventInjection('s1', true)!.env.SPEKTERM_EVENT_DIR
-  const held = { tool: 'Bash', arg: 'ls' }
-  fs.writeFileSync(path.join(dir, '100-1.json'), '{"hook_event_name":"PostToolUse","tool_name":"Bash"}')
-  fs.writeFileSync(path.join(dir, '200-1.json'), '{"hook_event_name":"PreToolUse","tool_name":"Write"}')
-  fs.writeFileSync(path.join(dir, '300-1.json'), '{"hook_event_name":"PermissionRequest","tool_name":"Write"}')
-  assert.deepEqual(drainEvents('s1', 'awaiting-choice', held).pending, { tool: 'Write', arg: null })
-  fs.writeFileSync(path.join(dir, '400-1.json'), '{"hook_event_name":"PostToolUse","tool_name":"Write"}')
-  assert.equal(drainEvents('s1', 'awaiting-choice', held).pending, null)
-  // A second request while the first is still held (parallel tool calls): the new one wins.
-  fs.writeFileSync(path.join(dir, '500-1.json'), '{"hook_event_name":"PermissionRequest","tool_name":"Edit"}')
-  assert.deepEqual(drainEvents('s1', 'awaiting-choice', held).pending, { tool: 'Edit', arg: null })
+  const write = (name: string, body: Record<string, unknown>) => fs.writeFileSync(path.join(dir, name), JSON.stringify(body))
+  write('100-1.json', { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'b1', tool_input: { command: 'ls' } })
+  write('110-1.json', { hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'ls' } })
+  const first = drainEvents('s1', heldWait())
+  write('200-1.json', { hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_use_id: 'b1' })
+  write('300-1.json', { hook_event_name: 'PreToolUse', tool_name: 'Write', tool_use_id: 'w1', tool_input: { file_path: 'x' } })
+  write('310-1.json', { hook_event_name: 'PermissionRequest', tool_name: 'Write', tool_input: { file_path: 'x' } })
+  const second = drainEvents('s1', first.held)
+  assert.deepEqual(second.pending, { tool: 'Write', arg: 'x' })
+  assert.notEqual(second.held.requests[0].id, first.held.requests[0].id, 'a new identity')
+  write('400-1.json', { hook_event_name: 'PostToolUse', tool_name: 'Write', tool_use_id: 'w1' })
+  const third = drainEvents('s1', second.held)
+  assert.equal(third.pending, null)
+  assert.equal(third.state, 'busy')
 })
 
 test('許可提示出現中不得歸為忙碌或就緒（本 change 最承重的一條）', () => {
@@ -395,9 +417,9 @@ test('許可提示出現中不得歸為忙碌或就緒（本 change 最承重的
   configureAgentEvents(root)
   const dir = prepareEventInjection('s1', true)!.env.SPEKTERM_EVENT_DIR
   // 真實時序（實測）：工具即將執行 → 許可請求 → （6 秒後才有 Notification）。
-  fs.writeFileSync(path.join(dir, '100-1.json'), '{"hook_event_name":"PreToolUse","tool_name":"Write"}')
+  fs.writeFileSync(path.join(dir, '100-1.json'), '{"hook_event_name":"PreToolUse","tool_name":"Write","tool_use_id":"w1"}')
   fs.writeFileSync(path.join(dir, '200-1.json'), '{"hook_event_name":"PermissionRequest","tool_name":"Write"}')
-  const result = drainEvents('s1', 'unknown')
+  const result = drainEvents('s1', heldWait())
   assert.equal(result.state, 'awaiting-choice')
   // **對照組**：把 `PermissionRequest` 的處理拿掉（退回只看 `Notification`），狀態會停在
   // `busy` —— 而忙碌是允許送出的。那正是 proposal 立論要防的災難。
@@ -414,7 +436,7 @@ test('延遲六秒才到的 Notification 不會把已經是等待選擇的狀態
     path.join(dir, '200-1.json'),
     '{"hook_event_name":"Notification","notification_type":"permission_prompt"}',
   )
-  assert.equal(drainEvents('s1', 'unknown').state, 'awaiting-choice')
+  assert.equal(drainEvents('s1', heldWait()).state, 'awaiting-choice')
 })
 
 test('對話結束後接著開始的新對話，其位置被回報且狀態為就緒', () => {
@@ -430,7 +452,7 @@ test('對話結束後接著開始的新對話，其位置被回報且狀態為�
     path.join(dir, '200-1.json'),
     JSON.stringify({ hook_event_name: 'SessionStart', transcript_path: '/p/new.jsonl' }),
   )
-  const result = drainEvents('s1', 'ready')
+  const result = drainEvents('s1', heldWait('ready'))
   // **`SessionEnd` 不是「session 結束」** —— 它之後跟著的是一份新的紀錄，不是拆除。
   assert.equal(result.transcriptPath, '/p/new.jsonl')
   assert.equal(result.state, 'ready')
@@ -448,4 +470,252 @@ test('預填的編碼不附送出字元，且濾掉換行', () => {
 
 test('預填與送出的控制字元過濾一致（除了換行與送出字元本身）', () => {
   assert.equal(encodePrefill('a\x01b\x07c'), 'abc')
+})
+
+// ---- Open requests (`remote-prompts-attachments-rename` D1), sequences copied from measured runs ----
+
+function rig() {
+  const root = tmp()
+  configureAgentEvents(root)
+  const dir = prepareEventInjection('s1', true)!.env.SPEKTERM_EVENT_DIR
+  let seq = 100
+  let ids = 0
+  let held = heldWait()
+  return {
+    fire(body: Record<string, unknown>): void {
+      fs.writeFileSync(path.join(dir, `${seq++}-1.json`), JSON.stringify(body))
+    },
+    drain() {
+      const result = drainEvents('s1', held, { newId: () => `r${++ids}` })
+      held = result.held
+      return result
+    },
+  }
+}
+
+const pre = (tool: string, id: string, input: Record<string, unknown>, agent?: string) => ({
+  hook_event_name: 'PreToolUse', tool_name: tool, tool_use_id: id, tool_input: input, ...(agent ? { agent_id: agent } : {}),
+})
+const ask = (tool: string, input: Record<string, unknown>, agent?: string) => ({
+  hook_event_name: 'PermissionRequest', tool_name: tool, tool_input: input, ...(agent ? { agent_id: agent } : {}),
+})
+const post = (tool: string, id: string, agent?: string) => ({
+  hook_event_name: 'PostToolUse', tool_name: tool, tool_use_id: id, ...(agent ? { agent_id: agent } : {}),
+})
+
+test('two parallel requests are both open, in order, and the second remains when the first finishes', () => {
+  const r = rig()
+  r.fire(pre('Read', 'a', { file_path: '/h/a.txt' }))
+  r.fire(ask('Read', { file_path: '/h/a.txt' }))
+  r.fire(pre('Read', 'b', { file_path: '/h/b.txt' }))
+  r.fire(ask('Read', { file_path: '/h/b.txt' }))
+  const both = r.drain()
+  assert.equal(both.held.requests.length, 2)
+  assert.deepEqual(both.pending, { tool: 'Read', arg: '/h/a.txt' })
+  assert.deepEqual(both.choicesRaised.map((c) => c.arg), ['/h/a.txt', '/h/b.txt'])
+  r.fire(post('Read', 'a'))
+  const one = r.drain()
+  assert.equal(one.state, 'awaiting-choice')
+  assert.deepEqual(one.pending, { tool: 'Read', arg: '/h/b.txt' })
+  assert.equal(one.held.requests[0].id, 'r2')
+})
+
+test('a parallel call that needed no permission does not close the other call\'s request', () => {
+  // Measured: two parallel starts 1.5 ms apart, before either request. Matching by order alone gives the
+  // request the wrong call, and that call's end closes it while its prompt is on screen.
+  const r = rig()
+  r.fire(pre('Read', 'outside', { file_path: '/h/out.txt' }))
+  r.fire(pre('Read', 'inside', { file_path: '/w/in.txt' }))
+  r.fire(ask('Read', { file_path: '/h/out.txt' }))
+  r.fire(post('Read', 'inside'))
+  const result = r.drain()
+  assert.equal(result.state, 'awaiting-choice')
+  assert.equal(result.held.requests[0].toolUseId, 'outside')
+})
+
+test('a background subagent\'s prompt survives the agent\'s turn end and a notice submission', () => {
+  // The measured shape (two background subagents, each asking to run a command).
+  const r = rig()
+  r.fire(pre('Agent', 'ag1', { prompt: 'one' }))
+  r.fire(post('Agent', 'ag1'))
+  r.fire(pre('Bash', 'b1', { command: 'echo one > one.txt' }, 'sub1'))
+  r.fire(ask('Bash', { command: 'echo one > one.txt' }, 'sub1'))
+  r.fire({ hook_event_name: 'Stop', background_tasks: [{ id: 'sub1', type: 'subagent', status: 'running' }, { id: 'sub2', type: 'subagent', status: 'running' }] })
+  r.fire(pre('Bash', 'b2', { command: 'echo two > two.txt' }, 'sub2'))
+  r.fire(ask('Bash', { command: 'echo two > two.txt' }, 'sub2'))
+  const open = r.drain()
+  assert.equal(open.state, 'awaiting-choice', 'the agent\'s own Stop does not make it ready')
+  assert.equal(open.held.requests.length, 2)
+  r.fire(post('Bash', 'b1', 'sub1'))
+  r.fire({ hook_event_name: 'UserPromptSubmit', prompt: '<task-notification>\n<task-id>sub1</task-id>' })
+  r.fire({ hook_event_name: 'Stop', background_tasks: [{ id: 'sub2', type: 'subagent', status: 'running' }] })
+  const after = r.drain()
+  assert.equal(after.state, 'awaiting-choice', 'the notice and the turn end do not leave the choice')
+  assert.deepEqual(after.pending, { tool: 'Bash', arg: 'echo two > two.txt' })
+})
+
+test('a dismissed subagent prompt ends with the subagent; a helper\'s end changes nothing', () => {
+  const r = rig()
+  r.fire(pre('Bash', 'b1', { command: 'x' }, 'sub1'))
+  r.fire(ask('Bash', { command: 'x' }, 'sub1'))
+  r.fire({ hook_event_name: 'Stop', background_tasks: [{ id: 'sub1', type: 'subagent', status: 'running' }] })
+  assert.equal(r.drain().state, 'awaiting-choice')
+  r.fire({ hook_event_name: 'SubagentStop', agent_id: 'helper', agent_type: '' })
+  assert.equal(r.drain().state, 'awaiting-choice', 'a helper\'s end closes nothing')
+  r.fire({ hook_event_name: 'SubagentStop', agent_id: 'sub1', agent_type: 'general-purpose' })
+  const closed = r.drain()
+  assert.equal(closed.held.requests.length, 0)
+  assert.equal(closed.state, 'ready', 'the base state stays the agent\'s own (its Stop)')
+  r.fire({ hook_event_name: 'SubagentStop', agent_id: 'helper2', agent_type: '' })
+  assert.equal(r.drain().state, 'ready', 'a helper\'s end after the turn does not move the state')
+})
+
+test('a subagent the agent no longer lists as running does not keep its request open', () => {
+  const r = rig()
+  r.fire(pre('Bash', 'b1', { command: 'x' }, 'sub1'))
+  r.fire(ask('Bash', { command: 'x' }, 'sub1'))
+  r.drain()
+  r.fire({ hook_event_name: 'UserPromptSubmit', prompt: 'next' })
+  r.fire({ hook_event_name: 'Stop', background_tasks: [] })
+  const result = r.drain()
+  assert.equal(result.held.requests.length, 0)
+  assert.equal(result.state, 'ready')
+})
+
+test('without the background task list, the agent\'s Stop leaves a subagent\'s request open', () => {
+  const r = rig()
+  r.fire(pre('Bash', 'b1', { command: 'x' }, 'sub1'))
+  r.fire(ask('Bash', { command: 'x' }, 'sub1'))
+  r.fire({ hook_event_name: 'Stop' })
+  assert.equal(r.drain().state, 'awaiting-choice')
+})
+
+test('the agent\'s own turn events close its own requests, and an unmatched request too', () => {
+  const r = rig()
+  r.fire(ask('Bash', { command: 'x' }))
+  const asked = r.drain()
+  assert.equal(asked.held.requests[0].toolUseId, null, 'no tool start to match')
+  r.fire({ hook_event_name: 'Stop' })
+  assert.equal(r.drain().state, 'ready')
+})
+
+test('a retried call takes its new start, not a stale one left unmatched', () => {
+  // Measured: two parallel Bash calls, only the first requested; Esc interrupts both with no event.
+  const r = rig()
+  r.fire(pre('Bash', 'old1', { command: 'echo a' }))
+  r.fire(ask('Bash', { command: 'echo a' }))
+  r.fire(pre('Bash', 'old2', { command: 'echo b' }))
+  r.drain()
+  // A subagent's own retry: no turn event of the agent itself removes the stale start in between.
+  r.fire(post('Bash', 'old1'))
+  r.fire(pre('Bash', 'new2', { command: 'echo b' }))
+  r.fire(ask('Bash', { command: 'echo b' }))
+  const retried = r.drain()
+  assert.equal(retried.held.requests.length, 1)
+  assert.equal(retried.held.requests[0].toolUseId, 'new2')
+  r.fire(post('Bash', 'new2'))
+  assert.equal(r.drain().state, 'busy')
+})
+
+test('a conversation start clears the requests unless it is a compaction', () => {
+  for (const [source, open] of [['compact', 1], ['startup', 0], ['resume', 0], ['clear', 0]] as const) {
+    const r = rig()
+    r.fire(pre('Bash', 'b1', { command: 'x' }, 'sub1'))
+    r.fire(ask('Bash', { command: 'x' }, 'sub1'))
+    r.fire({ hook_event_name: 'SessionStart', source })
+    assert.equal(r.drain().held.requests.length, open, source)
+  }
+})
+
+test('a request takes its tool start\'s time, from the event file name', () => {
+  assert.equal(fileTimeOf('1792057954828123456-42.json'), 1792057954828)
+  assert.equal(fileTimeOf('100-1.json'), null)
+  const root = tmp()
+  configureAgentEvents(root)
+  const dir = prepareEventInjection('s1', true)!.env.SPEKTERM_EVENT_DIR
+  fs.writeFileSync(path.join(dir, '1792057954000000000-1.json'), JSON.stringify(pre('Bash', 'b1', { command: 'x' })))
+  fs.writeFileSync(path.join(dir, '1792057954500000000-1.json'), JSON.stringify(ask('Bash', { command: 'x' })))
+  assert.equal(drainEvents('s1', heldWait()).held.requests[0].at, 1792057954000)
+})
+
+test('a question\'s questions are kept by white-list, clipped, in order', () => {
+  const parsed = parseEvent({
+    hook_event_name: 'PermissionRequest',
+    tool_name: 'AskUserQuestion',
+    tool_input: {
+      questions: [
+        { question: 'Which fruit?', header: 'Fruit', multiSelect: false, extra: 'x', options: [{ label: 'Apple', description: 'red' }, { label: 'Banana' }] },
+        { question: 'q'.repeat(2000), header: 'h'.repeat(200), multiSelect: true, options: [{ label: 'Keep /home/me/x.ts', description: 'd'.repeat(2000) }] },
+      ],
+    },
+  })!
+  assert.deepEqual(parsed.questions?.[0], {
+    question: 'Which fruit?', header: 'Fruit', multiSelect: false,
+    options: [{ label: 'Apple', description: 'red' }, { label: 'Banana', description: '' }],
+  })
+  assert.equal(parsed.questions?.[1].question.length, 1000)
+  assert.equal(parsed.questions?.[1].header.length, 100)
+  assert.equal(parsed.questions?.[1].options[0].description.length, 1000)
+  assert.equal(parsed.questions?.[1].multiSelect, true)
+  // Agent-written prose is kept as written, a path included.
+  assert.equal(parsed.questions?.[1].options[0].label, 'Keep /home/me/x.ts')
+})
+
+test('a malformed question leaves the request without questions', () => {
+  const shapes: unknown[] = [
+    { questions: [{ question: 'q', options: 'Apple' }] },
+    { questions: [{ options: [{ label: 'a' }] }] },
+    { questions: [{ question: 'q', options: [{ description: 'no label' }] }] },
+    { questions: [] },
+    {},
+  ]
+  for (const tool_input of shapes) {
+    assert.equal(parseEvent({ hook_event_name: 'PermissionRequest', tool_name: 'AskUserQuestion', tool_input })?.questions, null)
+  }
+  // Another tool never carries questions.
+  assert.equal(parseEvent({ hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { questions: [] } })?.questions, null)
+})
+
+test('recorded answers, the plan text and the permission mode are kept', () => {
+  const finished = parseEvent({
+    hook_event_name: 'PostToolUse', tool_name: 'AskUserQuestion', permission_mode: 'default',
+    tool_input: { questions: [], answers: { 'Which fruit?': 'Banana', 'n': 3 } },
+  })!
+  assert.deepEqual(finished.answers, { 'Which fruit?': 'Banana' })
+  assert.equal(finished.permissionMode, 'default')
+  const plan = parseEvent({ hook_event_name: 'PermissionRequest', tool_name: 'ExitPlanMode', tool_input: { plan: 'p'.repeat(30_000), planFilePath: '/home/me/.claude/plans/x.md' } })!
+  assert.equal(plan.plan?.length, 20_000)
+  assert.ok(!JSON.stringify({ ...plan, toolArg: null }).includes('.claude/plans'), 'the plan file path is not kept')
+  assert.equal(parseEvent({ hook_event_name: 'PermissionRequest', tool_name: 'ExitPlanMode', tool_input: {} })?.plan, null)
+})
+
+test('a finished call is reported with its recorded answers and mode', () => {
+  const r = rig()
+  r.fire(pre('AskUserQuestion', 'q1', { questions: [{ question: 'Q', options: [{ label: 'A' }] }] }))
+  r.fire(ask('AskUserQuestion', { questions: [{ question: 'Q', options: [{ label: 'A' }] }] }))
+  r.drain()
+  r.fire({ hook_event_name: 'PostToolUse', tool_name: 'AskUserQuestion', tool_use_id: 'q1', permission_mode: 'default', tool_input: { answers: { Q: 'A' } } })
+  assert.deepEqual(r.drain().finished, [{ toolUseId: 'q1', answers: { Q: 'A' }, permissionMode: 'default' }])
+})
+
+test('another tool start or finish of the same agent after a request marks it stirred', () => {
+  const root = tmp()
+  configureAgentEvents(root)
+  const dir = prepareEventInjection('s1', true)!.env.SPEKTERM_EVENT_DIR
+  const at = (ms: number) => `${BigInt(ms) * 1_000_000n}-1.json`
+  const put = (ms: number, body: Record<string, unknown>) => fs.writeFileSync(path.join(dir, at(ms)), JSON.stringify(body))
+  put(1_792_000_000_000, pre('Bash', 'a', { command: 'x' }))
+  put(1_792_000_000_100, ask('Bash', { command: 'x' }))
+  const single = drainEvents('s1', heldWait())
+  assert.equal(single.held.requests[0].stirred, false, 'a single sequential prompt is not stirred')
+  put(1_792_000_000_200, pre('Read', 'b', { file_path: 'y' }, 'sub'))
+  assert.equal(drainEvents('s1', single.held).held.requests[0].stirred, false, 'another agent does not stir it')
+  put(1_792_000_000_300, pre('Read', 'c', { file_path: 'z' }))
+  assert.equal(drainEvents('s1', single.held).held.requests[0].stirred, true)
+  // A start between the call's start and its request (the parallel shape).
+  put(1_792_000_001_000, { hook_event_name: 'SessionStart', source: 'clear' })
+  put(1_792_000_001_100, pre('Read', 'p', { file_path: '/h/out' }))
+  put(1_792_000_001_101, pre('Read', 'q', { file_path: '/w/in' }))
+  put(1_792_000_001_200, ask('Read', { file_path: '/h/out' }))
+  assert.equal(drainEvents('s1', heldWait()).held.requests[0].stirred, true)
 })

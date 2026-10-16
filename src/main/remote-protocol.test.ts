@@ -85,7 +85,7 @@ test('watching the attention stream again replaces the earlier watch', async () 
   const session = openRemoteSession(host as RemoteHost, conn)
   await call(session, conn, 'attention.watch')
   await call(session, conn, 'attention.watch')
-  attention.onWait('s', { state: 'ready', turnEnded: true, choiceRaised: null })
+  attention.onWait('s', { state: 'ready', turnEnded: true, choicesRaised: [] })
   assert.equal(conn.frames.filter((frame) => frame.k === 'attention').length, 1)
 })
 
@@ -94,4 +94,50 @@ test('the allow-list has no way to resize a terminal, write a file, or touch set
     assert.doesNotMatch(name, /resize|write|file|setting|slack|secret|credential|delete|kill|hibernate/i, name)
   }
   assert.ok(operationNames().includes('hello') && operationNames().includes('pair'))
+})
+
+test('conversation.answer checks the decision and refuses a conversation that is not watched', async () => {
+  const conn = connection()
+  const session = openRemoteSession(noWindowHost(), conn)
+  const bad = await call(session, conn, 'conversation.answer', { sessionId: 's1', promptId: 'r1', decision: 'yes' })
+  assert.equal(bad.e?.code, 'BAD_PARAMS')
+  const missing = await call(session, conn, 'conversation.answer', { sessionId: 's1', decision: 'deny' })
+  assert.equal(missing.e?.code, 'BAD_PARAMS')
+  const unwatched = await call(session, conn, 'conversation.answer', { sessionId: 's1', promptId: 'r1', decision: 'deny' })
+  assert.equal(unwatched.e?.code, 'NOT_WATCHING')
+})
+
+test('sessions.rename cleans the name, allows an empty one, and is refused with no window', async () => {
+  const { cleanName } = await import('./remote-protocol')
+  assert.equal(cleanName('fix\nthe\tlogin\x07'), 'fixthelogin')
+  assert.equal([...cleanName('名'.repeat(300))].length, 200)
+  assert.equal(cleanName(''), '')
+  const conn = connection()
+  const session = openRemoteSession(noWindowHost(), conn)
+  const refused = await call(session, conn, 'sessions.rename', { sessionId: 's1', name: 'Fix login' })
+  assert.equal(refused.e?.code, 'NO_WINDOW')
+  const empty = await call(session, conn, 'sessions.rename', { sessionId: 's1', name: '' })
+  assert.equal(empty.e?.code, 'NO_WINDOW', 'an empty name is a valid request')
+  const missing = await call(session, conn, 'sessions.rename', { sessionId: 's1' })
+  assert.equal(missing.e?.code, 'BAD_PARAMS')
+})
+
+test('a rename reaches the interface with the cleaned name', async () => {
+  const asked: unknown[] = []
+  const host = createRemoteHost({
+    window: () => 1,
+    folders: { list: () => [] },
+    sessions: { view: () => [] },
+    terminal: () => ({ sizeOf: () => null }),
+    request: async (_contents: number, action: unknown) => {
+      asked.push(action)
+      return { ok: true, sessionId: 's1' }
+    },
+    setRemoteWatched: () => undefined,
+  } as unknown as HostDeps)
+  const conn = connection()
+  const session = openRemoteSession(host, conn)
+  const response = await call(session, conn, 'sessions.rename', { sessionId: 's1', name: ' Fix\nlogin ' })
+  assert.equal(response.ok, true)
+  assert.deepEqual(asked, [{ kind: 'rename', sessionId: 's1', name: ' Fixlogin ' }])
 })

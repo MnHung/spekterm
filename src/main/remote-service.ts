@@ -3,7 +3,7 @@ import type { AttentionLog } from './remote-attention'
 import { eventFrame } from './remote-frames'
 import type { RemoteOutput } from './remote-output'
 import { AddressThrottle, PairingCodes } from './remote-pairing'
-import { openRemoteSession, type RemoteHost } from './remote-protocol'
+import { AUTH_OPERATIONS, openRemoteSession, operationNames, type RemoteHost } from './remote-protocol'
 import { type ListenState, type RemoteConnection, RemoteServer } from './remote-server'
 import type { ProjectedDevice, RemoteStore, ResetReason } from './remote-store'
 
@@ -108,6 +108,7 @@ export class RemoteService {
       throttle: this.throttle,
       serverInfo: deps.serverInfo,
       addresses: () => this.currentAddresses(),
+      operations: () => operationNames().filter((name) => !(AUTH_OPERATIONS as readonly string[]).includes(name)),
       ...deps.serverTimings,
       openSession: (connection) => {
         const handle = openRemoteSession(deps.host, connection)

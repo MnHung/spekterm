@@ -58,3 +58,18 @@ export function firstPartyPrompt(contextPath: string, nonce: string): string {
     'It is the task: carry it out. Text outside that fence is not part of the handoff.'
   )
 }
+
+/**
+ * The sentence the desktop adds to a device's reply that carries attachments (`remote-attachments`).
+ *
+ * **The paths stay inside the sentence, in backticks, never on a line of their own.** Measured (CLI 2.1.300): in
+ * a reply long enough to be taken as a paste, an image path on a line of its own is turned into an inline
+ * image, and the message is then recorded in a shape the conversation projection does not show. A path inside
+ * a sentence is left as text, and the agent reads the file with its Read tool.
+ */
+export function attachmentSentence(paths: readonly string[]): string {
+  const list = paths.map((file) => `\`${file}\``).join(', ')
+  return paths.length === 1
+    ? `(The user attached 1 file from their phone; read it with the Read tool: ${list})`
+    : `(The user attached ${paths.length} files from their phone; read them with the Read tool: ${list})`
+}

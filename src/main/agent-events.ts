@@ -1,3 +1,4 @@
+import { createHash, randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 
@@ -25,13 +26,16 @@ import type { InjectionContribution } from './agent-injection'
  * | `UserPromptSubmit` | busy | the only start signal for a text-only answer; see below |
  * | `PostToolUseFailure` | busy | an approved tool that fails sends this, not `PostToolUse` |
  * | `StopFailure` | ready | a turn whose requests kept failing ends with this, not `Stop` |
+ * | `SubagentStop` | closes that subagent's open requests | a subagent whose prompt is dismissed ends with this |
  *
  * ### `UserPromptSubmit`, measured (2026-10-15, CLI 2.1.300)
  *
  * Reported at submission, also mid-turn and during a text-only answer. Not reported for `!` input, `/cost`
  * or `/clear`. **Not reported for text typed into an open permission prompt or question** — the text and
- * Enter answer the prompt. That last fact is what makes busy safe here: a submission cannot arrive while a
- * prompt is open, so it cannot move the state out of awaiting-choice early. Re-measure it on a CLI upgrade
+ * Enter answer the prompt. **But a background task's notice is reported as a submission while a subagent's
+ * prompt is open**, followed by the agent's `Stop` (`remote-prompts-attachments-rename`). So a submission
+ * does not end an open request by itself: the drain tracks every request and keeps the state on
+ * awaiting-choice while any is open (`drainEvents`). Re-measure both on a CLI upgrade
  * (`docs/lessons/transcript.md`).
  *
  * **The hook command must print nothing**: the agent adds a `UserPromptSubmit` hook's stdout to the prompt.
@@ -102,6 +106,7 @@ export const HOOKED_EVENTS = [
   'StopFailure',
   'SessionStart',
   'SessionEnd',
+  'SubagentStop',
 ] as const
 
 /**
@@ -154,6 +159,19 @@ export function clearAgentEvents(sessionId: string): void {
  */
 export type WaitState = 'ready' | 'busy' | 'awaiting-choice' | 'unknown'
 
+export interface QuestionOption {
+  label: string
+  description: string
+}
+
+/** One question of the agent's question tool, by white-list (`agent-event-bridge`). */
+export interface Question {
+  question: string
+  header: string
+  multiSelect: boolean
+  options: QuestionOption[]
+}
+
 export interface AgentEvent {
   name: string
   /** agent 自己回報的紀錄位置。定位的**權威來源**（見 `transcript-follow`）。 */
@@ -170,10 +188,102 @@ export interface AgentEvent {
    * (measured: a subagent's `PreToolUse` after the turn's `Stop`). An identifier, not a path.
    */
   agentId: string | null
+  /** The tool call this event belongs to (`PreToolUse`, `PostToolUse`, `PostToolUseFailure`). */
+  toolUseId: string | null
+  /**
+   * A hash of the tool's input — **not the input**, which holds paths. A permission request carries the
+   * same input as its tool start, and the hash is how the two are matched (D1 of
+   * `remote-prompts-attachments-rename`).
+   */
+  inputHash: string | null
+  /** The question tool's questions, by white-list; `null` for any other tool or a malformed shape. */
+  questions: Question[] | null
+  /** The question tool's recorded answers (`PostToolUse`), clipped; used only to confirm a device's answer. */
+  answers: Record<string, string> | null
+  /** The plan approval's plan text (`ExitPlanMode`), clipped; `null` when absent or empty. */
+  plan: string | null
+  /** The permission mode the agent reports with every event; confirms a plan answer. */
+  permissionMode: string | null
+  /** `SessionStart`'s `source` (`startup`, `resume`, `clear`, `compact`). */
+  source: string | null
+  /** The subagents a `Stop` lists as running background tasks; `null` when the field is absent. */
+  runningAgents: string[] | null
 }
 
 function str(value: unknown): string | null {
   return typeof value === 'string' && value !== '' ? value : null
+}
+
+function clip(value: string, max: number): string {
+  return value.length > max ? value.slice(0, max) : value
+}
+
+/** A stable serialization (sorted keys), so the same input always hashes the same. */
+function canonical(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null'
+  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`
+  const o = value as Record<string, unknown>
+  return `{${Object.keys(o)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${canonical(o[key])}`)
+    .join(',')}}`
+}
+
+function hashInput(input: unknown): string | null {
+  if (input === undefined) return null
+  return createHash('sha256').update(canonical(input)).digest('hex').slice(0, 32)
+}
+
+/** D2: each question by white-list, clipped; any malformed question makes the whole set `null`. */
+function parseQuestions(input: unknown): Question[] | null {
+  if (input === null || typeof input !== 'object') return null
+  const list = (input as Record<string, unknown>).questions
+  if (!Array.isArray(list) || list.length === 0) return null
+  const questions: Question[] = []
+  for (const raw of list) {
+    if (raw === null || typeof raw !== 'object') return null
+    const q = raw as Record<string, unknown>
+    if (typeof q.question !== 'string' || !Array.isArray(q.options)) return null
+    const options: QuestionOption[] = []
+    for (const rawOption of q.options) {
+      if (rawOption === null || typeof rawOption !== 'object') return null
+      const option = rawOption as Record<string, unknown>
+      if (typeof option.label !== 'string') return null
+      options.push({
+        label: clip(option.label, 300),
+        description: typeof option.description === 'string' ? clip(option.description, 1000) : '',
+      })
+    }
+    questions.push({
+      question: clip(q.question, 1000),
+      header: typeof q.header === 'string' ? clip(q.header, 100) : '',
+      multiSelect: q.multiSelect === true,
+      options,
+    })
+  }
+  return questions
+}
+
+function parseAnswers(input: unknown): Record<string, string> | null {
+  if (input === null || typeof input !== 'object') return null
+  const raw = (input as Record<string, unknown>).answers
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const answers: Record<string, string> = {}
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof value === 'string') answers[clip(key, 1000)] = clip(value, 2000)
+  }
+  return answers
+}
+
+function runningAgents(tasks: unknown): string[] | null {
+  if (!Array.isArray(tasks)) return null
+  const ids: string[] = []
+  for (const task of tasks) {
+    if (task === null || typeof task !== 'object') continue
+    const t = task as Record<string, unknown>
+    if (typeof t.id === 'string' && t.status === 'running') ids.push(t.id)
+  }
+  return ids
 }
 
 /**
@@ -183,19 +293,35 @@ function str(value: unknown): string | null {
  * 黑名單（「複製整則再刪幾個欄位」）會在 agent 新增一個帶路徑的欄位時靜默失效，而失效的徵狀是
  * renderer 拿到一個它沒有詞彙可以表達的位置。**`transcriptPath` 是唯一被保留的路徑，且它
  * SHALL NOT 送往 renderer** —— 它只在主行程內用於定位。
+ *
+ * The question tool's text, its recorded answers and the plan text are kept as written: they are the agent's
+ * own prose, presented as plain text (`agent-event-bridge`, the path rule's scope). The tool input itself is
+ * kept only as a hash.
  */
 export function parseEvent(raw: unknown): AgentEvent | null {
   if (raw === null || typeof raw !== 'object') return null
   const o = raw as Record<string, unknown>
   const name = str(o.hook_event_name)
   if (name === null) return null
+  const toolName = str(o.tool_name)
+  const plan = toolName === 'ExitPlanMode' && o.tool_input !== null && typeof o.tool_input === 'object'
+    ? str((o.tool_input as Record<string, unknown>).plan)
+    : null
   return {
     name,
     transcriptPath: str(o.transcript_path),
     notificationType: str(o.notification_type),
-    toolName: str(o.tool_name),
+    toolName,
     toolArg: identifyingArg(o.tool_input),
     agentId: str(o.agent_id),
+    toolUseId: str(o.tool_use_id),
+    inputHash: hashInput(o.tool_input),
+    questions: toolName === 'AskUserQuestion' ? parseQuestions(o.tool_input) : null,
+    answers: toolName === 'AskUserQuestion' && name === 'PostToolUse' ? parseAnswers(o.tool_input) : null,
+    plan: plan === null ? null : clip(plan, 20_000),
+    permissionMode: str(o.permission_mode),
+    source: str(o.source),
+    runningAgents: name === 'Stop' ? runningAgents(o.background_tasks) : null,
   }
 }
 
@@ -222,11 +348,14 @@ function identifyingArg(input: unknown): string | null {
  * **兩者都允許送出**。
  *
  * 簽名上少一個參數，就少一條把它寫成 `default: return current` 的路。
+ *
+ * This is the **base state** only. An open permission request makes the reported state awaiting-choice
+ * whatever this returns (`drainEvents`), and `PermissionRequest` / `SubagentStop` never reach it.
  */
 export function nextWaitState(event: AgentEvent): WaitState {
   switch (event.name) {
     case 'PermissionRequest':
-      // 權威訊號：實測早於畫面上的提示。
+      // 權威訊號：實測早於畫面上的提示。（The drain tracks it as an open request instead of passing it here.）
       return 'awaiting-choice'
     case 'PostToolUse':
       // **離開**等待選擇。少了它，狀態會停在等待選擇，其後每一則自由文字都送不出去
@@ -238,8 +367,8 @@ export function nextWaitState(event: AgentEvent): WaitState {
       // An approved tool that failed. Without it the state stays awaiting-choice until the turn ends.
       return 'busy'
     case 'UserPromptSubmit':
-      // The only start signal for a text-only answer. Safe because it is not reported for text typed into
-      // an open prompt (see the module comment).
+      // The only start signal for a text-only answer. A background task's notice also arrives as a submission;
+      // it cannot end an open request of a subagent (`drainEvents`), which is what keeps that prompt safe.
       return 'busy'
     case 'Notification':
       if (event.notificationType === 'permission_prompt') return 'awaiting-choice'
@@ -266,19 +395,85 @@ export function nextWaitState(event: AgentEvent): WaitState {
   }
 }
 
+/**
+ * A permission request the agent reported and has not ended (`agent-event-bridge`, "Every open permission
+ * request is tracked").
+ */
+export interface OpenRequest {
+  /** Minted by the desktop when the request was reported: the agent's request carries no id of its own. */
+  id: string
+  /** The tool call it belongs to, from its matched `PreToolUse`; `null` when none matched. */
+  toolUseId: string | null
+  /** `null` = the agent itself. */
+  agentId: string | null
+  tool: string
+  arg: string | null
+  questions: Question[] | null
+  plan: string | null
+  /** Wall-clock ms: the matched tool start's file timestamp, earlier than the prompt; else the request's own. */
+  at: number
+  /** When a device's answer wrote its first key to this request (`remote-answer.ts`), else `null`. */
+  answeredAt: number | null
+  /**
+   * The same agent reported another tool start or finish after this request's `at`. Its prompt may then be
+   * gone with no event that closes it (a parallel call), so a device may not answer it (`remote-protocol`).
+   */
+  stirred: boolean
+}
+
+/** A `PreToolUse` not yet ended, kept to match a request to its call. */
+export interface ToolStart {
+  toolUseId: string | null
+  agentId: string | null
+  tool: string | null
+  inputHash: string | null
+  at: number
+}
+
+/**
+ * What the drain carries from one batch to the next, per session: the **base state** (what `nextWaitState`
+ * last returned), the open requests, and the unmatched tool starts. The reported state is derived.
+ */
+export interface HeldWait {
+  base: WaitState
+  requests: OpenRequest[]
+  starts: ToolStart[]
+}
+
+export function heldWait(base: WaitState = 'unknown'): HeldWait {
+  return { base, requests: [], starts: [] }
+}
+
+/** The reported state: awaiting-choice while any request is open, otherwise the base state. */
+export function stateOf(held: HeldWait): WaitState {
+  return held.requests.length > 0 ? 'awaiting-choice' : held.base
+}
+
+/**
+ * What the agent is asking, for the desktop's view: the first open request (the terminal shows queued
+ * prompts in arrival order). A choice signalled only by the agent's later notice has no request and names
+ * no tool.
+ */
+export function pendingOf(held: HeldWait): { tool: string; arg: string | null } | null {
+  const first = held.requests[0]
+  if (first) return { tool: first.tool, arg: first.arg }
+  return held.base === 'awaiting-choice' ? { tool: '', arg: null } : null
+}
+
+/** A tool call that ended in the batch, for confirming a device's answer (`remote-answer.ts`). */
+export interface FinishedCall {
+  toolUseId: string
+  answers: Record<string, string> | null
+  permissionMode: string | null
+}
+
 export interface DrainResult {
   state: WaitState
   /** 最後一次事件回報的紀錄位置（若有）。 */
   transcriptPath: string | null
   /** 讀到的事件數。 */
   count: number
-  /**
-   * 等待選擇時，agent 正在請求什麼。
-   *
-   * **只有「請求的對象」與「辨識參數」，沒有選項** —— 實測許可請求的 payload 不含它呈現給
-   * 使用者的那幾個選項（它帶的是「要不要改變權限規則」的建議）。因此本能力只說得出
-   * 「正在被問什麼」，作答一律回終端 view（見 `agent-input-bridge`）。
-   */
+  /** `pendingOf(held)`. */
   pending: { tool: string; arg: string | null } | null
   /**
    * The batch contains the agent's turn-completion event (`Stop`). **Not derivable from `state`**: a turn
@@ -286,12 +481,146 @@ export interface DrainResult {
    */
   turnEnded: boolean
   /**
-   * The tool of the batch's last `PermissionRequest`, or `null`. **Not derivable from `state` either**: an
-   * answered prompt followed by the next one (`PostToolUse` → `PreToolUse` → `PermissionRequest`) folds to
-   * `awaiting-choice` → `awaiting-choice`. Only `PermissionRequest` counts — the `Notification` the agent
-   * sends for the same prompt would raise it twice.
+   * One entry per permission request reported in the batch, in order. **Not derivable from `state`**: an
+   * answered prompt followed by the next one folds to `awaiting-choice` → `awaiting-choice`. Only
+   * `PermissionRequest` counts — the `Notification` the agent sends for the same prompt would raise it twice.
    */
-  choiceRaised: { tool: string; arg: string | null } | null
+  choicesRaised: { tool: string; arg: string | null }[]
+  /** Tool calls that ended in the batch. */
+  finished: FinishedCall[]
+  held: HeldWait
+}
+
+export interface DrainOptions {
+  /** The request id source; `randomUUID` by default. */
+  newId?: () => string
+}
+
+/** The wall-clock ms in an event file's name (`<date +%s%N>-<pid>.json`), or `null` when it has none. */
+export function fileTimeOf(name: string): number | null {
+  const match = /^(\d{16,})-/.exec(name)
+  if (!match) return null
+  return Number(BigInt(match[1]) / 1_000_000n)
+}
+
+function sameAgent(a: string | null, b: string | null): boolean {
+  return a === b
+}
+
+/**
+ * One event applied to what is held (D1 of `remote-prompts-attachments-rename`). Mutates `held`.
+ *
+ * | Event | Effect on the open requests |
+ * |---|---|
+ * | `PreToolUse` | adds an unmatched tool start |
+ * | `PermissionRequest` | a request, matched to the **latest** unmatched start of the same agent, tool and input |
+ * | `PostToolUse(Failure)` | removes the request and the start of that call |
+ * | the agent's own `Stop` / `StopFailure` / `UserPromptSubmit` | removes the agent's own |
+ * | the agent's own `Stop` | also removes subagents' not listed as running in `background_tasks` |
+ * | `SubagentStop` | removes that subagent's |
+ * | `SessionStart` not for a compaction | removes all |
+ *
+ * **Measured (CLI 2.1.300), and why each row matters:**
+ * - While a background subagent's prompt is open, the agent reports its own `Stop`, and a background-task
+ *   notice arrives as a `UserPromptSubmit`. Clearing every request on those read ready over an open prompt.
+ * - While the agent's own prompt is open, a finished background task's notice and `Stop` wait until the prompt
+ *   is dismissed — so the agent's own turn events do close its own requests (the recovery from a denial,
+ *   which reports nothing).
+ * - Parallel calls' starts arrive before either request, so order alone cannot match a request to its call.
+ */
+function apply(held: HeldWait, event: AgentEvent, at: number, newId: () => string, result: {
+  choicesRaised: DrainResult['choicesRaised']
+  finished: FinishedCall[]
+}): void {
+  const own = event.agentId === null
+  if ((event.name === 'PreToolUse' || event.name === 'PostToolUse' || event.name === 'PostToolUseFailure') && event.toolUseId !== null) {
+    for (const request of held.requests) {
+      if (sameAgent(request.agentId, event.agentId) && request.toolUseId !== event.toolUseId && at > request.at) request.stirred = true
+    }
+  }
+  switch (event.name) {
+    case 'PreToolUse':
+      held.starts.push({ toolUseId: event.toolUseId, agentId: event.agentId, tool: event.toolName, inputHash: event.inputHash, at })
+      held.base = nextWaitState(event)
+      return
+    case 'PermissionRequest': {
+      const taken = new Set(held.requests.map((request) => request.toolUseId).filter((id) => id !== null))
+      let match: ToolStart | undefined
+      for (let i = held.starts.length - 1; i >= 0; i -= 1) {
+        const start = held.starts[i]
+        if (
+          sameAgent(start.agentId, event.agentId) &&
+          start.tool === event.toolName &&
+          start.inputHash === event.inputHash &&
+          !(start.toolUseId !== null && taken.has(start.toolUseId))
+        ) {
+          match = start
+          break
+        }
+      }
+      held.requests.push({
+        id: newId(),
+        toolUseId: match?.toolUseId ?? null,
+        agentId: event.agentId,
+        tool: event.toolName ?? '',
+        arg: event.toolArg,
+        questions: event.questions,
+        plan: event.plan,
+        at: match?.at ?? at,
+        answeredAt: null,
+        // Another start of the same agent between this call's start and its request (parallel calls).
+        stirred: held.starts.some(
+          (start) => sameAgent(start.agentId, event.agentId) && start !== match && start.at > (match?.at ?? at),
+        ),
+      })
+      result.choicesRaised.push({ tool: event.toolName ?? '', arg: event.toolArg })
+      return
+    }
+    case 'PostToolUse':
+    case 'PostToolUseFailure':
+      if (event.toolUseId !== null) {
+        held.requests = held.requests.filter((request) => request.toolUseId !== event.toolUseId)
+        held.starts = held.starts.filter((start) => start.toolUseId !== event.toolUseId)
+        result.finished.push({ toolUseId: event.toolUseId, answers: event.answers, permissionMode: event.permissionMode })
+      }
+      held.base = nextWaitState(event)
+      return
+    case 'SubagentStop':
+      if (event.agentId !== null) {
+        held.requests = held.requests.filter((request) => request.agentId !== event.agentId)
+        held.starts = held.starts.filter((start) => start.agentId !== event.agentId)
+      }
+      return
+    case 'Stop':
+    case 'StopFailure':
+    case 'UserPromptSubmit':
+      if (own) {
+        held.requests = held.requests.filter((request) => request.agentId !== null)
+        held.starts = held.starts.filter((start) => start.agentId !== null)
+        if (event.name === 'Stop' && event.runningAgents !== null) {
+          const running = new Set(event.runningAgents)
+          held.requests = held.requests.filter((request) => request.agentId === null || running.has(request.agentId))
+          held.starts = held.starts.filter((start) => start.agentId === null || running.has(start.agentId))
+        }
+      }
+      held.base = nextWaitState(event)
+      return
+    case 'SessionStart':
+      // A new, resumed or cleared conversation has no prompt from before. A compaction can happen in a turn
+      // that runs while a subagent's prompt is open.
+      if (event.source !== 'compact') {
+        held.requests = []
+        held.starts = []
+      }
+      held.base = nextWaitState(event)
+      return
+    default:
+      held.base = nextWaitState(event)
+  }
+}
+
+function copyHeld(held: HeldWait): HeldWait {
+  return { base: held.base, requests: held.requests.map((r) => ({ ...r })), starts: held.starts.map((s) => ({ ...s })) }
 }
 
 /**
@@ -302,45 +631,41 @@ export interface DrainResult {
  *
  * 讀完即刪，於是**去重由結構保證**，不必維護一份已讀清單（而那份清單會需要自己的持久化與清理）。
  *
- * ## The pending request is carried, not recomputed per event
- *
- * `currentPending` is the request held before this drain. While the state stays awaiting-choice, an event
- * that names no tool keeps it, and **every return path returns it** — the empty drain and the two early
- * returns included. The prompt's own `Notification` arrives about six seconds after `PermissionRequest`
- * and names no tool, and most drains (every 400 ms) find nothing; recomputing from the last event erased the
- * tool both ways (`agent-event-bridge`).
+ * `held` is what the previous drain left (`agent-wait.ts` holds it per session). **Every return path returns
+ * it** — the empty drain and the two early returns included: most drains (every 400 ms) find nothing, and the
+ * prompt's own `Notification` arrives about six seconds after `PermissionRequest` naming no tool.
  */
-export function drainEvents(
-  sessionId: string,
-  current: WaitState,
-  currentPending: DrainResult['pending'] = null,
-): DrainResult {
-  const held = current === 'awaiting-choice' ? currentPending : null
-  const unchanged: DrainResult = {
-    state: current,
-    transcriptPath: null,
-    count: 0,
-    pending: held,
-    turnEnded: false,
-    choiceRaised: null,
+export function drainEvents(sessionId: string, held: HeldWait = heldWait(), options: DrainOptions = {}): DrainResult {
+  const newId = options.newId ?? randomUUID
+  const next = copyHeld(held)
+  const result = {
+    choicesRaised: [] as DrainResult['choicesRaised'],
+    finished: [] as FinishedCall[],
   }
+  const finish = (transcriptPath: string | null, count: number, turnEnded: boolean): DrainResult => ({
+    state: stateOf(next),
+    transcriptPath,
+    count,
+    pending: pendingOf(next),
+    turnEnded,
+    choicesRaised: result.choicesRaised,
+    finished: result.finished,
+    held: next,
+  })
   const dir = sessionDir(sessionId)
-  if (!dir) return unchanged
+  if (!dir) return finish(null, 0, false)
 
   let names: string[]
   try {
     names = fs.readdirSync(dir).filter((name) => name.endsWith('.json')).sort()
   } catch {
     // 目錄不存在 ＝ 未注入或已清除。**不改變狀態** —— 呼叫端的初始值本來就是未知。
-    return unchanged
+    return finish(null, 0, false)
   }
 
-  let state = current
   let transcriptPath: string | null = null
   let count = 0
-  let pending: DrainResult['pending'] = held
   let turnEnded = false
-  let choiceRaised: DrainResult['choiceRaised'] = null
   for (const name of names) {
     const file = path.join(dir, name)
     let event: AgentEvent | null
@@ -357,17 +682,11 @@ export function drainEvents(
     }
     if (!event) continue
     count += 1
-    state = nextWaitState(event)
+    apply(next, event, fileTimeOf(name) ?? Date.now(), newId, result)
     if (event.name === 'Stop') turnEnded = true
-    if (event.name === 'PermissionRequest') choiceRaised = { tool: event.toolName ?? '', arg: event.toolArg }
     if (event.transcriptPath) transcriptPath = event.transcriptPath
-    // 離開等待選擇時清掉 —— 否則畫面會留著一個已經被回答完的請求。While it stays, only an event that
-    // names a tool replaces the request.
-    if (state !== 'awaiting-choice') pending = null
-    else if (event.toolName !== null) pending = { tool: event.toolName, arg: event.toolArg }
-    else pending ??= { tool: '', arg: null }
   }
-  return { state, transcriptPath, count, pending, turnEnded, choiceRaised }
+  return finish(transcriptPath, count, turnEnded)
 }
 
 /**

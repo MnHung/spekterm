@@ -48,6 +48,12 @@ export function makeStubAgent(
      */
     queuedDelivery = false,
     /**
+     * Record each input line as the agent records a reply it took as a paste: the whole message inside
+     * `<pasted_content id="…">` markers (measured, CLI 2.1.300). The conversation must show the text without
+     * them, or "not confirmed" never clears for a long reply (`agent-transcript-stream`).
+     */
+    pasteWrap = false,
+    /**
      * `fire SessionStart` 之前先等這麼久，並在 fire 的當下寫一個 receipt 檔。
      *
      * **少了它，「就緒之前不寫入」那條斷言紅不了**：既有的替身在任何等待之前就 fire，
@@ -156,7 +162,12 @@ export function makeStubAgent(
     'mkdir -p "$dir"',
     'tp="$dir/$sid.jsonl"',
     // 觸發注入的 hook。**照著設定檔裡真正的命令跑** —— 只看 argv 證明不了它能用。
+    // `firej <event> <json>`: run the event's hook commands with this exact payload (a probe's command can
+    // report a tool's input, a subagent's id or a turn's background tasks). `fire` is it with the base payload.
     'fire() {',
+    `  firej "$1" "$(printf '{"hook_event_name":"%s","session_id":"%s","transcript_path":"%s","cwd":"%s"}' "$1" "$sid" "$tp" "$PWD")"`,
+    '}',
+    'firej() {',
     // `honorHooks: false` 的替身完全不觸發事件 —— 用來驗「內容與輸入是兩條獨立的路」：
     // 沒有事件 ⇒ 等待狀態恆為未知 ⇒ 送不出去，**但內容照樣讀得到**。
     honorHooks ? '  [ -n "$settings" ] || return 0' : '  return 0',
@@ -181,7 +192,7 @@ export function makeStubAgent(
       + `"$settings" "$1" | { n=0; while IFS= read -r b64; do`,
     '    n=$((n+1))',
     '    cmd=$(printf %s "$b64" | base64 -d)',
-    `    printf '{"hook_event_name":"%s","session_id":"%s","transcript_path":"%s","cwd":"%s"}' "$1" "$sid" "$tp" "$PWD" | sh -c "$cmd" > "${hookOutDir}/$1-$n" 2>/dev/null`,
+    `    printf %s "$2" | sh -c "$cmd" > "${hookOutDir}/$1-$n" 2>/dev/null`,
     '  done; }',
     '}',
     'read_loop() {',
@@ -214,9 +225,12 @@ export function makeStubAgent(
     echoDelaySeconds ? `  sleep ${echoDelaySeconds}` : '',
     // Every record gets its own `uuid`: resuming a conversation names the last one received.
     '    nuser=$((nuser+1))',
+    pasteWrap ? `    pre='\\n\\n<pasted_content id=\\"p1\\">\\n'; post='\\n</pasted_content id=\\"p1\\">\\n'` : '',
     queuedDelivery
       ? `    printf '{"type":"attachment","uuid":"q-%s-%s","timestamp":"2026-09-06T00:00:01.000Z","attachment":{"type":"queued_command","prompt":"%s","commandMode":"prompt","origin":{"kind":"human"}}}\\n' "$$" "$nuser" "$line" >> "$tp"`
-      : `    printf '{"type":"user","uuid":"u-%s-%s","timestamp":"2026-09-06T00:00:01.000Z","message":{"role":"user","content":"%s"}}\\n' "$$" "$nuser" "$line" >> "$tp"`,
+      : pasteWrap
+        ? `    printf '{"type":"user","uuid":"u-%s-%s","timestamp":"2026-09-06T00:00:01.000Z","message":{"role":"user","content":"%s%s%s"}}\\n' "$$" "$nuser" "$pre" "$line" "$post" >> "$tp"`
+        : `    printf '{"type":"user","uuid":"u-%s-%s","timestamp":"2026-09-06T00:00:01.000Z","message":{"role":"user","content":"%s"}}\\n' "$$" "$nuser" "$line" >> "$tp"`,
     // `busySeconds`：先宣告忙碌、停一段時間再宣告就緒 —— 供「忙碌時呈現忙碌、閒置後消失」。
     busySeconds ? '  fire PreToolUse' : '',
     busySeconds ? `  sleep ${busySeconds}` : '',

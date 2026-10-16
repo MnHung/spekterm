@@ -42,7 +42,8 @@ it first: it is how a desktop whose address changed stays reachable without pair
   default verifier fails a certificate with no SAN for every address; an "accept everything" verifier is the
   pattern Google Play's security scanning flags. Make both compare the leaf to the pin and reject otherwise.
 - Do not send anything — above all the credential or the pairing code — before the pin is checked.
-- Frames are UTF-8 JSON text. A frame over 1 MiB closes the connection. permessage-deflate is offered.
+- Frames are UTF-8 JSON text. A frame over 1 MiB closes the connection, with no error answer.
+  permessage-deflate is offered.
 
 ## 3. Frames
 
@@ -79,6 +80,11 @@ Stable strings; branch on them, show `message` only as a detail.
 | `FOLDER_REQUIRED` | Accepting an inbox item needs the folder the user chose. |
 | `CREATE_FAILED` | The desktop could not create or wake the session; `message` says why. |
 | `TIMEOUT` | The desktop's interface did not answer within 15 seconds. |
+| `PROMPT_GONE` | The prompt an answer names is not the one a device may answer now (section 5, `conversation.answer`). `detail.open` is the number of open requests. |
+| `NOT_ANSWERABLE` | The decision does not fit the prompt, or that answer is not offered to a device. |
+| `TOO_LARGE` | An attachment, a chunk or a session's stored attachments would exceed a limit; `detail.limit` is the limit in bytes. |
+| `TOO_MANY` | A session already holds the most attachments not sent yet (`detail.limit`). |
+| `UNSUPPORTED_TYPE` | An uploaded file is not an image (PNG, JPEG, GIF, WebP), a PDF or UTF-8 text. |
 | `INTERNAL` | Anything else. |
 
 ### Close codes
@@ -103,17 +109,22 @@ chosen. This document is version 1.
 
 ### `hello`
 
-`p`: `{ "protocol": [1], "deviceId": "…", "deviceSecret": "…" }` → `r`: `{ "protocol": 1, "server": { "name", "version" }, "addresses": [string] }`
+`p`: `{ "protocol": [1], "deviceId": "…", "deviceSecret": "…" }` → `r`: `{ "protocol": 1, "server": { "name", "version" }, "addresses": [string], "operations": [string] }`
 
 `addresses`: where the desktop may be reached now, built the same way as the pairing link's `a` list (its
 non-loopback interface addresses, IPv4 first, then IPv6 other than link-local, then the user's additional
 address if set). It is sent only in the answer to a successful `hello` or `pair`, never to a connection that
 has not authenticated.
 
+`operations`: the operations this desktop accepts, other than `hello` and `pair`. Show a control only when its
+operation is listed: an older desktop does not have `sessions.rename`, `attachments.put` or
+`conversation.answer`, and answers them `UNKNOWN_OPERATION`. Protocol version 1 grows only by new fields,
+operations, event values and error codes (section 9, obligation 7).
+
 ### `pair`
 
 `p`: `{ "protocol": [1], "code": "<c from the link>", "deviceName": "…", "deviceModel": "…" }`
-→ `r`: `{ "protocol": 1, "server": { … }, "addresses": [string], "deviceId": "…", "deviceSecret": "…" }`
+→ `r`: `{ "protocol": 1, "server": { … }, "addresses": [string], "operations": [string], "deviceId": "…", "deviceSecret": "…" }`
 
 The credential is given **once**; spekterm keeps only its SHA-256. Store it in the platform's protected
 storage. The pairing connection is authenticated as the new device and may continue with operations. Names
@@ -123,7 +134,8 @@ and models are clipped to 64 characters and control characters removed.
 
 A paired device has the user's power over agents: it can type into any session. Everything else — files
 outside OpenSpec, settings, Slack, credentials, closing or hibernating sessions, resizing a terminal — is not
-an operation.
+an operation. The one file a device writes is an attachment, and only into the desktop's own attachment store,
+under a name the desktop chooses (`attachments.put`). No operation takes a path or a directory.
 
 ### `sessions.list`
 
@@ -150,6 +162,14 @@ focus. Errors: `NO_WINDOW`, `CREATE_FAILED`, `TIMEOUT`.
 `p`: `{ "sessionId" }` → `r`: `{ "sessionId" }`. Starts a dormant session, quietly as above. A running session
 answers at once. Errors: `NOT_FOUND`, `NO_WINDOW`, `CREATE_FAILED`, `TIMEOUT`.
 
+### `sessions.rename`
+
+`p`: `{ "sessionId", "name" }` → `r`: `{ "sessionId" }`. The desktop's own rename, quietly (no selection, focus
+or display change). Control characters (newlines included) are removed and the name is clipped to 200
+characters; the desktop then trims it. **An empty name hands naming back**: the label follows the agent's title
+again (or a handoff's title, or the local label). A dormant session can be renamed. The new label arrives in
+`sessions.changed`. Errors: `NOT_FOUND`, `NO_WINDOW`, `TIMEOUT`, `BAD_PARAMS` (no `name`).
+
 ### `conversation.watch`
 
 `p`: `{ "sessionId", "afterUuid"? }` → `r`: `{ "sessionId" }`, then events:
@@ -157,7 +177,26 @@ answers at once. Errors: `NOT_FOUND`, `NO_WINDOW`, `CREATE_FAILED`, `TIMEOUT`.
 - `conversation.update`: `{ sessionId, status: "attaching"|"ok"|"unavailable", events: [Entry], truncated: bool, reset: bool }`
   - `reset: true` — replace what you hold with `events`. `false` — append.
   - `truncated: true` — older entries were not loaded.
-- `conversation.wait`: `{ sessionId, state, pending: { tool, arg }|null }` — whether a reply can be sent.
+- `conversation.wait`: `{ sessionId, state, pending: { tool, arg }|null, prompt: Prompt|null }` — whether a reply
+  can be sent, and the open prompt. Sent when any of it changes, also with no agent event (the prompt was
+  answered, or typed into on the desktop).
+
+`Prompt` is the first open permission request (queued prompts are shown in the order they were raised), or
+`null` when none is open:
+
+- `{ id, kind: "permission", tool, arg, canAllow, answerable, open }` — `canAllow` is true only for `Bash`,
+  `Edit`, `Write`, `Read` and `WebFetch`, whose prompt puts a one-time "Yes" first;
+- `{ id, kind: "question", questions: [{ question, header, multiSelect, options: [{ label, description }] }], answerable, open }`
+  — the agent's question tool;
+- `{ id, kind: "plan", plan: string|null, choices, answerable, open }` — the plan approval. `plan` is the plan
+  text when the agent wrote one; `choices` is `["approve", "approve-auto", "deny"]` with a plan,
+  `["approve", "deny"]` without.
+
+`id` is the desktop's identity for the request. `open` is the number of open requests. `answerable` is true only
+while exactly one request is open, nothing was typed into the session since it was raised, its agent reported
+no other tool activity since, and no answer was written to it yet; for a question, also when it has one to four
+questions of one to eight options. Show the question, option and plan text as plain text: it is the agent's
+own, and may contain paths.
 - `conversation.ended`: `{ sessionId, reason: "window" }` — the desktop's interface reloaded or closed.
 
 `Entry` is one of: `{ kind: "user", uuid, at, text, meta }`, `{ kind: "text", uuid, at, text }`,
@@ -179,16 +218,75 @@ One connection watches at most one conversation; watching another ends the previ
 
 ### `conversation.send`
 
-`p`: `{ "sessionId", "text" }` → `r`: `{ "outcome": "submitted" | "filled-not-submitted" }`
+`p`: `{ "sessionId", "text", "attachments"?: [attachmentId] }` → `r`: `{ "outcome": "submitted" | "filled-not-submitted", "text" }`
 
 - Only for the watched conversation (`NOT_WATCHING`), only while `wait` is `ready` or `busy` (`WAIT_STATE`
-  otherwise — answer a permission prompt with `terminal.input`).
+  otherwise — answer a prompt with `conversation.answer`).
+- `attachments`: up to 10 complete, unsent attachments of that session (`BAD_PARAMS` beyond; `NOT_FOUND` for
+  one that is not complete, not that session's, or already sent — nothing is written). `text` may then be
+  empty. The desktop appends one sentence naming each file's full path, inside the sentence, in backticks:
+  ``(The user attached 1 file from their phone; read it with the Read tool: `/…/sent/…-photo.jpg`)``.
+  The agent reads them with its Read tool, without a permission prompt.
+- `r.text` is exactly what was written before the submit key. Match the conversation entry against it to clear
+  your "not confirmed" state. An attachment counts as sent once the text is written, also for
+  `filled-not-submitted`.
 - Control characters other than newline are removed.
 - The text is written, then the submit key **500 ms later**. Just before the submit key the wait state is read
   again: if the agent began waiting on a choice meanwhile, the key is withheld and the outcome is
   `filled-not-submitted` — the text sits in the agent's input, unsent, and is **never** submitted later. Tell
   the user.
 - Replies to one session are written one at a time.
+
+### `conversation.answer`
+
+`p`: `{ "sessionId", "promptId", "decision", "selections"? }` → `r`: `{ "outcome": "sent" | "partial" | "confirmed" | "mismatch" }`
+
+Answers the watched conversation's open prompt (`NOT_WATCHING` otherwise). `promptId` is `Prompt.id`.
+
+| `decision` | For | Keys the desktop writes |
+|---|---|---|
+| `allow` | a permission prompt with `canAllow` | `1` (the one-time "Yes") |
+| `deny` | any prompt | Esc: the prompt is dismissed (a question declined; a plan approval leaves the agent in plan mode) |
+| `answer` | a question with `answerable`, with `selections` | per question: a single choice → its digit; several choices → each digit, then Tab; then `1` on the review, unless it is one single-choice question |
+| `approve` | a plan approval | `2` ("Yes, manually approve edits"), or `1` ("Yes, and switch to default") without a plan |
+| `approve-auto` | a plan approval with a plan | `1` ("Yes, and use auto mode") |
+
+- `selections`: one entry per question, as option indexes from 0: exactly one for a single-choice question,
+  one or more distinct ones for a several-choice question. Anything else is `BAD_PARAMS`; a decision that does
+  not fit the prompt is `NOT_ANSWERABLE`.
+- **No answer contains the submit key**, and the keys are written one at a time, 250 ms apart. Before every key
+  the desktop reads the agent's events again and writes the key only while the prompt is still answerable (see
+  `Prompt.answerable`). If the first key is withheld, the answer is refused `PROMPT_GONE`; if a later one is,
+  the rest are withheld and the outcome is `partial`.
+- **Outcomes**: `sent` — every key was written, and that is all it says. `confirmed` / `mismatch` — for a
+  question, the answers the agent recorded, and for a plan approval, the permission mode it entered next, match
+  or differ from the choice (checked for up to 3 seconds; otherwise `sent`). `partial` — see above.
+- After a `deny`, the request is closed; for the agent's own prompt the wait state becomes `ready`, so a reply
+  can follow.
+- **A prompt dismissed without a key** (for example by the agent itself) can still look open. An answer then
+  types into the agent's input box: a digit stays there unsent, and Esc interrupts a working agent. Nothing is
+  ever submitted.
+- Answers and replies to one session are written one at a time.
+
+### `attachments.put`
+
+`p`: `{ "sessionId", "name", "size", "offset", "data", "attachmentId"? }` → `r`: `{ "attachmentId", "received", "complete" }`
+
+Uploads a file for an agent session in chunks (`NOT_FOUND`, `NO_CONVERSATION` for a shell). Watching the
+session is not required.
+
+- `data` is base64, at most 512 KiB once decoded per chunk. The first chunk has `offset: 0` and no
+  `attachmentId`, and fixes `size`; later chunks name the `attachmentId` and start exactly at `received`
+  (`BAD_PARAMS` with `detail.received` otherwise).
+- When `received` reaches `size`, the content is checked: a PNG, JPEG, GIF, WebP or PDF signature, or UTF-8 text
+  with no NUL. Anything else is `UNSUPPORTED_TYPE`, and the upload is removed. HEIC is not accepted: convert it
+  first.
+- `name` is only a hint: the desktop keeps letters, digits, `.`, `-` and `_` (80 at most), prefixes an id, and
+  sets the extension the content implies.
+- Limits: 10 MiB per file (`TOO_LARGE`), 200 MiB stored per session (`TOO_LARGE`), 10 attachments not sent yet
+  per session, uploads in progress included (`TOO_MANY`).
+- Unsent attachments are removed after 24 hours, and an upload in progress does not survive the desktop
+  quitting. Sent ones are kept until the session is closed, or 30 days.
 
 ### `terminal.watch`
 
@@ -209,8 +307,9 @@ One connection watches at most one conversation; watching another ends the previ
 
 ### `terminal.input`
 
-`p`: `{ "sessionId", "data" }` → `r`: `{}`. Written to the session's terminal as typed (`"\r"` is Enter). This
-is how a permission prompt is answered. At most 64 KiB per call. Error: `NOT_FOUND` (no running process).
+`p`: `{ "sessionId", "data" }` → `r`: `{}`. Written to the session's terminal as typed (`"\r"` is Enter). At most
+64 KiB per call. Error: `NOT_FOUND` (no running process). Prefer `conversation.answer` for a prompt: typed
+input makes the open prompt unanswerable from a device, and text with Enter typed into a prompt approves it.
 
 ### `inbox.list`
 
@@ -330,6 +429,11 @@ open (on Android, a foreground service), and reconnect with backoff when the net
 6. **Store the device credential in protected storage**; forget it on close code 4004.
 7. **Ignore what you do not know.** A field you do not recognize, in any frame, and an event kind you do not
    recognize, are not errors. New fields and events are added within a protocol version.
-8. **Keep the pairing link's addresses and the latest list received** (sections 1, 4 and 6), and try the
+8. **Show a control only when its operation is in `operations`** (section 4).
+9. **Match a reply's entry against `conversation.send`'s `r.text`**, not against what was typed: the desktop
+   adds the attachment sentence.
+10. **Answer prompts with `conversation.answer`, never by typing digits** into the terminal, and show the
+    prompt's text as plain text.
+11. **Keep the pairing link's addresses and the latest list received** (sections 1, 4 and 6), and try the
    latest first. Do not replace the stored list outright: a laptop moves between networks, so the address it
    has now is not the only one it will have.

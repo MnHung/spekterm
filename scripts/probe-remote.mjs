@@ -18,7 +18,7 @@
  *   the gap; the unit test with the focus source injected carries the rule.
  */
 import { spawn } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { connect as netConnect, createServer as createNetServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
@@ -387,10 +387,19 @@ function outboundSockets(profile, excludedPorts) {
 }
 
 /** Writes an agent event into a session's drop point, as the injected hook would. */
+/**
+ * The last event file name's nanoseconds. Names are **wall-clock** nanoseconds, as the real hook writes them
+ * (`date +%s%N`): a request's time is read from its file name and compared with the time of the session's
+ * last keystroke (`remote-answer.ts`). Strictly increasing, so the drain's order is the firing order.
+ */
+let lastEventNs = 0n
+
 function fireEvent(profile, sessionId, body) {
   const dir = join(profile, 'agent-events', sessionId)
   mkdirSync(dir, { recursive: true })
-  const file = join(dir, `${process.hrtime.bigint()}-probe.json`)
+  const wall = BigInt(Date.now()) * 1_000_000n
+  lastEventNs = wall > lastEventNs ? wall : lastEventNs + 1n
+  const file = join(dir, `${lastEventNs}-probe.json`)
   writeFileSync(`${file}.tmp`, JSON.stringify(body))
   renameSync(`${file}.tmp`, file)
 }
@@ -817,6 +826,7 @@ async function runConversation(_mode, _config, context) {
 
   await pollFor({ read: async () => (await list(client)).sessions.find((s) => s.id === sessionId)?.wait, settled: (w) => w === 'ready', timeoutMs: 15_000, label: 'ready' })
   const long = `REMOTE-LONG-${'x'.repeat(600)}`
+  const longFrom = client.events.length
   const sent = await call(client, 'conversation.send', { sessionId, text: long })
   const entry = await client.waitEvent('conversation.update', { match: (d) => JSON.stringify(d.events).includes('REMOTE-LONG-'), timeoutMs: 15_000, label: 'the reply as an entry' })
   const blocks = stub.sessionBlocks(conv)
@@ -829,7 +839,9 @@ async function runConversation(_mode, _config, context) {
     `outcome=${sent.r?.outcome} gap=${gap.toFixed?.(0)}ms blocks=${blocks.length}`,
   )
 
-  // Waiting on a choice: refused, nothing written.
+  // Waiting on a choice: refused, nothing written. The stub's own turn for the long reply ends first: its turn
+  // end would otherwise land after the request and close it (the agent's own turn end closes its own requests).
+  await turnAfter(client, longFrom, 'the long reply')
   fireEvent(profile, sessionId, { hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'rm x' } })
   await client.waitEvent('conversation.wait', { match: (d) => d.state === 'awaiting-choice', timeoutMs: 10_000, label: 'awaiting a choice' })
   const bytesBefore = stub.sessionInputs()[conv]?.bytes.length ?? 0
@@ -842,7 +854,9 @@ async function runConversation(_mode, _config, context) {
     JSON.stringify(refused.e),
   )
 
-  // A choice inside the delay: busy at the gate, awaiting-choice at the re-check.
+  // A choice inside the delay: busy at the gate, awaiting-choice at the re-check. The refused prompt ends with
+  // the agent's own turn end first: a tool start no longer closes an open request (`agent-event-bridge`).
+  fireEvent(profile, sessionId, { hook_event_name: 'Stop' })
   fireEvent(profile, sessionId, { hook_event_name: 'PreToolUse', tool_name: 'Bash' })
   await client.waitEvent('conversation.wait', { match: (d) => d.state === 'busy', timeoutMs: 10_000, label: 'busy' })
   const sending = call(client, 'conversation.send', { sessionId, text: 'HELD-BACK' })
@@ -1244,6 +1258,346 @@ async function runHibernation(_mode, _config, context) {
   await app.close()
 }
 
+/** What a session's stub received, as text (every byte, Enter included). */
+const received = (stub, conv) => stub.sessionInputs()[conv]?.bytes ?? ''
+
+/**
+ * What the stub received once it has stopped receiving. It logs one byte at a time, and after each line it runs
+ * the hook commands (a second or so) without reading the tty, so bytes can wait unread. A length unchanged for
+ * one second is the baseline; a shorter window read a pause as the end (seen: the next keys were missing).
+ */
+async function settledReceived(stub, conv, atLeast = 0) {
+  let previous = -1
+  let stable = 0
+  return pollFor({
+    read: () => received(stub, conv),
+    settled: (text) => {
+      stable = text.length === previous ? stable + 1 : 0
+      previous = text.length
+      return text.length >= atLeast && stable >= 2
+    },
+    interval: 500,
+    timeoutMs: 20_000,
+    label: 'the stub done receiving',
+  })
+}
+
+/**
+ * A turn the stub runs for one input line ends with its own submission and turn end. Waiting for its end keeps
+ * them from landing after the next events the probe fires (the agent's own turn end closes its own requests).
+ *
+ * **Wait for ready only, from before the send.** The state was ready before, so a ready update after `from`
+ * comes only from a drain that read the turn's events. A busy update is not a usable step: the submission and
+ * the turn end often land in one drain, and then no busy is ever sent (seen: a 15 s wait ran out, and a ready
+ * looked up from a missing busy matched an old event).
+ */
+async function turnAfter(client, from, label) {
+  const ended = await client.waitEvent('conversation.wait', { from, match: (d) => d.state === 'ready', timeoutMs: 15_000, label: `${label}: ready` })
+  check(results, `prerequisite: ${label} ended its turn`, Boolean(ended), '')
+}
+
+/** An agent session from the phone, ready, its conversation watched. */
+async function watchedAgent(client, profile, stub, folderId = 'f') {
+  const agent = await remoteCreate(client, folderId, 'claude')
+  const sessionId = agent.r.sessionId
+  const conv = await conversationOf(profile, sessionId)
+  await pollFor({ read: () => stub.ready(), settled: Boolean, timeoutMs: 15_000, label: 'the stub ready' })
+  await call(client, 'conversation.watch', { sessionId })
+  await client.waitEvent('conversation.wait', { match: (d) => d.state === 'ready', timeoutMs: 15_000, label: 'ready' })
+  return { sessionId, conv }
+}
+
+/** remote-protocol: renaming a session from a device. */
+async function runRename(_mode, _config, context) {
+  const repos = makeRepos()
+  const profile = seedProfile(repos, { remote: { enabled: true, port: LISTEN_A } })
+  const { app } = await start(context, profile, { announceTitle: 'STUB-TITLE' })
+  const paired = await phone(app)
+  const { client } = paired
+  const operations = paired.response.r?.operations ?? []
+  check(
+    results,
+    'the authentication answer lists the operations, the new ones included, and not authentication',
+    ['sessions.rename', 'attachments.put', 'conversation.answer'].every((op) => operations.includes(op)) &&
+      !operations.includes('hello') && !operations.includes('pair'),
+    JSON.stringify(operations),
+  )
+
+  await selectFolder(app, repos.names.f)
+  await desktopCreate(app, 'claude')
+  const sessionId = await pollFor({
+    read: async () => (await list(client)).sessions.find((s) => s.folderId === 'f' && s.target === 'claude')?.id ?? null,
+    settled: Boolean,
+    timeoutMs: 15_000,
+    label: 'the desktop session',
+  })
+  await pollFor({
+    read: async () => (await list(client)).sessions.find((s) => s.id === sessionId)?.label,
+    settled: (l) => l === 'STUB-TITLE',
+    timeoutMs: 15_000,
+    label: 'the agent\'s title as the label',
+  })
+  const focusBefore = await pollFor({ read: () => app.client.evaluate(FOCUS), settled: (f) => f === 'terminal', timeoutMs: 10_000, label: 'focus in the terminal' })
+  await selectFolder(app, repos.names.g)
+  const railBefore = await app.client.evaluate(SELECTED_FOLDER)
+
+  const from = client.events.length
+  const renamed = await call(client, 'sessions.rename', { sessionId, name: 'Fix\nthe login' })
+  const listed = await client.waitEvent('sessions.changed', { from, match: (d) => d.sessions.some((s) => s.id === sessionId && s.label === 'Fixthe login'), timeoutMs: 10_000, label: 'the new label listed' })
+  const persisted = await pollFor({ read: () => persistedSessions(profile).find((s) => s.id === sessionId)?.customTitle, settled: (t) => t === 'Fixthe login', timeoutMs: 10_000, label: 'the name persisted' })
+  await selectFolder(app, repos.names.f)
+  const tab = await pollFor({ read: () => app.client.evaluate(SELECTED_TAB), settled: (t) => t?.includes('Fixthe login'), timeoutMs: 10_000, label: 'the tab shows the name' })
+  check(
+    results,
+    'renaming from a device changes the tab, the rail and the list, cleans the name, and keeps the selection',
+    renamed.ok === true && Boolean(listed) && persisted === 'Fixthe login' && Boolean(tab?.includes('Fixthe login')) && railBefore === repos.names.g,
+    `ok=${renamed.ok} tab=${tab} rail=${railBefore} ${JSON.stringify(renamed.e ?? '')}`,
+  )
+  check(results, 'renaming takes no keyboard focus', focusBefore === 'terminal', `focus before=${focusBefore}`)
+
+  const backFrom = client.events.length
+  const cleared = await call(client, 'sessions.rename', { sessionId, name: '   ' })
+  const back = await client.waitEvent('sessions.changed', { from: backFrom, match: (d) => d.sessions.some((s) => s.id === sessionId && s.label === 'STUB-TITLE'), timeoutMs: 10_000, label: 'the agent title again' })
+  check(results, 'an empty name hands naming back to the agent\'s title', cleared.ok === true && Boolean(back), JSON.stringify(cleared.e ?? ''))
+
+  const unknown = await call(client, 'sessions.rename', { sessionId: 'no-such-session', name: 'x' })
+  check(results, 'renaming an unknown session is refused as not found', unknown.e?.code === 'NOT_FOUND', JSON.stringify(unknown.e))
+
+  await call(client, 'sessions.rename', { sessionId, name: 'Kept name' })
+  await pollFor({ read: () => persistedSessions(profile).find((s) => s.id === sessionId)?.customTitle, settled: (t) => t === 'Kept name', timeoutMs: 10_000, label: 'persisted before the restart' })
+  await app.close()
+  const relaunched = await start(context, profile, { announceTitle: 'STUB-TITLE' }, RESTART_PORT)
+  const rail = await pollFor({
+    read: () => relaunched.app.client.evaluate(`document.querySelector('aside[aria-label="${copy('rail.label')}"]')?.textContent ?? ''`),
+    settled: (t) => t.includes('Kept name'),
+    timeoutMs: 15_000,
+    label: 'the name after a restart',
+  })
+  check(results, 'a name given from a device is restored after a restart', rail.includes('Kept name'), '')
+  await relaunched.app.close()
+}
+
+const PNG_HEAD = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+
+/** remote-attachments: upload, send, refusals, removal with the session. */
+async function runAttachments(_mode, _config, context) {
+  const repos = makeRepos()
+  const profile = seedProfile(repos, { remote: { enabled: true, port: LISTEN_A } })
+  const { app, stub } = await start(context, profile)
+  const { client } = await phone(app)
+  const { sessionId, conv } = await watchedAgent(client, profile, stub)
+
+  const image = Buffer.concat([PNG_HEAD, Buffer.alloc(700 * 1024, 3)])
+  const chunk = 512 * 1024
+  const first = await call(client, 'attachments.put', { sessionId, name: '../../photo shot.png', size: image.length, offset: 0, data: image.subarray(0, chunk).toString('base64') })
+  const second = await call(client, 'attachments.put', {
+    sessionId, name: 'x', size: image.length, offset: chunk, attachmentId: first.r?.attachmentId, data: image.subarray(chunk).toString('base64'),
+  })
+  check(results, 'a photo in two chunks becomes an attachment', first.r?.complete === false && second.r?.complete === true, JSON.stringify([first.e ?? first.r, second.e ?? second.r]))
+
+  const sent = await call(client, 'conversation.send', { sessionId, text: 'ATTACH-PROBE', attachments: [first.r?.attachmentId] })
+  const bytes = await pollFor({ read: () => received(stub, conv), settled: (t) => t.includes('read it with the Read tool'), timeoutMs: 10_000, label: 'the reply with its sentence' })
+  const named = /`([^`]+)`/.exec(bytes)?.[1] ?? ''
+  const store = join(profile, 'remote-attachments', sessionId, 'sent')
+  const holds = (() => {
+    try {
+      return readFileSync(named).equals(image)
+    } catch {
+      return false
+    }
+  })()
+  check(
+    results,
+    'a reply with an attachment reaches the agent naming the stored file inside a sentence, and the answer carries that exact text',
+    sent.r?.outcome === 'submitted' && named.startsWith(`${store}/`) && holds && bytes.includes(sent.r?.text ?? '(none)') &&
+      !bytes.split('\r').join('\n').split('\n').some((line) => line.startsWith('/')),
+    `named=${named} holds=${holds} text=${JSON.stringify(sent.r?.text)}`,
+  )
+
+  const again = await call(client, 'conversation.send', { sessionId, text: 'AGAIN', attachments: [first.r?.attachmentId] })
+  check(results, 'an attachment cannot be sent twice', again.e?.code === 'NOT_FOUND' && !received(stub, conv).includes('AGAIN'), JSON.stringify(again.e))
+
+  const elf = Buffer.concat([Buffer.from([0x7f, 0x45, 0x4c, 0x46]), Buffer.alloc(40, 0)])
+  const refused = await call(client, 'attachments.put', { sessionId, name: 'photo.png', size: elf.length, offset: 0, data: elf.toString('base64') })
+  check(results, 'a binary that is not an accepted kind is refused', refused.e?.code === 'UNSUPPORTED_TYPE', JSON.stringify(refused.e))
+
+  const shell = await remoteCreate(client, 'f', 'shell')
+  const toShell = await call(client, 'attachments.put', { sessionId: shell.r.sessionId, name: 'a.txt', size: 1, offset: 0, data: 'YQ==' })
+  check(results, 'an upload for a shell session is refused as having no conversation', toShell.e?.code === 'NO_CONVERSATION', JSON.stringify(toShell.e))
+
+  // Hibernating keeps them; closing a dormant session removes them.
+  const dir = join(profile, 'remote-attachments', sessionId)
+  await selectFolder(app, repos.names.f)
+  await clickSelector(app.client, `[role="tablist"][aria-label="${copy('sessions.tabs')}"] [role="tab"]`)
+  await pressHibernate(app.client)
+  await pollFor({ read: async () => (await list(client)).sessions.find((s) => s.id === sessionId)?.running, settled: (r) => r === false, timeoutMs: 15_000, label: 'hibernated' })
+  const kept = existsSync(dir)
+  await app.client.evaluate(`window.workspace.terminal.kill(${JSON.stringify(sessionId)})`)
+  const gone = await pollFor({ read: () => existsSync(dir), settled: (e) => e === false, timeoutMs: 10_000, label: 'the directory removed' })
+  check(results, 'hibernating keeps a session\'s attachments, and closing it while dormant removes them', kept && gone === false, `kept=${kept}`)
+
+  // Closing a running session removes them too.
+  const live = await watchedAgent(client, profile, stub, 'g')
+  const small = await call(client, 'attachments.put', { sessionId: live.sessionId, name: 'n.txt', size: 2, offset: 0, data: 'aGk=' })
+  const liveDir = join(profile, 'remote-attachments', live.sessionId)
+  const had = existsSync(liveDir) && small.r?.complete === true
+  await app.client.evaluate(`window.workspace.terminal.kill(${JSON.stringify(live.sessionId)})`)
+  const liveGone = await pollFor({ read: () => existsSync(liveDir), settled: (e) => e === false, timeoutMs: 10_000, label: 'the live directory removed' })
+  check(results, 'closing a running session removes its attachments', had && liveGone === false, `had=${had}`)
+  await app.close()
+}
+
+/** remote-protocol: the open prompt in the wait updates, and answers to it. */
+async function runAnswer(_mode, _config, context) {
+  const repos = makeRepos()
+  const profile = seedProfile(repos, { remote: { enabled: true, port: LISTEN_A } })
+  const { app, stub } = await start(context, profile)
+  const { client } = await phone(app)
+  const { sessionId, conv } = await watchedAgent(client, profile, stub)
+  const ask = (tool, id, input, extra = {}) => {
+    fireEvent(profile, sessionId, { hook_event_name: 'PreToolUse', tool_name: tool, tool_use_id: id, tool_input: input, ...extra })
+    fireEvent(profile, sessionId, { hook_event_name: 'PermissionRequest', tool_name: tool, tool_input: input, ...extra })
+  }
+  const promptWhere = (match, label) =>
+    client.waitEvent('conversation.wait', { from: client.events.length, match: (d) => d.prompt && match(d.prompt), timeoutMs: 10_000, label })
+
+  // A command: stated with allow; denied with Esc; the agent then takes a reply.
+  const cmd = promptWhere((p) => p.kind === 'permission' && p.tool === 'Bash', 'the command prompt')
+  ask('Bash', 'b1', { command: 'echo hi' })
+  const command = await cmd
+  check(
+    results,
+    'a permission prompt is stated with its identity, its tool and argument, allow once, and as answerable',
+    command?.d.prompt.canAllow === true && command.d.prompt.answerable === true && command.d.prompt.arg === 'echo hi' && Boolean(command.d.prompt.id),
+    JSON.stringify(command?.d.prompt),
+  )
+  const deniedFrom = client.events.length
+  const denied = await call(client, 'conversation.answer', { sessionId, promptId: command?.d.prompt.id, decision: 'deny' })
+  await client.waitEvent('conversation.wait', { from: deniedFrom, match: (d) => d.state === 'ready' && d.prompt === null, timeoutMs: 10_000, label: 'ready after the denial' })
+  const replyFrom = client.events.length
+  const reply = await call(client, 'conversation.send', { sessionId, text: 'AFTER-DENY' })
+  await turnAfter(client, replyFrom, 'the reply after the denial')
+  const afterDeny = await settledReceived(stub, conv)
+  check(
+    results,
+    'a denial from a device writes Esc and no submit key, and the agent then takes a reply',
+    denied.r?.outcome === 'sent' && (afterDeny.includes('\x1bAFTER-DENY\r') || afterDeny.includes('\x1bAFTER-DENY\n')) && reply.r?.outcome === 'submitted',
+    `answer=${JSON.stringify(denied.r ?? denied.e)} reply=${JSON.stringify(reply.r ?? reply.e)} tail=${JSON.stringify(afterDeny.slice(-16))}`,
+  )
+
+  // A question: its options, the planned keys one at a time, confirmed against the recorded answers.
+  const questions = [
+    { question: 'Fruit?', header: 'Fruit', multiSelect: false, options: [{ label: 'Apple', description: '' }, { label: 'Banana', description: '' }] },
+    { question: 'Toppings?', header: 'Toppings', multiSelect: true, options: [{ label: 'Salt', description: '' }, { label: 'Sugar', description: '' }, { label: 'Honey', description: '' }] },
+  ]
+  const qp = promptWhere((p) => p.kind === 'question', 'the question prompt')
+  ask('AskUserQuestion', 'q1', { questions })
+  const question = await qp
+  check(
+    results,
+    'a question is stated with its options in order, several-choice marked, and answerable',
+    question?.d.prompt.answerable === true && question.d.prompt.questions[1].multiSelect === true &&
+      question.d.prompt.questions[1].options.map((o) => o.label).join() === 'Salt,Sugar,Honey',
+    JSON.stringify(question?.d.prompt),
+  )
+  const beforeKeys = (await settledReceived(stub, conv)).length
+  const blocksBefore = stub.sessionBlocks(conv).length
+  const answering = call(client, 'conversation.answer', { sessionId, promptId: question?.d.prompt.id, decision: 'answer', selections: [[1], [2, 0]] })
+  // The keys take four gaps of 250 ms; the recorded answers come after the last one.
+  await sleep(1_300)
+  fireEvent(profile, sessionId, { hook_event_name: 'PostToolUse', tool_name: 'AskUserQuestion', tool_use_id: 'q1', tool_input: { questions, answers: { 'Fruit?': 'Banana', 'Toppings?': 'Salt, Honey' } } })
+  const answered = await answering
+  const keys = (await settledReceived(stub, conv, beforeKeys + 5)).slice(beforeKeys)
+  const blocks = stub.sessionBlocks(conv).slice(blocksBefore)
+  check(
+    results,
+    'a question\'s answer reaches the agent as the option keys, one write each, no submit key, and is confirmed',
+    keys === '213\t1' && blocks.length === 5 && answered.r?.outcome === 'confirmed',
+    `keys=${JSON.stringify(keys)} blocks=${blocks.length} outcome=${JSON.stringify(answered.r ?? answered.e)}`,
+  )
+  fireEvent(profile, sessionId, { hook_event_name: 'Stop' })
+
+  // A prompt that was replaced: the old identity is refused, nothing written.
+  const ep = promptWhere((p) => p.tool === 'Edit', 'the first prompt')
+  ask('Edit', 'e1', { file_path: 'a.ts' })
+  const old = await ep
+  const wp = promptWhere((p) => p.tool === 'Write', 'the replacing prompt')
+  fireEvent(profile, sessionId, { hook_event_name: 'PostToolUse', tool_name: 'Edit', tool_use_id: 'e1' })
+  ask('Write', 'w1', { file_path: 'b.ts' })
+  const replacing = await wp
+  const beforeGone = (await settledReceived(stub, conv)).length
+  const gone = await call(client, 'conversation.answer', { sessionId, promptId: old?.d.prompt.id, decision: 'allow' })
+  check(
+    results,
+    'an answer to a prompt that was replaced is refused as gone, and nothing is written',
+    gone.e?.code === 'PROMPT_GONE' && replacing?.d.prompt.id !== old?.d.prompt.id && (await settledReceived(stub, conv)).length === beforeGone,
+    JSON.stringify(gone.e),
+  )
+
+  // A key typed into the session makes the open prompt unanswerable, and an answer is refused.
+  const typedFrom = client.events.length
+  await call(client, 'terminal.input', { sessionId, data: 'x' })
+  const unanswerable = await client.waitEvent('conversation.wait', { from: typedFrom, match: (d) => d.prompt?.answerable === false, timeoutMs: 10_000, label: 'unanswerable after a key' })
+  const afterKey = await call(client, 'conversation.answer', { sessionId, promptId: replacing?.d.prompt.id, decision: 'allow' })
+  check(
+    results,
+    'a prompt typed into is no longer answerable, and an answer to it is refused as gone',
+    Boolean(unanswerable) && afterKey.e?.code === 'PROMPT_GONE',
+    JSON.stringify(afterKey.e),
+  )
+  fireEvent(profile, sessionId, { hook_event_name: 'Stop' })
+
+  // Two open requests: stated with the count, not answerable, refused.
+  const two = promptWhere((p) => p.open === 2, 'two open')
+  ask('Read', 'r1', { file_path: '/h/a' })
+  ask('Read', 'r2', { file_path: '/h/b' })
+  const both = await two
+  const bothAnswer = await call(client, 'conversation.answer', { sessionId, promptId: both?.d.prompt.id, decision: 'deny' })
+  check(
+    results,
+    'two open requests are stated with the first and the count, not answerable, and an answer is refused',
+    both?.d.prompt.arg === '/h/a' && both.d.prompt.answerable === false && bothAnswer.e?.code === 'PROMPT_GONE',
+    JSON.stringify({ prompt: both?.d.prompt, e: bothAnswer.e }),
+  )
+  fireEvent(profile, sessionId, { hook_event_name: 'Stop' })
+
+  // A multi-key answer cut off by another request is partial.
+  const pp = promptWhere((p) => p.kind === 'question' && p.answerable, 'the second question')
+  ask('AskUserQuestion', 'q2', { questions })
+  const second = await pp
+  const beforePartial = (await settledReceived(stub, conv)).length
+  const answeredFrom = client.events.length
+  const partial = call(client, 'conversation.answer', { sessionId, promptId: second?.d.prompt.id, decision: 'answer', selections: [[0], [1]] })
+  // The first key marks the request answered, and the follower says so at once.
+  await client.waitEvent('conversation.wait', { from: answeredFrom, match: (d) => d.prompt?.id === second?.d.prompt.id && d.prompt.answerable === false, timeoutMs: 10_000, label: 'the first key written' })
+  ask('Bash', 'b9', { command: 'next' })
+  const cut = await partial
+  const partialKeys = (await settledReceived(stub, conv)).slice(beforePartial)
+  check(results, 'an answer interrupted by another request is partial', cut.r?.outcome === 'partial' && partialKeys.length < 4, `${JSON.stringify(cut.r ?? cut.e)} keys=${JSON.stringify(partialKeys)}`)
+  fireEvent(profile, sessionId, { hook_event_name: 'Stop' })
+
+  // The plan approval: its text and approvals, no allow; approving asks before edits and is confirmed.
+  const planp = promptWhere((p) => p.kind === 'plan', 'the plan prompt')
+  ask('ExitPlanMode', 'pl1', { plan: 'PLAN-TEXT' })
+  const plan = await planp
+  const allowPlan = await call(client, 'conversation.answer', { sessionId, promptId: plan?.d.prompt.id, decision: 'allow' })
+  const beforePlan = (await settledReceived(stub, conv)).length
+  const approvedFrom = client.events.length
+  const approving = call(client, 'conversation.answer', { sessionId, promptId: plan?.d.prompt.id, decision: 'approve' })
+  await client.waitEvent('conversation.wait', { from: approvedFrom, match: (d) => d.prompt?.answerable === false, timeoutMs: 10_000, label: 'the approval key written' })
+  fireEvent(profile, sessionId, { hook_event_name: 'PostToolUse', tool_name: 'ExitPlanMode', tool_use_id: 'pl1', permission_mode: 'default' })
+  const approved = await approving
+  await settledReceived(stub, conv, beforePlan + 1)
+  check(
+    results,
+    'a plan approval is stated with the plan and its approvals, cannot be allowed, and approving sends its key and is confirmed',
+    plan?.d.prompt.plan === 'PLAN-TEXT' && plan.d.prompt.choices.join() === 'approve,approve-auto,deny' && allowPlan.e?.code === 'NOT_ANSWERABLE' &&
+      received(stub, conv).slice(beforePlan) === '2' && approved.r?.outcome === 'confirmed',
+    JSON.stringify({ allow: allowPlan.e, approved: approved.r ?? approved.e, keys: received(stub, conv).slice(beforePlan) }),
+  )
+  await app.close()
+}
+
 const SECTIONS = [
   { name: 'runListener', run: runListener },
   { name: 'runPairing', run: runPairing },
@@ -1256,6 +1610,9 @@ const SECTIONS = [
   { name: 'runOpenSpec', run: runOpenSpec },
   { name: 'runAttention', run: runAttention },
   { name: 'runHibernation', run: runHibernation },
+  { name: 'runRename', run: runRename },
+  { name: 'runAttachments', run: runAttachments },
+  { name: 'runAnswer', run: runAnswer },
 ].map((section) => ({
   ...section,
   // A section that hangs leaves its app behind; the profile prefix finds it (character class: not this command).

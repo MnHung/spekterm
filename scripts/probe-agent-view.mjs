@@ -1450,6 +1450,79 @@ async function runMidTurnDelivery(_mode, _config, context) {
 }
 
 /**
+ * A background subagent's permission prompt keeps the agent waiting on a choice (`agent-event-bridge`). Measured
+ * (CLI 2.1.300): the agent reports its own turn end while the subagent's prompt is open, and a background-task
+ * notice arrives as a prompt submission followed by another turn end. The state used to read ready there, and a
+ * reply's text and Enter approve an open prompt.
+ */
+async function runSubagentPrompt(_mode, _config, context) {
+  if (context.app) await context.app.close()
+  const repo = mkTemp('spekterm-agentview-repoS-')
+  const configDir = mkTemp('spekterm-agentview-configS-')
+  const stub = makeStubAgent(mkTemp, configDir)
+  const profile = seedProfile(repo)
+  const app = await launch({ profile, configDir, stub, port: PORT })
+  context.app = app
+
+  await openConversation(app, repo.split('/').pop())
+  const conversation = stub.peerNames().at(-1)?.conversation
+  await typeDraft(app, 'SHOULD-NOT-SEND')
+  await pollFor({ read: () => app.client.evaluate(VIEW_STATE), settled: (state) => state.sendDisabled === false, timeoutMs: 25_000, label: 'ready to send' })
+  const running = `{"hook_event_name":"Stop","background_tasks":[{"id":"sub1","type":"subagent","status":"running"}]}`
+  stub.command(conversation, [
+    `firej PreToolUse '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_use_id":"t-sub","agent_id":"sub1","tool_input":{"command":"echo one"}}'`,
+    `firej PermissionRequest '{"hook_event_name":"PermissionRequest","tool_name":"Bash","agent_id":"sub1","tool_input":{"command":"echo one"}}'`,
+    `firej Stop '${running}'`,
+    `firej UserPromptSubmit '{"hook_event_name":"UserPromptSubmit","prompt":"<task-notification><task-id>other</task-id></task-notification>"}'`,
+    `firej Stop '${running}'`,
+  ].join('\n'))
+  const asking = await pollFor({
+    read: () => app.client.evaluate(VIEW_STATE),
+    settled: (state) => state.sendDisabled === true && state.text.includes('terminal view'),
+    timeoutMs: 15_000,
+    label: 'the subagent prompt refuses sending',
+  })
+  // Several drains after the agent's turn end and the notice: still refused.
+  await new Promise((resolve) => setTimeout(resolve, 2_000))
+  const after = await app.client.evaluate(VIEW_STATE)
+  check(
+    results,
+    'a background subagent\'s open prompt keeps the conversation view\'s input refused across the agent\'s turn end and a notice',
+    asking.sendDisabled === true && after.sendDisabled === true && !stub.input().includes('SHOULD-NOT-SEND'),
+    `disabled=${after.sendDisabled} text=${JSON.stringify(after.text.slice(-120))}`,
+  )
+}
+
+/** A long reply the agent records as one paste is shown as its text and clears "not confirmed" (`agent-transcript-stream`). */
+async function runPasteRecorded(_mode, _config, context) {
+  if (context.app) await context.app.close()
+  const repo = mkTemp('spekterm-agentview-repoP-')
+  const configDir = mkTemp('spekterm-agentview-configP-')
+  const stub = makeStubAgent(mkTemp, configDir, { pasteWrap: true })
+  const profile = seedProfile(repo)
+  const app = await launch({ profile, configDir, stub, port: PORT })
+  context.app = app
+
+  await openConversation(app, repo.split('/').pop())
+  const text = `PASTE-PROBE-${'p'.repeat(300)}`
+  await sendFromConversation(app, text)
+  const marker = copy('conversation.unconfirmed').toUpperCase()
+  const confirmed = await pollFor({
+    read: () => app.client.evaluate(`({ view: ${VIEW_STATE}, entries: ${USER_ENTRIES} })`),
+    settled: (state) => !state.view.text.toUpperCase().includes(marker) && state.entries.some((e) => e.text.includes('PASTE-PROBE-')),
+    timeoutMs: 25_000,
+    label: 'the pasted reply confirmed',
+  })
+  const entry = confirmed.entries.find((e) => e.text.includes('PASTE-PROBE-'))
+  check(
+    results,
+    'a long reply recorded as one paste is shown as its text, without markers, and clears "not confirmed"',
+    !confirmed.view.text.toUpperCase().includes(marker) && Boolean(entry?.text.includes(text)) && !confirmed.view.text.includes('pasted_content'),
+    `entry=${JSON.stringify(entry?.text.slice(0, 40))} markers=${confirmed.view.text.includes('pasted_content')}`,
+  )
+}
+
+/**
  * Automatic hibernation of agent sessions (session-hibernation design D4), threshold seeded as
  * seconds. Which sessions an agent's state keeps running depends on that state being current for
  * sessions nobody watches — the always-on subscription. Two sessions carry it: one never watched (it
@@ -1704,6 +1777,8 @@ const SECTIONS = [
   { name: 'runBusyIndicator', run: runBusyIndicator },
   { name: 'runTextOnlyBusy', run: runTextOnlyBusy },
   { name: 'runMidTurnDelivery', run: runMidTurnDelivery },
+  { name: 'runSubagentPrompt', run: runSubagentPrompt },
+  { name: 'runPasteRecorded', run: runPasteRecorded },
   { name: 'runAutoHibernateAgent', run: runAutoHibernateAgent },
   { name: 'runCloseConfirmAgent', run: runCloseConfirmAgent },
 ]

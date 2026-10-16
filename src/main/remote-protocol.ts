@@ -1,4 +1,6 @@
 import type { WaitState } from './agent-events'
+import { type AnswerDecision, type AnswerOutcome, DECISIONS, type PromptView } from './remote-answer'
+import { LIMITS, type PutParams, type PutResult } from './remote-attachments'
 import type { AttentionEvent, AttentionPosition } from './remote-attention'
 import { type ReplyOutcome, resumeFrom } from './remote-conversation'
 import { RemoteError, type RequestFrame, errorFrame, eventFrame, resultFrame } from './remote-frames'
@@ -46,11 +48,13 @@ export interface SessionList {
 export type HostAction =
   | { kind: 'create'; folderId: string | null; target: 'claude' | 'shell' }
   | { kind: 'wake'; sessionId: string }
+  | { kind: 'rename'; sessionId: string; name: string }
   | { kind: 'accept'; adapter: string; id: string; folderId: string }
 
 export interface ConversationSink {
   update(update: FollowUpdate): void
-  wait(state: WaitState, pending: { tool: string; arg: string | null } | null): void
+  /** `prompt`: the open prompt and whether this device may answer it (`remote-answer.ts`), or `null`. */
+  wait(state: WaitState, pending: { tool: string; arg: string | null } | null, prompt: PromptView | null): void
 }
 
 /** Everything the protocol needs from the application. The real one is `remote-host.ts`. */
@@ -61,7 +65,22 @@ export interface RemoteHost {
   handoffBrief(sessionId: string): unknown | null
   /** `null` = no such session; `'none'` = a session with no conversation (a shell). */
   followConversation(sessionId: string, sink: ConversationSink): { stop(): void } | null | 'none'
-  reply(watching: string | null, sessionId: string, text: string): Promise<ReplyOutcome>
+  reply(
+    watching: string | null,
+    sessionId: string,
+    text: string,
+    attachments: readonly string[],
+  ): Promise<{ outcome: ReplyOutcome; text: string }>
+  /** One chunk of an attachment upload (`remote-attachments.ts`). */
+  putAttachment(sessionId: string, p: PutParams): PutResult
+  /** Answers the watched session's open prompt (`remote-answer.ts`). */
+  answer(
+    watching: string | null,
+    sessionId: string,
+    promptId: string,
+    decision: AnswerDecision,
+    selections: unknown,
+  ): Promise<AnswerOutcome>
   watchTerminal(
     sessionId: string,
     from: TerminalPosition | undefined,
@@ -104,6 +123,12 @@ function optionalStr(p: Record<string, unknown>, key: string): string | undefine
   if (value === undefined || value === null) return undefined
   if (typeof value !== 'string') throw new RemoteError('BAD_PARAMS', `\`${key}\` must be a string`)
   return value
+}
+
+/** A session name from a device: control characters (newlines included) removed, clipped to 200 characters. */
+export function cleanName(name: string): string {
+  // eslint-disable-next-line no-control-regex
+  return [...name.replace(/[\x00-\x1f\x7f]/g, '')].slice(0, 200).join('')
 }
 
 function send(state: ConnectionState, k: string, d: unknown): void {
@@ -150,6 +175,12 @@ export const OPERATIONS: Record<string, Operation> = {
 
   'sessions.wake': (state, p) => state.host.perform({ kind: 'wake', sessionId: str(p, 'sessionId') }),
 
+  'sessions.rename': (state, p) => {
+    const name = p.name
+    if (typeof name !== 'string') throw new RemoteError('BAD_PARAMS', '`name` must be a string (empty hands naming back)')
+    return state.host.perform({ kind: 'rename', sessionId: str(p, 'sessionId'), name: cleanName(name) })
+  },
+
   'conversation.watch': (state, p) => {
     const sessionId = str(p, 'sessionId')
     const afterUuid = optionalStr(p, 'afterUuid')
@@ -161,7 +192,7 @@ export const OPERATIONS: Record<string, Operation> = {
         first = false
         send(state, 'conversation.update', delivered)
       },
-      wait: (wait, pending) => send(state, 'conversation.wait', { sessionId, state: wait, pending }),
+      wait: (wait, pending, prompt) => send(state, 'conversation.wait', { sessionId, state: wait, pending, prompt }),
     })
     if (follow === null) throw new RemoteError('NOT_FOUND', `no session ${sessionId}`)
     if (follow === 'none') throw new RemoteError('NO_CONVERSATION', 'this session has no conversation (a shell)')
@@ -176,7 +207,37 @@ export const OPERATIONS: Record<string, Operation> = {
   },
 
   'conversation.send': async (state, p) => {
-    const outcome = await state.host.reply(state.conversation?.sessionId ?? null, str(p, 'sessionId'), str(p, 'text'))
+    const raw = p.attachments ?? []
+    if (!Array.isArray(raw) || !raw.every((id) => typeof id === 'string' && id !== '')) {
+      throw new RemoteError('BAD_PARAMS', '`attachments` must be a list of attachment ids')
+    }
+    if (raw.length > LIMITS.perReply) throw new RemoteError('BAD_PARAMS', `at most ${LIMITS.perReply} attachments per reply`)
+    // Text may be empty when attachments carry the reply.
+    const text = optionalStr(p, 'text') ?? ''
+    return state.host.reply(state.conversation?.sessionId ?? null, str(p, 'sessionId'), text, raw as string[])
+  },
+
+  'attachments.put': (state, p) =>
+    state.host.putAttachment(str(p, 'sessionId'), {
+      name: p.name,
+      size: p.size,
+      offset: p.offset,
+      data: p.data,
+      attachmentId: p.attachmentId,
+    }),
+
+  'conversation.answer': async (state, p) => {
+    const decision = p.decision
+    if (typeof decision !== 'string' || !(DECISIONS as readonly string[]).includes(decision)) {
+      throw new RemoteError('BAD_PARAMS', `\`decision\` must be one of ${DECISIONS.join(', ')}`)
+    }
+    const outcome = await state.host.answer(
+      state.conversation?.sessionId ?? null,
+      str(p, 'sessionId'),
+      str(p, 'promptId'),
+      decision as AnswerDecision,
+      p.selections,
+    )
     return { outcome }
   },
 

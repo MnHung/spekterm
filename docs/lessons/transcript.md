@@ -496,3 +496,81 @@ Three consequences, each in `agent-events.ts`:
 - **The injected hook command must print nothing.** The agent adds a `UserPromptSubmit` hook's stdout to the
   prompt, so an `echo` in `EVENT_COMMAND` would ride along with every prompt.
   `agent-events.test.ts` pins an empty stdout.
+
+## Prompts, answers and attachments (`remote-prompts-attachments-rename`, CLI 2.1.300, 2026-10-15)
+
+Measured with a real `claude` driven through a pty, every hook dumping its full payload. Where the
+maintainer's own settings would answer the question (they allow reads under the home directory and `/tmp`),
+the agent ran with `--setting-sources project`. **Re-measure after a CLI upgrade**: `remote-answer.ts` and
+the open-request rules in `agent-events.ts` rest on every row below.
+
+### A permission request does not say which prompt it is, nor what the terminal offers
+
+`PermissionRequest` carries `tool_name`, `tool_input`, `permission_suggestions`, `agent_id` (for a subagent)
+and `prompt_id` (the turn's, shared by every prompt of the turn), but **no `tool_use_id`** and **not the options
+the terminal shows**. The desktop gives each request its own id and matches it to the `PreToolUse` with the same
+agent, tool and input: parallel calls' starts can arrive 1.5 ms apart, before either request.
+
+| Prompt | Options shown |
+|---|---|
+| Bash | `1. Yes` / `2. Yes, and always allow access to <dir>…` / `3. Yes, and switch to auto mode` / `4. No` (the third is in no payload) |
+| Write, Edit | `1. Yes` / `2. Yes, and switch to accept edits…` / `3. No` |
+| WebFetch | `1. Yes` / `2. Yes, and don't ask again for <host>` / `3. No, and tell Claude…` |
+| Read outside the working directories | `1. Yes` / `2. Yes, allow reading from <dir> during this session` / `3. No` |
+| plan approval (`ExitPlanMode` with `tool_input.plan`) | `1. Yes, and use auto mode` / `2. Yes, manually approve edits` / `3. Tell Claude what to change` |
+| `ExitPlanMode` with an empty `tool_input` | "Exit plan mode?" `1. Yes, and switch to default (ask each time)` / `2. No` |
+
+- A digit picks its option at once, with no Enter. Esc dismisses any prompt and reports **nothing**: the agent's
+  own turn ends ("Interrupted"); a question is "declined"; a plan approval leaves the agent in plan mode.
+- After a plan answer, every event carries the mode entered (`permission_mode: "auto"` or `"default"`). That
+  is how an answer is confirmed.
+- **The agent waits for its `PreToolUse` hooks before it shows a prompt** (a hook sleeping 4 s delayed the
+  prompt by 4 s), and for `PostToolUse` before the next tool starts. **It does not wait for a
+  `PermissionRequest` hook**: the prompt is on screen while that hook runs.
+
+### Several prompts at once, and what a background agent does meanwhile
+
+- Parallel calls of a tool that runs in parallel (Read) report every request before any is answered. The
+  terminal shows them one after another, in arrival order ("1 of 2"). Two parallel Bash calls are requested one
+  at a time, and Esc interrupts both.
+- **While a background subagent's prompt is open, the agent reports its own `Stop`**, and when another
+  background task finishes, its notice arrives as a `UserPromptSubmit` (prompt `<task-notification>…`)
+  followed by another `Stop`. Nothing in the payload tells such a submission from a typed one. A wait state that
+  clears on those events reads ready over an open prompt, and a reply's text and Enter approve it. That shipped
+  until this change.
+- **The agent's own prompt holds those back**: a background subagent that finished while the agent's own
+  prompt was open produced no event for 20 s, and its notice and the `Stop` came right after Esc.
+- A subagent whose prompt is dismissed ends: `SubagentStop` with its `agent_id`. `SubagentStop` also arrives for
+  helper agents (`agent_type: ""`) that raised nothing, after the turn ended.
+- `Stop` lists the background tasks (`background_tasks: [{ id, type, status }]`, `id` = the subagent's
+  `agent_id`, `status: "running"` while its prompt is open).
+- `SessionStart` carries `source` (`startup`, `resume`, `clear`, `compact`).
+
+### Answering a question
+
+`tool_input.questions[]` is `{ question, header, options: [{ label, description }], multiSelect }`;
+`PostToolUse` adds `tool_input.answers: { <question>: "<label>[, <label>…]" }`.
+
+- Per question: options numbered from 1, then "Type something", then "Chat about this". A single-choice digit
+  picks and moves on; a several-choice digit toggles; Tab or → leaves a several-choice question. After the last
+  one a review opens (`1. Submit answers`), except for a single single-choice question, which submits on its
+  digit.
+- **Enter toggles the option under the cursor.** So does nothing else in an answer.
+- **Every key in one write answered wrongly.** 100 ms and 250 ms gaps answered right.
+- Keys written where no prompt is: `1` sits in the input box, → and Tab show nothing, Esc does nothing in an
+  empty box ("Esc again to clear" with text in it). Nothing is submitted.
+
+### Attachments
+
+- Reading a file outside the working directories raises a permission prompt. `permissions.allow:
+  ["Read(/<dir>/**)"]` (an absolute path needs the `//`) or `permissions.additionalDirectories` in `--settings`
+  removes it. The settings merge with the user's own (the default mode stayed `auto`). The read rule is the one
+  used: an additional directory is also writable in accept-edits mode.
+- An 8.7 MB PNG named in a prompt was read with the Read tool and described.
+- **A reply taken as a paste is recorded inside `<pasted_content id="…">` markers**:
+  `\n\n<pasted_content id="55b5">\n<the text>\n</pasted_content id="55b5">\n`. The projection unwraps that
+  whole-message shape. A paste among typed text is not measured, and is left as recorded.
+- **In a reply taken as a paste, an image path on a line of its own becomes an inline image**
+  (`[Image #1]`). The record is then a list of a text block (the path removed) and an image block, which the
+  conversation projection does not show. Inside a sentence, in backticks, the path stays text and the agent
+  uses Read, which is why the attachment sentence is written that way.

@@ -2,7 +2,8 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { WaitState } from './agent-events'
 import { SUBMIT_KEY_DELAY_MS } from './intake-prefill'
-import { cleanReply, type ReplyDeps, resumeFrom, sendReply } from './remote-conversation'
+import { cleanReply, type ReplyDeps, resumeFrom, runQueued, sendReply } from './remote-conversation'
+import { RemoteError } from './remote-frames'
 import type { FollowUpdate } from './transcript-follow-service'
 import type { ViewEvent } from './transcript-follow'
 
@@ -44,7 +45,7 @@ test('the text and the submit key are two writes at least the submit delay apart
   const r = rig('ready')
   const outcome = sendReply(r.deps, 's', 's', 'a long dictated reply')
   await r.advance(SUBMIT_KEY_DELAY_MS)
-  assert.equal(await outcome, 'submitted')
+  assert.equal((await outcome).outcome, 'submitted')
   assert.deepEqual(r.writes.map((w) => w.data), ['a long dictated reply', '\r'])
   assert.ok(r.writes[1].at - r.writes[0].at >= SUBMIT_KEY_DELAY_MS)
 })
@@ -55,7 +56,7 @@ test('a choice that appears during the delay keeps the submit key back', async (
   await r.advance(100)
   r.setState('awaiting-choice')
   await r.advance(SUBMIT_KEY_DELAY_MS)
-  assert.equal(await outcome, 'filled-not-submitted')
+  assert.equal((await outcome).outcome, 'filled-not-submitted')
   assert.deepEqual(r.writes.map((w) => w.data), ['go on'])
 })
 
@@ -84,7 +85,7 @@ test('two concurrent replies are written text, Enter, text, Enter', async () => 
   const second = sendReply(r.deps, 's', 's', 'two')
   await r.advance(SUBMIT_KEY_DELAY_MS)
   await r.advance(SUBMIT_KEY_DELAY_MS)
-  assert.deepEqual(await Promise.all([first, second]), ['submitted', 'submitted'])
+  assert.deepEqual((await Promise.all([first, second])).map((r) => r.outcome), ['submitted', 'submitted'])
   assert.deepEqual(r.writes.map((w) => w.data), ['one', '\r', 'two', '\r'])
 })
 
@@ -109,4 +110,64 @@ test('an empty, missing or unknown uuid replaces', () => {
     assert.equal(resumed.reset, true)
     assert.equal(resumed.events.length, 2)
   }
+})
+
+test('an answer queued behind a reply waits for the reply\'s submit key', async () => {
+  const r = rig('ready')
+  const reply = sendReply(r.deps, 's', 's', 'one')
+  const answer = runQueued('s', async () => {
+    r.deps.write('s', '1')
+    return 'sent'
+  })
+  await r.advance(SUBMIT_KEY_DELAY_MS)
+  assert.deepEqual(await Promise.all([reply.then((r) => r.outcome), answer]), ['submitted', 'sent'])
+  assert.deepEqual(r.writes.map((w) => w.data), ['one', '\r', '1'])
+})
+
+function attachments(paths: string[]) {
+  const log: string[] = []
+  return {
+    log,
+    take: () => ({ paths, commit: () => void log.push('commit'), release: () => void log.push('release') }),
+  }
+}
+
+test('a reply with attachments names their paths inside a sentence, and returns the exact text', async () => {
+  const r = rig('ready')
+  const a = attachments(['/data/remote-attachments/s/sent/ab-photo.jpg'])
+  const reply = sendReply(r.deps, 's', 's', 'what is this?', a.take)
+  await r.advance(SUBMIT_KEY_DELAY_MS)
+  const result = await reply
+  assert.equal(result.outcome, 'submitted')
+  assert.equal(
+    result.text,
+    'what is this?\n\n(The user attached 1 file from their phone; read it with the Read tool: `/data/remote-attachments/s/sent/ab-photo.jpg`)',
+  )
+  assert.equal(r.writes[0].data, result.text)
+  assert.ok(!result.text.split('\n').some((line) => line.startsWith('/')), 'no path on a line of its own')
+  assert.deepEqual(a.log, ['commit'])
+})
+
+test('a reply may be attachments only; with neither text nor attachments it is refused', async () => {
+  const r = rig('ready')
+  const a = attachments(['/x/a.png', '/x/b.pdf'])
+  const reply = sendReply(r.deps, 's', 's', '  ', a.take)
+  await r.advance(SUBMIT_KEY_DELAY_MS)
+  assert.equal((await reply).text, '(The user attached 2 files from their phone; read them with the Read tool: `/x/a.png`, `/x/b.pdf`)')
+  await assert.rejects(sendReply(r.deps, 's', 's', '  '), { code: 'BAD_PARAMS' })
+})
+
+test('a reply refused after its attachments were taken releases them', async () => {
+  const r = rig('ready')
+  const a = attachments(['/x/a.png'])
+  const reply = sendReply({ ...r.deps, write: () => false }, 's', 's', 'hi', a.take)
+  await assert.rejects(reply, { code: 'NOT_FOUND' })
+  assert.deepEqual(a.log, ['release'])
+  await assert.rejects(
+    sendReply(r.deps, 's', 's', 'hi', () => {
+      throw new RemoteError('NOT_FOUND', 'no unsent attachment x')
+    }),
+    { code: 'NOT_FOUND' },
+  )
+  assert.equal(r.writes.length, 0)
 })

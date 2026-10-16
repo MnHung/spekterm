@@ -55,6 +55,9 @@ function narrowRemoteAction(raw: unknown): RemoteAction | null {
     return { kind: 'create', folderId: o.folderId as string | null, target: o.target }
   }
   if (o.kind === 'wake' && typeof o.sessionId === 'string') return { kind: 'wake', sessionId: o.sessionId }
+  if (o.kind === 'rename' && typeof o.sessionId === 'string' && typeof o.name === 'string') {
+    return { kind: 'rename', sessionId: o.sessionId, name: o.name }
+  }
   if (o.kind === 'accept' && typeof o.adapter === 'string' && typeof o.id === 'string' && typeof o.folderId === 'string') {
     return { kind: 'accept', adapter: o.adapter, id: o.id, folderId: o.folderId }
   }

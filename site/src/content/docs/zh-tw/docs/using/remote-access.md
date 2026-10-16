@@ -1,13 +1,14 @@
 ---
 title: 遠端存取
-description: 從手機連到 spekterm —— 看你的 session、讀取並回覆 agent、開新 session，agent 在等你時收到通知。直接連線，不經中繼。
+description: 從手機連到 spekterm —— 看你的 session、讀取並回覆 agent、附上照片與檔案、回答它的提示、開新 session 或改名，agent 在等你時收到通知。直接連線，不經中繼。
 sidebar:
   order: 7
 ---
 
 遠端存取讓你手機上的 spekterm app **直接**連到電腦上的 spekterm：不需要帳號、沒有中繼站、沒有推播服務。從手機上
-你可以看到每一個 folder 與 session、讀取 agent 的對話並回覆、在終端裡回答權限提示、開新 session 或喚醒休眠的
-session、處理收件匣、追蹤你的交接，以及讀取你的 OpenSpec change。agent 在等你時，手機會收到通知。
+你可以看到每一個 folder 與 session、讀取 agent 的對話並回覆、在回覆裡附上照片與檔案、回答 agent 的權限提示與
+提問、開新 session、喚醒休眠的 session 或替 session 改名、處理收件匣、追蹤你的交接，以及讀取你的 OpenSpec
+change。agent 在等你時，手機會收到通知。
 
 在你打開之前，它是**關閉**的。
 
@@ -17,7 +18,29 @@ session、處理收件匣、追蹤你的交接，以及讀取你的 OpenSpec cha
 
 已配對的手機能做你在 session 裡能做的事：讀取你的 agent 與 shell，並**對它們打字**。agent 有 shell，所以請把
 已配對的手機當成你的鍵盤看待。它不能在 session 之外編輯檔案、不能改設定、看不到你的 Slack 連線或任何憑證，也
-不能關閉或讓 session 休眠。
+不能關閉或讓 session 休眠。它唯一能放到你電腦上的檔案是附件，而且只會放進 spekterm 自己的資料資料夾，檔名由
+spekterm 決定。
+
+### 從手機回答提示
+
+agent 請求權限或向你提問時，手機會顯示出來，也能回答：
+
+- **權限提示**：允許一次，或拒絕。「允許」只開放給執行指令、編輯、寫入與讀取檔案、抓取網頁 —— 這些提示的第一個
+  選項是「只允許這一次」。「一律允許」類的選項不開放，請在終端裡選。
+- **agent 帶選項的提問**：選你要的選項。
+- **agent 想執行的計畫**：先讀計畫，再核准（每次修改前詢問，或用 auto mode），或拒絕讓它繼續規劃。
+
+spekterm 會替你按下你會按的鍵，一次一個，絕不把文字或 Enter 送進提示。每按一個鍵之前，它都會確認還是同一個提示、
+而且還開著。同時有兩個以上的提示在等，或你已經在電腦上對那個 session 打過字時，手機就不能回答，請回到電腦上答。
+
+### 附加檔案
+
+手機上的回覆可以附上照片、截圖、PDF 與文字檔（每則最多 10 個、每個 10 MB）。spekterm 會把它們放在自己的資料
+資料夾，並告訴 agent 檔案在哪裡；agent 讀取時不會跳出許可提示。關閉 session 時會刪除它們，最晚 30 天後也會刪除。
+
+### 替 session 改名
+
+從手機改名的方式和電腦上一樣：名字留空，session 就回到 agent 自己的標題。
 
 從手機開新 session 或喚醒 session，**絕不會把你的桌面搶走**：session 會出現在它的 folder 裡，但你正在看的畫面
 與正在打字的位置都不變。

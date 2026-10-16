@@ -70,7 +70,9 @@ Everything spekterm keeps is on your machine, under `~/.config/Spekterm` on Linu
   not encrypted; anyone who can read your files as you can read it;
 - remote access: its settings, its certificate, and your paired devices (`remote.json`, readable only by your
   user account; it stores a hash of each device's credential, not the credential), and the certificate's
-  private key in the same file as the Slack credentials.
+  private key in the same file as the Slack credentials;
+- files your phone attached to a message (`remote-attachments`, one folder per session, readable only by your
+  user account): deleted when you close the session, unsent ones after a day, and any after 30 days.
 
 spekterm also **reads** Claude Code's own transcripts under `~/.claude/projects` to show the conversation
 view. It never writes there.

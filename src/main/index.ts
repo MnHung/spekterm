@@ -46,6 +46,7 @@ import { createCloseDialogStub, stubCloseRoot } from './close-dialog-stub'
 import type { FolderLookup } from './workspace-store'
 import { configureAgentEvents } from './agent-events'
 import { configureAgentInjection } from './agent-injection'
+import { configureAttachments } from './remote-attachments'
 import { configureAgentStatus } from './agent-status'
 import { contextRoot } from './intake-context'
 import { ensureDeliveryRoot } from './intake-archive'
@@ -59,7 +60,8 @@ import { refreshIntros } from './handoff-injection'
 import { refreshRelations } from './handoff-relations'
 import { HandoffService, registerHandoffService } from './handoff-service'
 import { HandoffCompletion } from './handoff-completion'
-import { observeWaits, subscribeWait } from './agent-wait'
+import { observeWaits, openRequestsOf, pokeWait, subscribeWait } from './agent-wait'
+import { onKeystroke } from './pty-input'
 import { configureTicketLineage, ticketResolutionFor } from './handoff-ticket'
 import { preferredTitle } from '../shared/lineage/label'
 import { RoutingStore, routingFile } from './intake-routing'
@@ -365,6 +367,10 @@ void app.whenReady().then(async () => {
   sessionStore.ensurePeerNames((folderId) =>
     folderId === null ? null : store.list().find((folder) => folder.id === folderId)?.name,
   )
+  // A device's attachments (`remote-attachments`): sessions the store no longer has, uploads cut off by the last
+  // quit, unsent ones older than a day and anything older than 30 days go before anything reads them.
+  const attachments = configureAttachments(app.getPath('userData'))
+  attachments.sweep(new Set(sessionStore.view().map(({ session }) => session.id)))
 
   // 使用者偏好與 workspace 同一個落點，理由也一樣（`--user-data-dir` 可隔離驗收）。
   const preferencesStore = new PreferencesStore(join(app.getPath('userData'), 'preferences.json'))
@@ -626,6 +632,7 @@ void app.whenReady().then(async () => {
       attention: remoteAttention,
       request: requestRenderer,
       setRemoteWatched,
+      attachments,
     }),
   })
   registerRemoteHandlers(remoteService)
@@ -638,6 +645,11 @@ void app.whenReady().then(async () => {
   observeWaits((sessionId, snapshot, previous) => {
     remoteAttention.onWait(sessionId, snapshot)
     if (snapshot.state !== previous) remoteService.listChanged('sessions')
+  })
+  // A key typed into a session with an open prompt makes that prompt unanswerable from a device, with no agent
+  // event to say so: tell its followers now (`remote-protocol`).
+  onKeystroke((sessionId) => {
+    if (openRequestsOf(sessionId).length > 0) pokeWait(sessionId)
   })
   intakeService.onArrival((record) => remoteAttention.onIntake(record))
   onIntakeChanged(() => remoteService.listChanged('inbox'))

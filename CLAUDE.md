@@ -111,6 +111,12 @@ OpenSpec 結構的側欄，讓使用者不必另外開 IDE 就能一邊駕駛 ag
     renderer's status lags a hibernation by a moment.
   - **A device's operations are one allow-list** (`OPERATIONS` in `src/main/remote-protocol.ts`); the protocol
     document must list exactly them (`scripts/remote-protocol-doc.test.mjs`).
+  - **A device answers a prompt with keys, never text or Enter** (`remote-answer.ts`), re-checked before every
+    key: only while exactly one permission request is open, nothing was typed since it appeared, and it was not
+    answered yet. Every open request is tracked (`agent-events.ts`): a background subagent's prompt keeps the
+    state on awaiting-choice through the agent's own `Stop`. Attachments go only into
+    `<userData>/remote-attachments` under desktop-chosen names; agents read it through an injected `Read` rule.
+    The key plans and event orders are measured (`docs/lessons/transcript.md`): re-measure on a CLI upgrade.
 
 **以 MIT 開源**（`open-source-mit`：`LICENSE`、`CONTRIBUTING.md`、產物根目錄附本身與第三方的授權文字；
 公開前已改寫全部 git 歷史）。**Linux 打包已可用**（`npm run dist:linux` → AppImage，`npm run install:desktop` 裝進應用程式

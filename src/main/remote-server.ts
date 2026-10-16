@@ -55,6 +55,11 @@ export interface RemoteServerOptions {
    * the `hello` and `pair` answers only — never before authentication.
    */
   addresses: () => string[]
+  /**
+   * The operations this desktop accepts, other than authentication (`remote-protocol`): a client shows a control
+   * only when its operation is listed. Sent in the same answers as `addresses`.
+   */
+  operations?: () => string[]
   pingIntervalMs?: number
   authTimeoutMs?: number
   failureDelayMs?: number
@@ -74,7 +79,10 @@ interface Connection {
   session: RemoteSessionHandle | null
 }
 
-/** One megabyte: an operation's parameters never come close; a larger frame closes the connection. */
+/**
+ * One megabyte; a larger frame closes the connection. An attachment chunk is sized against it
+ * (`remote-attachments.ts` `LIMITS.chunk`: 512 KiB, 699,052 characters of base64); nothing else comes close.
+ */
 const MAX_PAYLOAD = 1024 * 1024
 
 /** `::ffff:10.0.0.5` → `10.0.0.5`, so one IPv4 address is one throttle key on a dual-stack socket. */
@@ -103,6 +111,7 @@ export class RemoteServer {
       failureDelayMs: 1_000,
       maxUnauthenticated: 16,
       maxAuthenticated: 16,
+      operations: () => [],
       ...options,
     }
   }
@@ -371,7 +380,13 @@ export class RemoteServer {
     connection.deviceId = deviceId
     this.#options.store.touchDevice(deviceId)
     ws.send(
-      resultFrame(frame.id, { protocol, server: this.#options.serverInfo(), addresses: this.#options.addresses(), ...extra }),
+      resultFrame(frame.id, {
+        protocol,
+        server: this.#options.serverInfo(),
+        addresses: this.#options.addresses(),
+        operations: this.#options.operations(),
+        ...extra,
+      }),
     )
     const handle: RemoteConnection = {
       id: connection.id,

@@ -10,6 +10,7 @@ import {
   type TerminalSink,
   ptyEnv,
 } from './terminal'
+import { forgetInput, lastKeystrokeAt } from './pty-input'
 import { SecretStore } from './secret-store'
 import type { FolderLookup, WorkspaceFolder } from './workspace-store'
 
@@ -112,6 +113,20 @@ describe('TerminalService', () => {
     service.write(id, 'exit\r')
     await waitFor(() => exits.some((entry) => entry.sessionId === id), { label: 'exit 事件' })
     assert.equal(service.sessionCount, 0)
+  })
+
+  it('a write records a keystroke; an answer\'s write and a focus report do not', async () => {
+    service = new TerminalService(lookup([{ id: 'f1', path: repo, status: 'ok' }]), sink())
+    const id = (await service.create('f1', 'shell')).sessionId
+    forgetInput(id)
+    service.write(id, '\x1b[I')
+    service.write(id, '1', 'answer')
+    assert.equal(lastKeystrokeAt(id), null)
+    const before = Date.now()
+    service.write(id, 'x')
+    assert.ok((lastKeystrokeAt(id) ?? 0) >= before)
+    service.kill(id)
+    await waitFor(() => exits.some((entry) => entry.sessionId === id), { label: 'exit 事件' })
   })
 
   it('pty 結束後自集合移除（集合恆等於「還活著的 pty」）', async () => {

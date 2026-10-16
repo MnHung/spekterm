@@ -5,7 +5,7 @@ import { preferredTitle } from '../../shared/lineage/label'
 import type { LiveSession } from '../close-prompt'
 import { clearAgentEvents } from '../agent-events'
 import { clearAgentStatus } from '../agent-status'
-import { clearWait, subscribeWait, waitStateOf } from '../agent-wait'
+import { clearWait, forgetRequests, subscribeWait, waitStateOf } from '../agent-wait'
 import { HibernationTracker } from '../hibernation'
 import { tickPeriodMs } from '../hibernation-policy'
 import { forgetSubmission, hasUnconfirmedSubmission } from '../intake-prefill'
@@ -25,6 +25,7 @@ import { worktreesFor } from './openspec'
 import { pickCreateWorktree, pickWorktree } from '../worktree-pick'
 import type { FsResult } from './fs'
 import { disposeConversationFor } from './conversation'
+import { attachmentStore } from '../remote-attachments'
 import { RemoteOutput } from '../remote-output'
 
 /**
@@ -266,6 +267,9 @@ function serviceFor(
       remoteTerminalOutput.exited(sessionId)
       // The pty held any filled-in prompt; with it gone there is nothing left to confirm.
       forgetSubmission(sessionId)
+      // Nor can any permission prompt of it still be on screen (`agent-event-bridge`). Without this a reload
+      // left a request open, and a device saw it as answerable.
+      forgetRequests(sessionId)
       if (reason === 'hibernated') {
         // **Before `ptyChanged()`**: the relations refresh it triggers must see the wait state reset.
         // A hibernated session has no state to show (`lifecycleOf` maps `unknown` to idle), as a
@@ -563,6 +567,8 @@ export function registerTerminalHandlers(
       clearAgentEvents(sessionId)
       endHandoffSession(sessionId)
     }
+    // A closed session's attachments go, live or dormant (`remote-attachments`); hibernation does not come here.
+    if (typeof sessionId === 'string') attachmentStore()?.removeSession(sessionId)
     sessions.remove(sessionId)
   })
 

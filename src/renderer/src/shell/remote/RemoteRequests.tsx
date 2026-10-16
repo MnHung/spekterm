@@ -34,6 +34,17 @@ export function RemoteRequests(): null {
               else reply({ ok: false, code: 'CREATE_FAILED', message: outcome.failure.message })
               return
             }
+            if (action.kind === 'rename') {
+              // The desktop's own rename: trims, and an empty name hands naming back. It touches neither the
+              // selection nor focus, so it is quiet by construction.
+              if (!api.all().some((candidate) => candidate.id === action.sessionId)) {
+                reply({ ok: false, code: 'NOT_FOUND', message: 'no session with that id' })
+                return
+              }
+              api.rename(action.sessionId, action.name)
+              reply({ ok: true, sessionId: action.sessionId })
+              return
+            }
             if (action.kind === 'wake') {
               const session = api.all().find((candidate) => candidate.id === action.sessionId)
               if (!session || session.status === 'exited') {

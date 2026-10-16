@@ -28,6 +28,11 @@ export const ERROR_CODES = [
   'FOLDER_REQUIRED',
   'CREATE_FAILED',
   'TIMEOUT',
+  'PROMPT_GONE',
+  'NOT_ANSWERABLE',
+  'TOO_LARGE',
+  'TOO_MANY',
+  'UNSUPPORTED_TYPE',
   'INTERNAL',
 ] as const
 

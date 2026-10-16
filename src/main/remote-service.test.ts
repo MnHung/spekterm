@@ -44,7 +44,7 @@ async function rig(options: { interfaceAddresses?: () => string[]; reconcileMs?:
     ...options,
   })
   const epoch = () => {
-    attention.onWait('s', { state: 'ready', turnEnded: true, choiceRaised: null })
+    attention.onWait('s', { state: 'ready', turnEnded: true, choicesRaised: [] })
     return attention.watch(undefined, () => undefined)?.events.at(-1)?.pos.epoch ?? null
   }
   return {

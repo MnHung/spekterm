@@ -1,4 +1,5 @@
 import type { WaitState } from './agent-events'
+import { attachmentSentence } from './agent-protocol-copy'
 import { RemoteError } from './remote-frames'
 import type { FollowUpdate } from './transcript-follow-service'
 
@@ -28,6 +29,13 @@ import type { FollowUpdate } from './transcript-follow-service'
 
 export type ReplyOutcome = 'submitted' | 'filled-not-submitted'
 
+/** A reply's attachments, reserved when the reply was accepted (`remote-attachments.ts`). */
+export interface ReplyAttachments {
+  readonly paths: readonly string[]
+  commit(): void
+  release(): void
+}
+
 /** The resume filter for a follow's first update. */
 export function resumeFrom(update: FollowUpdate, afterUuid: unknown): FollowUpdate {
   if (typeof afterUuid !== 'string' || afterUuid === '' || !update.reset) return update
@@ -55,46 +63,70 @@ export interface ReplyDeps {
 
 const SENDABLE: readonly WaitState[] = ['ready', 'busy']
 
-/** Per-session reply queues, shared by every connection. */
+/** Per-session queues, shared by every connection: replies and prompt answers to one session never interleave. */
 const queues = new Map<string, Promise<unknown>>()
 
-/**
- * Sends a reply to a watched session. `watching` is the session this connection watches. Throws a
- * `RemoteError` when the gate refuses; resolves with whether the submit key was written.
- */
-export function sendReply(
-  deps: ReplyDeps,
-  watching: string | null,
-  sessionId: string,
-  text: string,
-): Promise<ReplyOutcome> {
-  if (watching !== sessionId) {
-    return Promise.reject(new RemoteError('NOT_WATCHING', 'reply only to the conversation this connection watches'))
-  }
-  const cleaned = cleanReply(text)
-  if (cleaned.trim() === '') return Promise.reject(new RemoteError('BAD_PARAMS', 'the reply is empty'))
-  const state = deps.waitStateOf(sessionId)
-  if (!SENDABLE.includes(state)) {
-    return Promise.reject(new RemoteError('WAIT_STATE', `the agent cannot take a reply now (${state})`, { state }))
-  }
-
+/** Runs `job` after everything queued for this session before it. */
+export function runQueued<T>(sessionId: string, job: () => Promise<T>): Promise<T> {
   const previous = queues.get(sessionId) ?? Promise.resolve()
-  const run = previous.then(async (): Promise<ReplyOutcome> => {
-    // The state may have moved while an earlier reply was being written.
-    const now = deps.waitStateOf(sessionId)
-    if (!SENDABLE.includes(now)) {
-      throw new RemoteError('WAIT_STATE', `the agent cannot take a reply now (${now})`, { state: now })
-    }
-    if (!deps.write(sessionId, cleaned)) throw new RemoteError('NOT_FOUND', 'the session has no running process')
-    await deps.delay(deps.submitDelayMs)
-    if (!SENDABLE.includes(deps.waitStateOf(sessionId))) return 'filled-not-submitted'
-    deps.write(sessionId, '\r')
-    return 'submitted'
-  })
+  const run = previous.then(job)
   const settled = run.catch(() => undefined)
   queues.set(sessionId, settled)
   void settled.then(() => {
     if (queues.get(sessionId) === settled) queues.delete(sessionId)
   })
   return run
+}
+
+/**
+ * Sends a reply to a watched session. `watching` is the session this connection watches. Throws a
+ * `RemoteError` when the gate refuses; resolves with whether the submit key was written.
+ */
+/**
+ * `attachments` is taken by the caller when the reply is accepted (so a second reply naming the same ones fails
+ * at once), committed right after the text is written, and released when the reply fails before that. A
+ * `filled-not-submitted` reply counts as sent: its text and the paths are in the agent's input box.
+ */
+export function sendReply(
+  deps: ReplyDeps,
+  watching: string | null,
+  sessionId: string,
+  text: string,
+  takeAttachments?: () => ReplyAttachments,
+): Promise<{ outcome: ReplyOutcome; text: string }> {
+  if (watching !== sessionId) {
+    return Promise.reject(new RemoteError('NOT_WATCHING', 'reply only to the conversation this connection watches'))
+  }
+  const cleaned = cleanReply(text)
+  if (cleaned.trim() === '' && !takeAttachments) return Promise.reject(new RemoteError('BAD_PARAMS', 'the reply is empty'))
+  const state = deps.waitStateOf(sessionId)
+  if (!SENDABLE.includes(state)) {
+    return Promise.reject(new RemoteError('WAIT_STATE', `the agent cannot take a reply now (${state}); answer a prompt with conversation.answer`, { state }))
+  }
+  let attachments: ReplyAttachments | undefined
+  try {
+    attachments = takeAttachments?.()
+  } catch (error) {
+    return Promise.reject(error)
+  }
+  const sentence = attachments ? attachmentSentence(attachments.paths) : ''
+  const full = cleaned.trim() === '' ? sentence : sentence ? `${cleaned}\n\n${sentence}` : cleaned
+
+  return runQueued(sessionId, async () => {
+    // The state may have moved while an earlier reply was being written.
+    const now = deps.waitStateOf(sessionId)
+    if (!SENDABLE.includes(now)) {
+      attachments?.release()
+      throw new RemoteError('WAIT_STATE', `the agent cannot take a reply now (${now})`, { state: now })
+    }
+    if (!deps.write(sessionId, full)) {
+      attachments?.release()
+      throw new RemoteError('NOT_FOUND', 'the session has no running process')
+    }
+    attachments?.commit()
+    await deps.delay(deps.submitDelayMs)
+    if (!SENDABLE.includes(deps.waitStateOf(sessionId))) return { outcome: 'filled-not-submitted' as const, text: full }
+    deps.write(sessionId, '\r')
+    return { outcome: 'submitted' as const, text: full }
+  })
 }

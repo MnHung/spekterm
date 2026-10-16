@@ -8,7 +8,11 @@ import { configureAgentEvents, prepareEventInjection } from './agent-events'
 import {
   activeWaitSessions,
   clearWait,
+  dismissRequest,
   lastTranscriptPathOf,
+  markAnswered,
+  openRequestsOf,
+  refreshWait,
   observeWaits,
   pendingRequestOf,
   subscribeWait,
@@ -152,13 +156,14 @@ describe('turn and choice reports (remote-notifications)', () => {
     const off = subscribeWait(sessionId, (s) => {
       if (s.count > 0) batches.push(s)
     })
-    fire(base, sessionId, { hook_event_name: 'PermissionRequest', tool_name: 'Edit' })
+    fire(base, sessionId, { hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_use_id: 'e1', tool_input: { file_path: 'a' } })
+    fire(base, sessionId, { hook_event_name: 'PermissionRequest', tool_name: 'Edit', tool_input: { file_path: 'a' } })
     await waitFor('first prompt', () => waitStateOf(sessionId) === 'awaiting-choice')
-    fire(base, sessionId, { hook_event_name: 'PostToolUse', tool_name: 'Edit' })
-    fire(base, sessionId, { hook_event_name: 'PreToolUse', tool_name: 'Bash' })
+    fire(base, sessionId, { hook_event_name: 'PostToolUse', tool_name: 'Edit', tool_use_id: 'e1', tool_input: { file_path: 'a' } })
+    fire(base, sessionId, { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'b1', tool_input: { command: 'ls' } })
     fire(base, sessionId, { hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'ls' } })
-    await waitFor('second prompt', () => batches.some((b) => b.choiceRaised?.tool === 'Bash'))
-    assert.deepEqual(batches.at(-1)?.choiceRaised, { tool: 'Bash', arg: 'ls' })
+    await waitFor('second prompt', () => batches.some((b) => b.choicesRaised.some((c) => c.tool === 'Bash')))
+    assert.deepEqual(batches.at(-1)?.choicesRaised, [{ tool: 'Bash', arg: 'ls' }])
     assert.equal(batches.at(-1)?.state, 'awaiting-choice')
     off()
     clearWait(sessionId)
@@ -175,7 +180,7 @@ describe('turn and choice reports (remote-notifications)', () => {
     fire(base, sessionId, { hook_event_name: 'Notification', notification_type: 'permission_prompt' })
     await waitFor('the batch', () => batches.length > 0)
     assert.equal(batches[0].state, 'awaiting-choice')
-    assert.equal(batches[0].choiceRaised, null)
+    assert.deepEqual(batches[0].choicesRaised, [])
     off()
     clearWait(sessionId)
   })
@@ -220,6 +225,91 @@ describe('the pending request (agent-event-bridge)', () => {
       const after = ticks
       await waitFor('the notice drained', () => ticks > after + 1)
       assert.deepEqual(pendingRequestOf(sessionId), { tool: 'Bash', arg: 'ls' })
+    } finally {
+      off()
+      clearWait(sessionId)
+    }
+  })
+})
+
+describe('on-demand refresh, answers and dismissal (remote-prompts-attachments-rename D4)', () => {
+  it('refreshWait drains now, once, and its batch reaches subscribers and observers', async () => {
+    const base = configure()
+    const sessionId = 'R1'
+    prepareEventInjection(sessionId, true)
+    const seen: WaitSnapshot[] = []
+    const observed: string[] = []
+    const off = subscribeWait(sessionId, (s) => {
+      if (s.count > 0) seen.push(s)
+    })
+    const offObserver = observeWaits((id, s) => {
+      if (id === sessionId && s.count > 0) observed.push(s.state)
+    })
+    try {
+      fire(base, sessionId, { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 't', tool_input: { command: 'ls' } })
+      fire(base, sessionId, { hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'ls' } })
+      const snapshot = refreshWait(sessionId)
+      assert.equal(snapshot.count, 2, 'drained at once, not on the next tick')
+      assert.equal(snapshot.state, 'awaiting-choice')
+      assert.equal(seen.length, 1)
+      assert.deepEqual(observed, ['awaiting-choice'])
+      assert.equal(refreshWait(sessionId).count, 0, 'nothing is read twice')
+    } finally {
+      off()
+      offObserver()
+      clearWait(sessionId)
+    }
+  })
+
+  it('a session with no timer is not drained', () => {
+    const base = configure()
+    fire(base, 'R2', { hook_event_name: 'Stop' })
+    assert.equal(refreshWait('R2').count, 0)
+    assert.equal(fs.readdirSync(path.join(base, 'agent-events', 'R2')).length, 1)
+  })
+
+  it('markAnswered records the first answer only and tells subscribers', async () => {
+    const base = configure()
+    const sessionId = 'R3'
+    prepareEventInjection(sessionId, true)
+    let pokes = 0
+    const off = subscribeWait(sessionId, (s) => {
+      if (s.count === 0) pokes += 1
+    })
+    try {
+      fire(base, sessionId, { hook_event_name: 'PermissionRequest', tool_name: 'Bash' })
+      refreshWait(sessionId)
+      const [request] = openRequestsOf(sessionId)
+      const before = pokes
+      assert.equal(markAnswered(sessionId, request.id, 5), true)
+      assert.equal(markAnswered(sessionId, request.id, 9), true)
+      assert.equal(openRequestsOf(sessionId)[0].answeredAt, 5)
+      assert.ok(pokes > before)
+      assert.equal(markAnswered(sessionId, 'gone', 1), false)
+    } finally {
+      off()
+      clearWait(sessionId)
+    }
+  })
+
+  it('dismissing the agent\'s own request makes it ready; a subagent\'s leaves the state alone', () => {
+    const base = configure()
+    const sessionId = 'R4'
+    prepareEventInjection(sessionId, true)
+    const off = subscribeWait(sessionId, () => undefined)
+    try {
+      fire(base, sessionId, { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'a', tool_input: { command: 'x' } })
+      fire(base, sessionId, { hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'x' } })
+      refreshWait(sessionId)
+      assert.equal(dismissRequest(sessionId, openRequestsOf(sessionId)[0].id), true)
+      assert.equal(waitStateOf(sessionId), 'ready')
+      assert.equal(openRequestsOf(sessionId).length, 0)
+
+      fire(base, sessionId, { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'b', agent_id: 'sub', tool_input: { command: 'y' } })
+      fire(base, sessionId, { hook_event_name: 'PermissionRequest', tool_name: 'Bash', agent_id: 'sub', tool_input: { command: 'y' } })
+      refreshWait(sessionId)
+      assert.equal(dismissRequest(sessionId, openRequestsOf(sessionId)[0].id), true)
+      assert.equal(waitStateOf(sessionId), 'busy', 'the base state the subagent\'s start left')
     } finally {
       off()
       clearWait(sessionId)
