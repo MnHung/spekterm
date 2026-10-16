@@ -1166,3 +1166,14 @@ immediately acts through the renderer can find the renderer still saying "runnin
 dormant view arriving after the probe moved focus elsewhere (it focuses its Wake button). Wait for the
 renderer's own sign (the Wake button focused) before the next step. In the product, the remote wake asks the
 main process whether a pty exists instead of trusting the renderer's status.
+
+## "Not running" is also what a wake that never happened looks like
+
+`remote-hibernate-close`'s first version of "hibernated while watched, then woken, hibernates automatically
+again" waited for the session to run again (the wait ran out, unnoticed), then waited for it to stop running
+— and passed at once, because it had never woken. The wake had failed (`unknown session`): the session was
+hibernated before the window's 500 ms debounced persist had confirmed it, and a wake reads confirmed records
+only (issue #82). **An assertion on a state that the failure also produces must also assert the step before
+it**: the wake's answer and a `sessions.changed` showing it running, read in order. The exhausted-wait line
+(`⏱`) in a passing section is where this showed; read it, it is not noise.
+

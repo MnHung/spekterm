@@ -33,6 +33,7 @@ export const ERROR_CODES = [
   'TOO_LARGE',
   'TOO_MANY',
   'UNSUPPORTED_TYPE',
+  'SESSION_BUSY',
   'INTERNAL',
 ] as const
 

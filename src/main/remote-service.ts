@@ -6,6 +6,7 @@ import { AddressThrottle, PairingCodes } from './remote-pairing'
 import { AUTH_OPERATIONS, openRemoteSession, operationNames, type RemoteHost } from './remote-protocol'
 import { type ListenState, type RemoteConnection, RemoteServer } from './remote-server'
 import type { ProjectedDevice, RemoteStore, ResetReason } from './remote-store'
+import type { SessionEnd } from './terminal'
 
 /**
  * Remote access as one unit: the settings, the listener, pairing, and what connected devices are told
@@ -249,6 +250,11 @@ export class RemoteService {
       for (const which of kinds) this.#sendList(which)
     }, LIST_DEBOUNCE_MS)
     this.#listTimer.unref()
+  }
+
+  /** A session's process ended: every connection's conversation watch on it ends with how. */
+  sessionEnded(sessionId: string, how: SessionEnd): void {
+    for (const { handle } of this.#sessions.values()) handle.sessionEnded(sessionId, how)
   }
 
   /** The window's interface reloaded or closed: remote watches on its sessions end; connections stay. */

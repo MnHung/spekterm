@@ -166,15 +166,30 @@ export interface SessionsApi {
    */
   takeQuietArrival(sessionId: string, consumer: QuietConsumer): boolean
   /**
+   * Whether a view of this session holds its automatic focus because a paired device just hibernated it, or
+   * closed the session it replaces (`remote-hibernate-close` D4). **Read, not consumed**: the hold lasts
+   * exactly the commit of that transition — the provider clears it afterwards — so it can never swallow a
+   * later activation, whatever triggers that. Stable (ref-backed), so it never re-runs an effect.
+   */
+  isFocusHeld(sessionId: string): boolean
+  /**
    * Put a running session back to dormant (`session-hibernation`). A shell's screen is serialized
    * first, so the snapshot is current when its pty dies. The session becomes dormant when the main
    * process reports the hibernated exit. `token` marks an automatic request (the main process checks
    * its policy again); without one the request is the user's and always proceeds.
+   *
+   * `quiet`: requested by a paired device. The main process already confirmed a process, so it is sent even
+   * when this view's status has not caught up (then without a snapshot), and the view takes no focus when the
+   * session turns dormant. Resolves with the main process's answer (`false`: no process to end).
    */
-  hibernate(sessionId: string, token?: string): void
+  hibernate(sessionId: string, token?: string, options?: { quiet?: boolean }): Promise<boolean>
   /** Registered by `TerminalView`: serialize this session's screen. Returns an unregister function. */
   registerSerializer(sessionId: string, serialize: () => string | undefined): () => void
-  close(sessionId: string): void
+  /**
+   * `quiet`: requested by a paired device — the session displayed in place of a closed displayed one takes no
+   * focus on that activation (`remote-hibernate-close` D4).
+   */
+  close(sessionId: string, options?: { quiet?: boolean }): void
   /**
    * pty 宣告的終端標題。空字串視為未設定。
    *
@@ -343,8 +358,11 @@ export function SessionsProvider({ children }: { children: React.ReactNode }): R
         const snapshot = hibernationSnapshots.current.get(sessionId)
         hibernationSnapshots.current.delete(sessionId)
         if (snapshot !== undefined) restoredScrollback.current.set(sessionId, snapshot)
-        setSessions((previous) =>
-          previous.map((session) =>
+        const quiet = quietHibernations.current.delete(sessionId)
+        setSessions((previous) => {
+          // A device's hibernation: the views turning dormant in this very commit hold their focus.
+          if (quiet) holdFocus([sessionId], previous)
+          return previous.map((session) =>
             session.id === sessionId
               ? {
                   ...session,
@@ -354,8 +372,8 @@ export function SessionsProvider({ children }: { children: React.ReactNode }): R
                   generation: (session.generation ?? 0) + 1,
                 }
               : session,
-          ),
-        )
+          )
+        })
         return
       }
       setSessions((previous) =>
@@ -376,6 +394,32 @@ export function SessionsProvider({ children }: { children: React.ReactNode }): R
   const waking = useRef(new Set<string>())
   /** Sessions that arrived quietly, with the views whose automatic focus is still held back. */
   const quietArrivals = useRef(new Map<string, Set<QuietConsumer>>())
+  /**
+   * The views whose automatic focus is held, for the commit of one transition a device caused
+   * (`remote-hibernate-close` D4). `against` is the session list that transition replaced: the hold is cleared
+   * in the first commit that renders a different list — the transition's own — after every view in it
+   * evaluated (child effects run before this provider's). So it cannot outlive that commit, and a commit for
+   * some other update (a list unchanged) does not clear it early.
+   */
+  const heldFocus = useRef<{ ids: Set<string>; against: SessionState[] } | null>(null)
+  /** Hibernations a device asked for whose exit has not arrived yet. */
+  const quietHibernations = useRef(new Set<string>())
+
+  /**
+   * Called inside a `setSessions` updater with its `previous` list. Idempotent for the same arguments, so
+   * StrictMode's double invocation of updaters is harmless.
+   */
+  function holdFocus(ids: readonly string[], against: SessionState[]): void {
+    const held = heldFocus.current
+    heldFocus.current = { ids: new Set([...(held?.against === against ? held.ids : []), ...ids]), against }
+  }
+
+  // No dependency array: after every commit, once the views (children) ran their effects.
+  useEffect(() => {
+    if (heldFocus.current && heldFocus.current.against !== sessions) heldFocus.current = null
+  })
+
+  const isFocusHeld = useCallback((sessionId: string) => heldFocus.current?.ids.has(sessionId) ?? false, [])
   /** A shell's screen serialized when its hibernation was requested; it becomes the replay once the pty is gone. */
   const hibernationSnapshots = useRef(new Map<string, string>())
   /** sessionId → serialize that session's screen. Registered by `TerminalView`. */
@@ -483,6 +527,8 @@ export function SessionsProvider({ children }: { children: React.ReactNode }): R
     // A wake the user asks for is the user turning to the session: no held-back focus survives it.
     if (options?.quiet) quietArrivals.current.set(sessionId, new Set<QuietConsumer>(['terminal', 'conversation']))
     else quietArrivals.current.delete(sessionId)
+    // A device's hibernation that never produced an exit must not make a later one quiet.
+    quietHibernations.current.delete(sessionId)
     if (waking.current.has(sessionId)) return Promise.resolve({ status: 'woken' })
     waking.current.add(sessionId)
 
@@ -526,10 +572,11 @@ export function SessionsProvider({ children }: { children: React.ReactNode }): R
     return true
   }, [])
 
-    const hibernate = useCallback((sessionId: string, token?: string) => {
+    const hibernate = useCallback((sessionId: string, token?: string, options?: { quiet?: boolean }): Promise<boolean> => {
     const target = sessionsRef.current.find((session) => session.id === sessionId)
-    if (!target || target.status !== 'running') return
-    if (target.spawnTarget === 'shell') {
+    // A device's request goes on although this view's status lags: the main process saw a process.
+    if (!target || (target.status !== 'running' && !options?.quiet)) return Promise.resolve(false)
+    if (target.spawnTarget === 'shell' && target.status === 'running') {
       // The rolling snapshot may be a debounce interval behind; the screen at this moment is what
       // the user must see after waking. Sent before `hibernate`: messages from one renderer arrive
       // in order, and the main process also records the shell's last directory from it.
@@ -539,9 +586,15 @@ export function SessionsProvider({ children }: { children: React.ReactNode }): R
         hibernationSnapshots.current.set(sessionId, data)
       }
     }
-    void window.workspace.terminal.hibernate(sessionId, token).then((result) => {
-      // Refused (an automatic request the session no longer qualifies for): keep nothing.
-      if (!result.ok) hibernationSnapshots.current.delete(sessionId)
+    if (options?.quiet) quietHibernations.current.add(sessionId)
+    else quietHibernations.current.delete(sessionId)
+    return window.workspace.terminal.hibernate(sessionId, token).then((result) => {
+      // Refused (an automatic request the session no longer qualifies for, or no process left): keep nothing.
+      if (!result.ok) {
+        hibernationSnapshots.current.delete(sessionId)
+        quietHibernations.current.delete(sessionId)
+      }
+      return result.ok
     })
   }, [])
 
@@ -588,8 +641,9 @@ export function SessionsProvider({ children }: { children: React.ReactNode }): R
     [],
   )
 
-  const close = useCallback((sessionId: string) => {
+  const close = useCallback((sessionId: string, options?: { quiet?: boolean }) => {
     const target = sessionsRef.current.find((session) => session.id === sessionId)
+    quietHibernations.current.delete(sessionId)
 
     // 已結束的 session 主行程已無該 pty，kill 是 no-op —— 一律呼叫，不必分支（design D12）。
     window.workspace.terminal.kill(sessionId)
@@ -599,7 +653,15 @@ export function SessionsProvider({ children }: { children: React.ReactNode }): R
     restoredScrollback.current.delete(sessionId)
     hibernationSnapshots.current.delete(sessionId)
 
-    setSessions((previous) => previous.filter((session) => session.id !== sessionId))
+    setSessions((previous) => {
+      if (options?.quiet && target) {
+        // The session shown in the closed one's place (the sibling `setFocused` below picks, which is also the
+        // `focusedIdFor` fallback) holds its focus for this commit. Harmless when nothing is displayed instead.
+        const replacement = previous.find((session) => session.folderId === target.folderId && session.id !== sessionId)
+        if (replacement) holdFocus([replacement.id], previous)
+      }
+      return previous.filter((session) => session.id !== sessionId)
+    })
     if (!target) return
 
     setFocused((previous) => {
@@ -755,6 +817,7 @@ export function SessionsProvider({ children }: { children: React.ReactNode }): R
       create,
       wake,
       takeQuietArrival,
+      isFocusHeld,
       hibernate,
       registerSerializer,
       close,
@@ -775,6 +838,7 @@ export function SessionsProvider({ children }: { children: React.ReactNode }): R
       create,
       wake,
       takeQuietArrival,
+      isFocusHeld,
       hibernate,
       registerSerializer,
       close,

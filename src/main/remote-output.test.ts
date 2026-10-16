@@ -90,7 +90,19 @@ test('an exited session cannot be watched, and its watch ends', () => {
   output.spawned('s')
   const listener = collector()
   output.watch('s', undefined, listener)
-  output.exited('s')
+  output.exited('s', 'exited')
   assert.deepEqual(listener.ends, ['exited'])
   assert.equal(output.watch('s', undefined, collector()), null)
+})
+
+test('a watch ends with how the session ended', () => {
+  for (const how of ['hibernated', 'closed'] as const) {
+    const output = new RemoteOutput()
+    output.setEnabled(true)
+    output.spawned('s')
+    const listener = collector()
+    output.watch('s', undefined, listener)
+    output.exited('s', how)
+    assert.deepEqual(listener.ends, [how])
+  }
 })

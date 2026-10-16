@@ -34,12 +34,30 @@ export function isEligible(input: EligibilityInput): boolean {
   if (input.thresholdMs <= 0) return false
   if (input.displayed) return false
   if (input.now - input.lastActivity < input.thresholdMs) return false
+  return busyReason(input) === null
+}
+
+/**
+ * Why a running session is not idle, or `null` when it is (`remote-hibernate-close`, design D2–D3).
+ *
+ * **The one definition of idle**, shared by automatic hibernation (`isEligible`) and a paired device's
+ * hibernate or close (`remote-host.ts`), so a rule added for one cannot leave the other answering the old
+ * question.
+ */
+export type BusyReason = 'working' | 'choice' | 'unsent' | 'unknown' | 'job'
+
+export function busyReason(input: Pick<EligibilityInput, 'target' | 'wait' | 'unconfirmedSubmission' | 'shell'>): BusyReason | null {
   if (input.target === 'claude') {
-    // Only `ready`: `busy` is working, `awaiting-choice` would lose a pending tool call on resume,
+    // Only `ready` is idle: `busy` is working, `awaiting-choice` would lose a pending tool call on resume,
     // and `unknown` cannot show idleness.
-    return input.wait === 'ready' && !input.unconfirmedSubmission
+    if (input.wait === 'busy') return 'working'
+    if (input.wait === 'awaiting-choice') return 'choice'
+    if (input.wait === 'unknown') return 'unknown'
+    return input.unconfirmedSubmission ? 'unsent' : null
   }
-  return input.shell === 'idle'
+  // `busy` covers a job and a shell that replaced itself (`readShellFacts`).
+  if (input.shell === 'busy') return 'job'
+  return input.shell === 'unknown' ? 'unknown' : null
 }
 
 /** How often the policy is evaluated: a quarter of the threshold, between 1 s and 60 s. */

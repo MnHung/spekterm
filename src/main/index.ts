@@ -23,6 +23,7 @@ import {
   existingTerminalService,
   liveSessionsOf,
   onPtyChange,
+  onSessionEnded,
   registerTerminalHandlers,
   remoteTerminalOutput,
   runningAgents,
@@ -655,6 +656,7 @@ void app.whenReady().then(async () => {
   onIntakeChanged(() => remoteService.listChanged('inbox'))
   sessionStore.subscribe(() => remoteService.listChanged('sessions'))
   onPtyChange(() => remoteService.listChanged('sessions'))
+  onSessionEnded((sessionId, how) => remoteService.sessionEnded(sessionId, how))
   store.subscribe(() => remoteService.listChanged('sessions'))
   app.on('will-quit', () => {
     void remoteService.stop()

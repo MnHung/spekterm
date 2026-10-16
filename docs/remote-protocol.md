@@ -78,13 +78,14 @@ Stable strings; branch on them, show `message` only as a detail.
 | `NOT_WATCHING` | A reply to a conversation this connection is not watching. |
 | `WAIT_STATE` | The agent cannot take a reply now; `detail.state` is the wait state. |
 | `FOLDER_REQUIRED` | Accepting an inbox item needs the folder the user chose. |
-| `CREATE_FAILED` | The desktop could not create or wake the session; `message` says why. |
+| `CREATE_FAILED` | The desktop could not carry out a session action (create, wake, hibernate, close); `message` says why. |
 | `TIMEOUT` | The desktop's interface did not answer within 15 seconds. |
 | `PROMPT_GONE` | The prompt an answer names is not the one a device may answer now (section 5, `conversation.answer`). `detail.open` is the number of open requests. |
 | `NOT_ANSWERABLE` | The decision does not fit the prompt, or that answer is not offered to a device. |
 | `TOO_LARGE` | An attachment, a chunk or a session's stored attachments would exceed a limit; `detail.limit` is the limit in bytes. |
 | `TOO_MANY` | A session already holds the most attachments not sent yet (`detail.limit`). |
 | `UNSUPPORTED_TYPE` | An uploaded file is not an image (PNG, JPEG, GIF, WebP), a PDF or UTF-8 text. |
+| `SESSION_BUSY` | Hibernating or closing a session that is not idle, without `force`. Nothing happened. `detail.reason` says why (section 5, `sessions.hibernate`). |
 | `INTERNAL` | Anything else. |
 
 ### Close codes
@@ -117,8 +118,8 @@ address if set). It is sent only in the answer to a successful `hello` or `pair`
 has not authenticated.
 
 `operations`: the operations this desktop accepts, other than `hello` and `pair`. Show a control only when its
-operation is listed: an older desktop does not have `sessions.rename`, `attachments.put` or
-`conversation.answer`, and answers them `UNKNOWN_OPERATION`. Protocol version 1 grows only by new fields,
+operation is listed: an older desktop does not have `sessions.rename`, `sessions.hibernate`, `sessions.close`,
+`attachments.put` or `conversation.answer`, and answers them `UNKNOWN_OPERATION`. Protocol version 1 grows only by new fields,
 operations, event values and error codes (section 9, obligation 7).
 
 ### `pair`
@@ -132,9 +133,9 @@ and models are clipped to 64 characters and control characters removed.
 
 ## 5. Operations
 
-A paired device has the user's power over agents: it can type into any session. Everything else — files
-outside OpenSpec, settings, Slack, credentials, closing or hibernating sessions, resizing a terminal — is not
-an operation. The one file a device writes is an attachment, and only into the desktop's own attachment store,
+A paired device has the user's power over agents: it can type into any session, and hibernate or close one.
+Everything else — files outside OpenSpec, settings, Slack, credentials, resizing a terminal — is not an
+operation. The one file a device writes is an attachment, and only into the desktop's own attachment store,
 under a name the desktop chooses (`attachments.put`). No operation takes a path or a directory.
 
 ### `sessions.list`
@@ -170,6 +171,39 @@ characters; the desktop then trims it. **An empty name hands naming back**: the 
 again (or a handoff's title, or the local label). A dormant session can be renamed. The new label arrives in
 `sessions.changed`. Errors: `NOT_FOUND`, `NO_WINDOW`, `TIMEOUT`, `BAD_PARAMS` (no `name`).
 
+### `sessions.hibernate`
+
+`p`: `{ "sessionId", "force"? }` → `r`: `{ "sessionId" }`. The desktop's own hibernation, quietly (no selection,
+focus or display change): the process ends, and the session stays where it is, dormant, persisted, and
+wakeable with `sessions.wake`. A shell's screen is kept; attachments are kept. A dormant session answers at
+once, with no effect. The session list then shows `running: false`, and watches of the session end
+(`conversation.ended` and `terminal.ended`, reason `"hibernated"`).
+
+**A session that is not idle is refused** with `SESSION_BUSY` unless `force` is `true` (absent, `null` and
+`false` do not force). `detail.reason`:
+
+| `reason` | Session | Meaning |
+|---|---|---|
+| `working` | agent | The agent is working. |
+| `choice` | agent | The agent waits on a choice (a permission prompt, a question, a plan approval). |
+| `unsent` | agent | A filled-in prompt has not been confirmed sent yet. |
+| `job` | shell | A command is running (or the shell replaced itself with another program). |
+| `unknown` | either | The desktop cannot tell (agent events off; on macOS, every shell). |
+
+The desktop's own hibernate and close never ask; a device must (section 9, obligation 12). Errors:
+`SESSION_BUSY`, `NOT_FOUND`, `NO_WINDOW`, `TIMEOUT`, `CREATE_FAILED`, `BAD_PARAMS`.
+
+### `sessions.close`
+
+`p`: `{ "sessionId", "force"? }` → `r`: `{ "sessionId" }`. The desktop's own close, quietly: the session leaves
+the workspace and is not restored, its attachments are removed, and a handoff-created session ends as one
+closed on the desktop does (it leaves `handoffs.list`; its relatives see it closed). If the desktop displays it,
+it displays the item's next session instead, without taking keyboard focus. A dormant session is closed with
+no further check. The session then leaves the session list, and watches of it end (reason `"closed"`).
+
+A session that is not idle is refused with `SESSION_BUSY`, as for `sessions.hibernate`, unless `force` is
+`true`. Errors: `SESSION_BUSY`, `NOT_FOUND`, `NO_WINDOW`, `TIMEOUT`, `CREATE_FAILED`, `BAD_PARAMS`.
+
 ### `conversation.watch`
 
 `p`: `{ "sessionId", "afterUuid"? }` → `r`: `{ "sessionId" }`, then events:
@@ -197,7 +231,10 @@ while exactly one request is open, nothing was typed into the session since it w
 no other tool activity since, and no answer was written to it yet; for a question, also when it has one to four
 questions of one to eight options. Show the question, option and plan text as plain text: it is the agent's
 own, and may contain paths.
-- `conversation.ended`: `{ sessionId, reason: "window" }` — the desktop's interface reloaded or closed.
+- `conversation.ended`: `{ sessionId, reason }` — the watch is over. `"window"`: the desktop's interface
+  reloaded or closed. `"exited"`: the agent's process ended on its own. `"hibernated"` / `"closed"`: the
+  session was hibernated or closed, by a device or at the desktop. Branch on `reason`; after `"hibernated"`,
+  `sessions.wake` and watch again with `afterUuid`.
 
 `Entry` is one of: `{ kind: "user", uuid, at, text, meta }`, `{ kind: "text", uuid, at, text }`,
 `{ kind: "thinking", uuid, at, text }`, `{ kind: "tool", uuid, at, id, name, arg }`,
@@ -295,8 +332,9 @@ session is not required.
 
 - `terminal.data`: `{ sessionId, gen, offset, data }` — `offset` is the position just past `data`.
 - `terminal.size`: `{ sessionId, cols, rows }` — the desktop resized the terminal.
-- `terminal.ended`: `{ sessionId, reason: "exited"|"restarted"|"off"|"window" }` — watch again to continue
-  (after `"restarted"` a new process serves the session).
+- `terminal.ended`: `{ sessionId, reason: "exited"|"hibernated"|"closed"|"restarted"|"off"|"window" }` — watch
+  again to continue (after `"restarted"` a new process serves the session). `"exited"` is a process that ended
+  on its own; `"hibernated"` and `"closed"` say the session was hibernated or closed, whoever did it.
 
 `data` is raw terminal output (escape sequences included) as a string. Render it in a terminal emulator **at
 `cols` × `rows`** — the desktop's size; a client never resizes. One connection watches at most one terminal.
@@ -427,8 +465,9 @@ open (on Android, a foreground service), and reconnect with backoff when the net
 4. **Do not notify for a suppressed attention event**, and summarize an incomplete attention answer.
 5. **Reduce nothing further** in attention text: the desktop already did, and doing it twice mangles it.
 6. **Store the device credential in protected storage**; forget it on close code 4004.
-7. **Ignore what you do not know.** A field you do not recognize, in any frame, and an event kind you do not
-   recognize, are not errors. New fields and events are added within a protocol version.
+7. **Ignore what you do not know.** A field you do not recognize, in any frame, an event kind you do not
+   recognize, and a value of a known field that you do not recognize (a new `reason`, say), are not errors.
+   New fields, events and values are added within a protocol version.
 8. **Show a control only when its operation is in `operations`** (section 4).
 9. **Match a reply's entry against `conversation.send`'s `r.text`**, not against what was typed: the desktop
    adds the attachment sentence.
@@ -437,3 +476,6 @@ open (on Android, a foreground service), and reconnect with backoff when the net
 11. **Keep the pairing link's addresses and the latest list received** (sections 1, 4 and 6), and try the
    latest first. Do not replace the stored list outright: a laptop moves between networks, so the address it
    has now is not the only one it will have.
+12. **Confirm with the user before `sessions.close`, and before any request with `force: true`.** Send
+    `sessions.hibernate` and `sessions.close` without `force` first; on `SESSION_BUSY`, show `detail.reason` in
+    the confirmation and send again with `force` only if the user agrees. Never force on the first attempt.

@@ -45,6 +45,26 @@ export function RemoteRequests(): null {
               reply({ ok: true, sessionId: action.sessionId })
               return
             }
+            if (action.kind === 'hibernate' || action.kind === 'close') {
+              // The desktop's own hibernate and close, quietly (`remote-hibernate-close` D4). The main process
+              // already refused a busy session unless forced, and answered a dormant hibernation itself.
+              const session = api.all().find((candidate) => candidate.id === action.sessionId)
+              if (!session) {
+                reply({ ok: false, code: 'NOT_FOUND', message: 'no session with that id' })
+                return
+              }
+              if (action.kind === 'close') {
+                api.close(session.id, { quiet: true })
+                reply({ ok: true, sessionId: session.id })
+                return
+              }
+              const hibernated = await api.hibernate(session.id, undefined, { quiet: true })
+              // No process left to end: fine when it is dormant (what was asked holds); an `exited` one is gone.
+              const now = latest.current.all().find((candidate) => candidate.id === session.id)
+              if (hibernated || (now && now.status !== 'exited')) reply({ ok: true, sessionId: session.id })
+              else reply({ ok: false, code: 'NOT_FOUND', message: 'the session has ended' })
+              return
+            }
             if (action.kind === 'wake') {
               const session = api.all().find((candidate) => candidate.id === action.sessionId)
               if (!session || session.status === 'exited') {

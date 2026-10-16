@@ -1,13 +1,13 @@
 ---
 title: 遠端存取
-description: 從手機連到 spekterm —— 看你的 session、讀取並回覆 agent、附上照片與檔案、回答它的提示、開新 session 或改名，agent 在等你時收到通知。直接連線，不經中繼。
+description: 從手機連到 spekterm —— 看你的 session、讀取並回覆 agent、附上照片與檔案、回答它的提示、開新 session、改名、休眠或關閉 session，agent 在等你時收到通知。直接連線，不經中繼。
 sidebar:
   order: 7
 ---
 
 遠端存取讓你手機上的 spekterm app **直接**連到電腦上的 spekterm：不需要帳號、沒有中繼站、沒有推播服務。從手機上
 你可以看到每一個 folder 與 session、讀取 agent 的對話並回覆、在回覆裡附上照片與檔案、回答 agent 的權限提示與
-提問、開新 session、喚醒休眠的 session 或替 session 改名、處理收件匣、追蹤你的交接，以及讀取你的 OpenSpec
+提問、開新 session、喚醒休眠的 session、替 session 改名、讓它休眠或關閉它、處理收件匣、追蹤你的交接，以及讀取你的 OpenSpec
 change。agent 在等你時，手機會收到通知。
 
 在你打開之前，它是**關閉**的。
@@ -17,9 +17,14 @@ change。agent 在等你時，手機會收到通知。
 ## 已配對的手機能做什麼
 
 已配對的手機能做你在 session 裡能做的事：讀取你的 agent 與 shell，並**對它們打字**。agent 有 shell，所以請把
-已配對的手機當成你的鍵盤看待。它不能在 session 之外編輯檔案、不能改設定、看不到你的 Slack 連線或任何憑證，也
-不能關閉或讓 session 休眠。它唯一能放到你電腦上的檔案是附件，而且只會放進 spekterm 自己的資料資料夾，檔名由
-spekterm 決定。
+已配對的手機當成你的鍵盤看待。它不能在 session 之外編輯檔案、不能改設定，也看不到你的 Slack 連線或任何憑證。它唯一
+能放到你電腦上的檔案是附件，而且只會放進 spekterm 自己的資料資料夾，檔名由 spekterm 決定。
+
+### 從手機讓 session 休眠或關閉
+
+手機可以讓 session 休眠（行程結束，session 留在原位，之後再喚醒），也可以關閉它（從你的工作區移除）。兩者都不會
+搶走你電腦上的鍵盤焦點，也不會改變你的選取。如果 session 正在忙 —— agent 在工作或在等你選擇、shell 正在跑指令，
+或 spekterm 判斷不出來 —— 手機會先被告知原因，問過你之後才照樣結束它。
 
 ### 從手機回答提示
 

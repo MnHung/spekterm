@@ -6,6 +6,7 @@ import { type ReplyOutcome, resumeFrom } from './remote-conversation'
 import { RemoteError, type RequestFrame, errorFrame, eventFrame, resultFrame } from './remote-frames'
 import type { OutputListener, OutputSnapshot, TerminalPosition } from './remote-output'
 import type { RemoteConnection, RemoteSessionHandle } from './remote-server'
+import type { SessionEnd } from './terminal'
 import type { FollowUpdate } from './transcript-follow-service'
 
 /**
@@ -49,6 +50,9 @@ export type HostAction =
   | { kind: 'create'; folderId: string | null; target: 'claude' | 'shell' }
   | { kind: 'wake'; sessionId: string }
   | { kind: 'rename'; sessionId: string; name: string }
+  /** `force`: skip the idle check (`remote-hibernate-close` D2). The interface never reads it. */
+  | { kind: 'hibernate'; sessionId: string; force: boolean }
+  | { kind: 'close'; sessionId: string; force: boolean }
   | { kind: 'accept'; adapter: string; id: string; folderId: string }
 
 export interface ConversationSink {
@@ -131,6 +135,14 @@ export function cleanName(name: string): string {
   return [...name.replace(/[\x00-\x1f\x7f]/g, '')].slice(0, 200).join('')
 }
 
+/** `true` forces; absent, `null` and `false` do not (a client that encodes defaults sends `false`). */
+function force(p: Record<string, unknown>): boolean {
+  const value = p.force
+  if (value === undefined || value === null || value === false) return false
+  if (value === true) return true
+  throw new RemoteError('BAD_PARAMS', '`force` must be a boolean')
+}
+
 function send(state: ConnectionState, k: string, d: unknown): void {
   state.connection.send(eventFrame(k, d))
 }
@@ -180,6 +192,10 @@ export const OPERATIONS: Record<string, Operation> = {
     if (typeof name !== 'string') throw new RemoteError('BAD_PARAMS', '`name` must be a string (empty hands naming back)')
     return state.host.perform({ kind: 'rename', sessionId: str(p, 'sessionId'), name: cleanName(name) })
   },
+
+  'sessions.hibernate': (state, p) => state.host.perform({ kind: 'hibernate', sessionId: str(p, 'sessionId'), force: force(p) }),
+
+  'sessions.close': (state, p) => state.host.perform({ kind: 'close', sessionId: str(p, 'sessionId'), force: force(p) }),
 
   'conversation.watch': (state, p) => {
     const sessionId = str(p, 'sessionId')
@@ -327,6 +343,11 @@ export function operationNames(): string[] {
 export function openRemoteSession(host: RemoteHost, connection: RemoteConnection): RemoteSessionHandle & {
   /** The window's interface reloaded or closed: its sessions' watches end, the connection stays. */
   windowGone(): void
+  /**
+   * A session's process ended (`remote-hibernate-close` D5): a conversation watch on it ends with how. The
+   * terminal watch is ended by `RemoteOutput`, which tells its own listeners.
+   */
+  sessionEnded(sessionId: string, how: SessionEnd): void
 } {
   const state: ConnectionState = { connection, host, conversation: null, terminal: null, attention: null }
   return {
@@ -356,6 +377,13 @@ export function openRemoteSession(host: RemoteHost, connection: RemoteConnection
       stopTerminal(state)
       if (conversation) send(state, 'conversation.ended', { sessionId: conversation, reason: 'window' })
       if (terminal) send(state, 'terminal.ended', { sessionId: terminal, reason: 'window' })
+    },
+    sessionEnded: (sessionId, how) => {
+      if (state.conversation?.sessionId !== sessionId) return
+      // Through `stopConversation`: it also withdraws the watch's "displayed" report, without which the woken
+      // session would count as displayed for automatic hibernation for good.
+      stopConversation(state)
+      send(state, 'conversation.ended', { sessionId, reason: how })
     },
     dispose: () => {
       stopConversation(state)

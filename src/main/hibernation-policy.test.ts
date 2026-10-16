@@ -8,11 +8,14 @@ import { afterEach, describe, it } from 'node:test'
 import {
   type EligibilityInput,
   type ProcReader,
+  type ShellFacts,
+  busyReason,
   fileIdentity,
   isEligible,
   readShellFacts,
   tickPeriodMs,
 } from './hibernation-policy'
+import type { WaitState } from './agent-events'
 
 const HOUR = 60 * 60 * 1000
 
@@ -64,6 +67,32 @@ describe('isEligible (session-hibernation design D4)', () => {
 
   it('claude holding an unconfirmed filled-in prompt does not qualify', () => {
     assert.equal(isEligible(idle({ target: 'claude', wait: 'ready', unconfirmedSubmission: true })), false)
+  })
+})
+
+describe('busyReason (remote-hibernate-close design D2)', () => {
+  const agent = (wait: WaitState, unconfirmedSubmission = false) =>
+    busyReason({ target: 'claude', wait, unconfirmedSubmission, shell: 'unknown' })
+  const shell = (facts: ShellFacts) => busyReason({ target: 'shell', wait: 'unknown', unconfirmedSubmission: false, shell: facts })
+
+  it('names why an agent is not idle', () => {
+    assert.equal(agent('busy'), 'working')
+    assert.equal(agent('awaiting-choice'), 'choice')
+    assert.equal(agent('unknown'), 'unknown')
+    assert.equal(agent('ready', true), 'unsent')
+  })
+
+  it('an agent waiting for its next message is idle, whatever its shell facts say', () => {
+    assert.equal(agent('ready'), null)
+  })
+
+  it('names why a shell is not idle', () => {
+    assert.equal(shell('busy'), 'job')
+    assert.equal(shell('unknown'), 'unknown')
+  })
+
+  it('an idle shell is idle, whatever its wait state says', () => {
+    assert.equal(shell('idle'), null)
   })
 })
 

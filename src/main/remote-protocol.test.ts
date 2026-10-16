@@ -91,8 +91,13 @@ test('watching the attention stream again replaces the earlier watch', async () 
 
 test('the allow-list has no way to resize a terminal, write a file, or touch settings and credentials', () => {
   for (const name of Object.keys(OPERATIONS)) {
-    assert.doesNotMatch(name, /resize|write|file|setting|slack|secret|credential|delete|kill|hibernate/i, name)
+    assert.doesNotMatch(name, /resize|write|file|setting|slack|secret|credential|delete|kill/i, name)
   }
+  // Ending a session is exactly these two, both through the idle check (`remote-hibernate-close`).
+  assert.deepEqual(
+    Object.keys(OPERATIONS).filter((name) => /^(hibernate|close|end|stop|exit|remove)$/i.test(name.split('.').at(-1) ?? '')),
+    ['sessions.hibernate', 'sessions.close'],
+  )
   assert.ok(operationNames().includes('hello') && operationNames().includes('pair'))
 })
 
@@ -140,4 +145,57 @@ test('a rename reaches the interface with the cleaned name', async () => {
   const response = await call(session, conn, 'sessions.rename', { sessionId: 's1', name: ' Fix\nlogin ' })
   assert.equal(response.ok, true)
   assert.deepEqual(asked, [{ kind: 'rename', sessionId: 's1', name: ' Fixlogin ' }])
+})
+
+test('a session ending stops its conversation watch, tells how, and withdraws the displayed report', async () => {
+  const watched: [string, string | null][] = []
+  let stopped = 0
+  const host = {
+    followConversation: () => ({ stop: () => void (stopped += 1) }),
+    setWatched: (key: string, sessionId: string | null) => void watched.push([key, sessionId]),
+  } as Partial<RemoteHost> as RemoteHost
+  const conn = connection()
+  const session = openRemoteSession(host, conn)
+  assert.equal((await call(session, conn, 'conversation.watch', { sessionId: 's1' })).ok, true)
+
+  session.sessionEnded('s2', 'closed')
+  assert.equal(stopped, 0, 'another session leaves the watch alone')
+  assert.equal(conn.frames.filter((frame) => frame.k === 'conversation.ended').length, 0)
+
+  session.sessionEnded('s1', 'hibernated')
+  assert.equal(stopped, 1)
+  assert.deepEqual(
+    conn.frames.filter((frame) => frame.k === 'conversation.ended').map((frame) => frame.d),
+    [{ sessionId: 's1', reason: 'hibernated' }],
+  )
+  assert.deepEqual(watched.at(-1), ['remote:7:conversation', null], 'the session no longer counts as displayed')
+
+  session.sessionEnded('s1', 'closed')
+  assert.equal(conn.frames.filter((frame) => frame.k === 'conversation.ended').length, 1, 'no watch, nothing told')
+})
+
+test('hibernate and close read force as true only, refuse a non-boolean, and need a session id', async () => {
+  const asked: unknown[] = []
+  const host = {
+    perform: async (action: unknown) => {
+      asked.push(action)
+      return { sessionId: 's1' }
+    },
+  } as Partial<RemoteHost> as RemoteHost
+  const conn = connection()
+  const session = openRemoteSession(host, conn)
+  for (const m of ['sessions.hibernate', 'sessions.close']) {
+    const kind = m.slice('sessions.'.length)
+    asked.length = 0
+    for (const force of [undefined, null, false]) assert.equal((await call(session, conn, m, { sessionId: 's1', force })).ok, true)
+    assert.equal((await call(session, conn, m, { sessionId: 's1', force: true })).ok, true)
+    assert.deepEqual(asked, [
+      { kind, sessionId: 's1', force: false },
+      { kind, sessionId: 's1', force: false },
+      { kind, sessionId: 's1', force: false },
+      { kind, sessionId: 's1', force: true },
+    ])
+    assert.equal((await call(session, conn, m, { sessionId: 's1', force: 'yes' })).e?.code, 'BAD_PARAMS')
+    assert.equal((await call(session, conn, m, {})).e?.code, 'BAD_PARAMS')
+  }
 })

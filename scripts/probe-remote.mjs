@@ -1318,7 +1318,7 @@ async function runRename(_mode, _config, context) {
   check(
     results,
     'the authentication answer lists the operations, the new ones included, and not authentication',
-    ['sessions.rename', 'attachments.put', 'conversation.answer'].every((op) => operations.includes(op)) &&
+    ['sessions.rename', 'sessions.hibernate', 'sessions.close', 'attachments.put', 'conversation.answer'].every((op) => operations.includes(op)) &&
       !operations.includes('hello') && !operations.includes('pair'),
     JSON.stringify(operations),
   )
@@ -1598,6 +1598,290 @@ async function runAnswer(_mode, _config, context) {
   await app.close()
 }
 
+/** The Wake button exists in the displayed session's view: the session is shown dormant. */
+const WAKE_SHOWN = `[...document.querySelectorAll('main button')].some((b) => b.textContent === ${JSON.stringify(copy('sessions.wake'))} && b.offsetParent !== null)`
+
+/** A session's running state as the client's list has it. */
+const runningOf = async (client, sessionId) => (await list(client)).sessions.find((s) => s.id === sessionId)?.running
+
+const ENDED = (client, kind, sessionId, from, label) =>
+  client.waitEvent(kind, { from, match: (d) => d.sessionId === sessionId, timeoutMs: 15_000, label })
+
+/** remote-hibernate-close: hibernating and closing from a device, busy refusals, endings, and focus (terminal view). */
+async function runHibernateClose(_mode, _config, context) {
+  const repos = makeRepos()
+  const profile = seedProfile(repos, { remote: { enabled: true, port: LISTEN_A } })
+  const { app, stub } = await start(context, profile)
+  const { client } = await phone(app)
+
+  // A shell running a command: refused with the reason, then hibernated when forced.
+  await selectFolder(app, repos.names.f)
+  const shell = (await remoteCreate(client, 'g', 'shell')).r.sessionId
+  await call(client, 'terminal.watch', { sessionId: shell })
+  const jobFrom = client.events.length
+  await call(client, 'terminal.input', { sessionId: shell, data: 'echo SLEEP_$((6*7)); sleep 120\r' })
+  await client.waitEvent('terminal.data', { from: jobFrom, match: (d) => d.sessionId === shell && d.data.includes('SLEEP_42'), timeoutMs: 10_000, label: 'the command started' })
+  await sleep(700)
+  const refused = await call(client, 'sessions.hibernate', { sessionId: shell })
+  check(
+    results,
+    'a shell running a command is not hibernated without forcing, and the busy error names the job',
+    refused.e?.code === 'SESSION_BUSY' && refused.e?.detail?.reason === 'job' && (await runningOf(client, shell)) === true,
+    JSON.stringify(refused.e ?? refused.r),
+  )
+  const forcedFrom = client.events.length
+  const forced = await call(client, 'sessions.hibernate', { sessionId: shell, force: true })
+  const termEnded = await ENDED(client, 'terminal.ended', shell, forcedFrom, 'the shell terminal watch ended')
+  const dormant = await pollFor({ read: () => runningOf(client, shell), settled: (r) => r === false, timeoutMs: 15_000, label: 'the shell dormant' })
+  check(
+    results,
+    'forcing hibernates the working shell: listed not running, still persisted, its terminal watch ended as hibernated',
+    forced.ok === true && dormant === false && persistedSessions(profile).some((s) => s.id === shell) && termEnded?.d.reason === 'hibernated',
+    `ok=${forced.ok} running=${dormant} ended=${termEnded?.d.reason}`,
+  )
+  const woke = await call(client, 'sessions.wake', { sessionId: shell })
+  const awake = await pollFor({ read: () => runningOf(client, shell), settled: Boolean, timeoutMs: 15_000, label: 'the shell running again' })
+  check(results, 'the hibernated shell wakes', woke.ok === true && awake === true, JSON.stringify(woke.e ?? ''))
+  await sleep(1_000)
+  const idleHibernate = await call(client, 'sessions.hibernate', { sessionId: shell })
+  await pollFor({ read: () => runningOf(client, shell), settled: (r) => r === false, timeoutMs: 15_000, label: 'the idle shell dormant' })
+  const again = await call(client, 'sessions.hibernate', { sessionId: shell })
+  check(
+    results,
+    'an idle shell hibernates without forcing, and hibernating it again while dormant succeeds with no change',
+    idleHibernate.ok === true && again.ok === true && (await runningOf(client, shell)) === false && persistedSessions(profile).some((s) => s.id === shell),
+    JSON.stringify([idleHibernate.e ?? 'ok', again.e ?? 'ok']),
+  )
+
+  // An idle agent: no forcing; both watches end as hibernated.
+  const idle = await watchedAgent(client, profile, stub, 'g')
+  await call(client, 'terminal.watch', { sessionId: idle.sessionId })
+  const idleFrom = client.events.length
+  const idleDone = await call(client, 'sessions.hibernate', { sessionId: idle.sessionId })
+  const convEnded = await ENDED(client, 'conversation.ended', idle.sessionId, idleFrom, 'the conversation watch ended')
+  const idleTermEnded = await ENDED(client, 'terminal.ended', idle.sessionId, idleFrom, 'the terminal watch ended')
+  check(
+    results,
+    'an idle agent hibernates without forcing, and both its watches end as hibernated',
+    idleDone.ok === true && convEnded?.d.reason === 'hibernated' && idleTermEnded?.d.reason === 'hibernated',
+    `ok=${idleDone.ok} conversation=${convEnded?.d.reason} terminal=${idleTermEnded?.d.reason}`,
+  )
+
+  // An agent waiting on a choice: refused, then closed when forced.
+  const asking = await watchedAgent(client, profile, stub, 'f')
+  await call(client, 'sessions.rename', { sessionId: asking.sessionId, name: 'CLOSE-ME' })
+  await call(client, 'terminal.watch', { sessionId: asking.sessionId })
+  const put = await call(client, 'attachments.put', { sessionId: asking.sessionId, name: 'n.txt', size: 2, offset: 0, data: 'aGk=' })
+  const attachmentDir = join(profile, 'remote-attachments', asking.sessionId)
+  const choiceFrom = client.events.length
+  fireEvent(profile, asking.sessionId, { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'hc1', tool_input: { command: 'rm -rf build' } })
+  fireEvent(profile, asking.sessionId, { hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'rm -rf build' } })
+  await client.waitEvent('conversation.wait', { from: choiceFrom, match: (d) => d.state === 'awaiting-choice', timeoutMs: 10_000, label: 'the agent waiting on a choice' })
+  const busyClose = await call(client, 'sessions.close', { sessionId: asking.sessionId })
+  check(
+    results,
+    'an agent waiting on a choice is not closed without forcing, and the busy error names the choice',
+    busyClose.e?.code === 'SESSION_BUSY' && busyClose.e?.detail?.reason === 'choice' && (await runningOf(client, asking.sessionId)) === true,
+    JSON.stringify(busyClose.e ?? busyClose.r),
+  )
+  const closeFrom = client.events.length
+  const closed = await call(client, 'sessions.close', { sessionId: asking.sessionId, force: true })
+  const closedConv = await ENDED(client, 'conversation.ended', asking.sessionId, closeFrom, 'the closed conversation watch ended')
+  const closedTerm = await ENDED(client, 'terminal.ended', asking.sessionId, closeFrom, 'the closed terminal watch ended')
+  const gone = await client.waitEvent('sessions.changed', { from: closeFrom, match: (d) => !d.sessions.some((s) => s.id === asking.sessionId), timeoutMs: 10_000, label: 'the closed session unlisted' })
+  const unpersisted = await pollFor({ read: () => persistedSessions(profile).some((s) => s.id === asking.sessionId), settled: (p) => p === false, timeoutMs: 10_000, label: 'the closed session unpersisted' })
+  const railText = await pollFor({
+    read: () => app.client.evaluate(`document.querySelector('aside[aria-label="${copy('rail.label')}"]')?.textContent ?? ''`),
+    settled: (t) => !t.includes('CLOSE-ME'),
+    timeoutMs: 10_000,
+    label: 'the rail without the closed session',
+  })
+  check(
+    results,
+    'forcing closes the agent: gone from the list, persistence, the rail and its attachments, both watches ended as closed',
+    closed.ok === true && Boolean(gone) && unpersisted === false && !railText.includes('CLOSE-ME') && put.r?.complete === true && !existsSync(attachmentDir) &&
+      closedConv?.d.reason === 'closed' && closedTerm?.d.reason === 'closed',
+    `ok=${closed.ok} listed=${!gone} persisted=${unpersisted} rail=${railText.includes('CLOSE-ME')} dir=${existsSync(attachmentDir)} conversation=${closedConv?.d.reason} terminal=${closedTerm?.d.reason}`,
+  )
+
+  // A dormant session closes with no check.
+  const dormantClose = await call(client, 'sessions.close', { sessionId: shell })
+  const dormantGone = await pollFor({ read: async () => (await list(client)).sessions.some((s) => s.id === shell), settled: (l) => l === false, timeoutMs: 10_000, label: 'the dormant shell unlisted' })
+  check(
+    results,
+    'a dormant session is closed from a device: gone from the list and persistence',
+    dormantClose.ok === true && dormantGone === false && !persistedSessions(profile).some((s) => s.id === shell),
+    JSON.stringify(dormantClose.e ?? ''),
+  )
+
+  for (const m of ['sessions.hibernate', 'sessions.close']) {
+    const unknown = await call(client, m, { sessionId: 'no-such-session', force: true })
+    check(results, `${m} of an unknown session is not found`, unknown.e?.code === 'NOT_FOUND', JSON.stringify(unknown.e))
+  }
+
+  // Focus: E displays the first of two shells, keyboard focus is in the side panel.
+  const x1 = (await remoteCreate(client, 'e', 'shell')).r.sessionId
+  const x2 = (await remoteCreate(client, 'e', 'shell')).r.sessionId
+  await selectFolder(app, repos.names.e)
+  const labels = Object.fromEntries((await list(client)).sessions.map((s) => [s.id, s.label]))
+  await pollFor({ read: () => app.client.evaluate(SELECTED_TAB), settled: (t) => t?.includes(labels[x1]), timeoutMs: 10_000, label: 'the first shell displayed' })
+  const panelFocus = await focusSidePanel(app)
+  await call(client, 'sessions.hibernate', { sessionId: x1, force: true })
+  await pollFor({ read: () => runningOf(client, x1), settled: (r) => r === false, timeoutMs: 15_000, label: 'the displayed shell dormant' })
+  const shownDormant = await pollFor({ read: () => app.client.evaluate(WAKE_SHOWN), settled: Boolean, timeoutMs: 10_000, label: 'the dormant screen shown' })
+  await sleep(800)
+  const focusAfterHibernate = await app.client.evaluate(FOCUS)
+  check(
+    results,
+    'hibernating the displayed session from a device shows it dormant without taking focus, and the rail selection is unchanged',
+    panelFocus === 'side-panel' && shownDormant === true && focusAfterHibernate === 'side-panel' && (await app.client.evaluate(SELECTED_FOLDER)) === repos.names.e,
+    `before=${panelFocus} dormant=${shownDormant} after=${focusAfterHibernate}`,
+  )
+
+  await call(client, 'sessions.close', { sessionId: x1 })
+  const replaced = await pollFor({ read: () => app.client.evaluate(SELECTED_TAB), settled: (t) => t?.includes(labels[x2]), timeoutMs: 10_000, label: 'the other shell displayed' })
+  await sleep(800)
+  const focusAfterClose = await app.client.evaluate(FOCUS)
+  check(
+    results,
+    'closing the displayed session from a device displays the other without taking focus, and the rail selection is unchanged',
+    Boolean(replaced?.includes(labels[x2])) && focusAfterClose === 'side-panel' && (await app.client.evaluate(SELECTED_FOLDER)) === repos.names.e,
+    `tab=${replaced} focus=${focusAfterClose}`,
+  )
+
+  await selectFolder(app, repos.names.g)
+  await selectFolder(app, repos.names.e)
+  const turnedTo = await pollFor({ read: () => app.client.evaluate(FOCUS), settled: (f) => f === 'terminal', timeoutMs: 10_000, label: 'focus in the replacement terminal' })
+  check(results, 'the session shown in place of a closed one takes focus once the user selects its item again', turnedTo === 'terminal', `focus=${turnedTo}`)
+
+  // A device's hibernation leaves nothing behind: the user's own later hibernation focuses the Wake button.
+  await call(client, 'sessions.hibernate', { sessionId: x2, force: true })
+  await pollFor({ read: () => runningOf(client, x2), settled: (r) => r === false, timeoutMs: 15_000, label: 'x2 dormant' })
+  await call(client, 'sessions.wake', { sessionId: x2 })
+  await pollFor({ read: () => runningOf(client, x2), settled: Boolean, timeoutMs: 15_000, label: 'x2 running' })
+  await sleep(1_000)
+  await pressHibernate(app.client)
+  const wakeFocused = await pollFor({ read: () => app.client.evaluate(WAKE_FOCUSED), settled: Boolean, timeoutMs: 10_000, label: 'the Wake button focused' })
+  check(results, 'after a device hibernated and woke a session, the user hibernating it on the desktop focuses its Wake button', wakeFocused === true, `focus=${await app.client.evaluate(FOCUS)}`)
+
+  // Closed on the desktop while watched: the client is told.
+  const deskWatched = await watchedAgent(client, profile, stub, 'g')
+  await call(client, 'terminal.watch', { sessionId: deskWatched.sessionId })
+  const deskFrom = client.events.length
+  await app.client.evaluate(`window.workspace.terminal.kill(${JSON.stringify(deskWatched.sessionId)})`)
+  const deskConv = await ENDED(client, 'conversation.ended', deskWatched.sessionId, deskFrom, 'the desktop-closed conversation watch ended')
+  const deskTerm = await ENDED(client, 'terminal.ended', deskWatched.sessionId, deskFrom, 'the desktop-closed terminal watch ended')
+  check(
+    results,
+    'closing a watched session on the desktop ends both watches as closed',
+    deskConv?.d.reason === 'closed' && deskTerm?.d.reason === 'closed',
+    `conversation=${deskConv?.d.reason} terminal=${deskTerm?.d.reason}`,
+  )
+
+  // A process that exits on its own.
+  const exiting = (await remoteCreate(client, 'f', 'shell')).r.sessionId
+  await call(client, 'terminal.watch', { sessionId: exiting })
+  await sleep(1_000)
+  const exitFrom = client.events.length
+  await call(client, 'terminal.input', { sessionId: exiting, data: 'exit\r' })
+  const exitEnded = await ENDED(client, 'terminal.ended', exiting, exitFrom, 'the exited terminal watch ended')
+  check(results, 'a shell that exits on its own ends the terminal watch as exited', exitEnded?.d.reason === 'exited', `reason=${exitEnded?.d.reason}`)
+  await app.close()
+}
+
+/** remote-hibernate-close: the same focus rules with the conversation view as the agent's view. */
+async function runHibernateCloseConversation(_mode, _config, context) {
+  const repos = makeRepos()
+  const profile = seedProfile(repos, { remote: { enabled: true, port: LISTEN_A }, preferences: { terminal: { agentView: 'conversation' } } })
+  const { app } = await start(context, profile)
+  const { client } = await phone(app)
+  await selectFolder(app, repos.names.f)
+  const c1 = (await remoteCreate(client, 'e', 'claude')).r.sessionId
+  const c2 = (await remoteCreate(client, 'e', 'claude')).r.sessionId
+  for (const id of [c1, c2]) {
+    await pollFor({ read: async () => (await list(client)).sessions.find((s) => s.id === id)?.wait, settled: (w) => w === 'ready', timeoutMs: 20_000, label: `${id} ready` })
+  }
+  const labels = Object.fromEntries((await list(client)).sessions.map((s) => [s.id, s.label]))
+  // The second one dormant and not displayed, so it shows its Wake button when it takes the first one's place.
+  await call(client, 'sessions.hibernate', { sessionId: c2 })
+  await pollFor({ read: () => runningOf(client, c2), settled: (r) => r === false, timeoutMs: 15_000, label: 'c2 dormant' })
+  await selectFolder(app, repos.names.e)
+  await pollFor({ read: () => app.client.evaluate(SELECTED_TAB), settled: (t) => t?.includes(labels[c1]), timeoutMs: 10_000, label: 'c1 displayed' })
+  const panelFocus = await focusSidePanel(app)
+
+  await call(client, 'sessions.hibernate', { sessionId: c1 })
+  await pollFor({ read: () => runningOf(client, c1), settled: (r) => r === false, timeoutMs: 15_000, label: 'c1 dormant' })
+  const shownDormant = await pollFor({ read: () => app.client.evaluate(WAKE_SHOWN), settled: Boolean, timeoutMs: 10_000, label: 'the dormant conversation shown' })
+  await sleep(800)
+  const afterHibernate = await app.client.evaluate(FOCUS)
+  check(
+    results,
+    'hibernating the displayed session in the conversation view from a device does not take focus',
+    panelFocus === 'side-panel' && shownDormant === true && afterHibernate === 'side-panel',
+    `before=${panelFocus} dormant=${shownDormant} after=${afterHibernate}`,
+  )
+
+  await call(client, 'sessions.close', { sessionId: c1 })
+  const replaced = await pollFor({ read: () => app.client.evaluate(SELECTED_TAB), settled: (t) => t?.includes(labels[c2]), timeoutMs: 10_000, label: 'c2 displayed' })
+  await sleep(800)
+  const afterClose = await app.client.evaluate(FOCUS)
+  check(
+    results,
+    'closing the displayed session in the conversation view from a device shows the dormant one in its place without taking focus',
+    Boolean(replaced?.includes(labels[c2])) && afterClose === 'side-panel' && (await app.client.evaluate(WAKE_SHOWN)) === true,
+    `tab=${replaced} focus=${afterClose}`,
+  )
+
+  await selectFolder(app, repos.names.g)
+  await selectFolder(app, repos.names.e)
+  const turnedTo = await pollFor({ read: () => app.client.evaluate(WAKE_FOCUSED), settled: Boolean, timeoutMs: 10_000, label: 'the Wake button focused after reselection' })
+  check(results, 'in the conversation view, selecting the item again focuses the replacement\'s Wake button', turnedTo === true, `focus=${await app.client.evaluate(FOCUS)}`)
+  await app.close()
+}
+
+/** remote-hibernate-close: a conversation watch ended by a hibernation stops counting as displayed. */
+async function runWatchEndAutoHibernate(_mode, _config, context) {
+  const repos = makeRepos()
+  const THRESHOLD_S = 4
+  const profile = seedProfile(repos, { remote: { enabled: true, port: LISTEN_A }, preferences: { terminal: { autoHibernateSeconds: THRESHOLD_S } } })
+  const { app } = await start(context, profile)
+  const { client } = await phone(app)
+  await selectFolder(app, repos.names.f)
+  const sessionId = (await remoteCreate(client, 'g', 'claude')).r.sessionId
+  await pollFor({ read: async () => (await list(client)).sessions.find((s) => s.id === sessionId)?.wait, settled: (w) => w === 'ready', timeoutMs: 20_000, label: 'ready' })
+  // A wake reads the persisted record, which the window pushes on a 500 ms debounce that every change of the
+  // starting agent resets: a hibernation before it lands leaves a session that cannot be woken (seen here).
+  await pollFor({ read: () => persistedSessions(profile).some((x) => x.id === sessionId), settled: Boolean, timeoutMs: 15_000, label: 'persisted' })
+  await call(client, 'conversation.watch', { sessionId })
+  const from = client.events.length
+  await call(client, 'sessions.hibernate', { sessionId })
+  const ended = await ENDED(client, 'conversation.ended', sessionId, from, 'the watch ended')
+  await pollFor({ read: () => runningOf(client, sessionId), settled: (r) => r === false, timeoutMs: 15_000, label: 'hibernated' })
+  // Woken and left alone: no unwatch is sent, so only the ending can have withdrawn the watch's report.
+  // The wake must be seen to happen: a session that never woke reads "not running" too.
+  const wakeFrom = client.events.length
+  const woke = await call(client, 'sessions.wake', { sessionId })
+  const ran = await client.waitEvent('sessions.changed', {
+    from: wakeFrom,
+    match: (d) => d.sessions.some((s) => s.id === sessionId && s.running),
+    timeoutMs: 15_000,
+    label: 'running again',
+  })
+  const asleep = await client.waitEvent('sessions.changed', {
+    from: ran ? client.events.indexOf(ran) + 1 : client.events.length,
+    match: (d) => d.sessions.some((s) => s.id === sessionId && !s.running),
+    timeoutMs: (THRESHOLD_S + 25) * 1000,
+    label: 'hibernated automatically',
+  })
+  check(
+    results,
+    'a session hibernated while watched hibernates automatically again after waking',
+    ended?.d.reason === 'hibernated' && woke.ok === true && Boolean(ran) && Boolean(asleep),
+    `ended=${ended?.d.reason} woke=${JSON.stringify(woke.e ?? 'ok')} ran=${Boolean(ran)} asleep=${Boolean(asleep)}`,
+  )
+  await app.close()
+}
+
 const SECTIONS = [
   { name: 'runListener', run: runListener },
   { name: 'runPairing', run: runPairing },
@@ -1613,6 +1897,9 @@ const SECTIONS = [
   { name: 'runRename', run: runRename },
   { name: 'runAttachments', run: runAttachments },
   { name: 'runAnswer', run: runAnswer },
+  { name: 'runHibernateClose', run: runHibernateClose },
+  { name: 'runHibernateCloseConversation', run: runHibernateCloseConversation },
+  { name: 'runWatchEndAutoHibernate', run: runWatchEndAutoHibernate },
 ].map((section) => ({
   ...section,
   // A section that hangs leaves its app behind; the profile prefix finds it (character class: not this command).

@@ -112,7 +112,7 @@ export function ConversationView({ sessionId, active, dormant, covered = false }
   const [draft, setDraft] = useState('')
   const [blocked, setBlocked] = useState<WaitState | null>(null)
     const bottomRef = useRef<HTMLDivElement | null>(null)
-  const { wake, takeQuietArrival } = useSessions()
+  const { wake, takeQuietArrival, isFocusHeld } = useSessions()
   const rootRef = useRef<HTMLDivElement | null>(null)
   const wakeButtonRef = useRef<HTMLButtonElement | null>(null)
 
@@ -121,9 +121,18 @@ export function ConversationView({ sessionId, active, dormant, covered = false }
   //
   // Covered by the maximized side panel it takes no focus; uncovered again, it takes it — the Wake
   // button when dormant, the composer otherwise (design M2: restoring returns focus to the session).
+  //
+  // A transition a device caused (it hibernated this session, or closed the one this view replaces) holds the
+  // focus for that commit, whatever the trigger (`isFocusHeld`, `remote-hibernate-close` D4); `heldFor` keeps the
+  // answer for StrictMode's second run in development, which comes after the hold is cleared.
   const wasDormant = useRef(dormant)
   const wasCovered = useRef(covered)
+  const heldFor = useRef<string | null>(null)
   useEffect(() => {
+    // Any other evaluation — the view leaving the screen included — ends what was held, so a later activation
+    // with the same values (the user selecting it again) focuses.
+    const evaluation = `${dormant}|${active}|${covered}`
+    if (heldFor.current !== evaluation) heldFor.current = null
     const was = wasDormant.current
     const uncovered = wasCovered.current && !covered
     wasDormant.current = dormant
@@ -131,10 +140,12 @@ export function ConversationView({ sessionId, active, dormant, covered = false }
     // A session woken for a paired device does not take the composer's focus (`remote-protocol`).
     const quiet = was && !dormant && takeQuietArrival(sessionId, 'conversation')
     if (!active || covered) return
+    if (isFocusHeld(sessionId)) heldFor.current = evaluation
+    if (heldFor.current === evaluation) return
     if (dormant) wakeButtonRef.current?.focus()
     else if (quiet) return
     else if (was || uncovered) rootRef.current?.querySelector('textarea')?.focus()
-  }, [active, dormant, covered, sessionId, takeQuietArrival])
+  }, [active, dormant, covered, sessionId, takeQuietArrival, isFocusHeld])
 
 
   useEffect(() => {

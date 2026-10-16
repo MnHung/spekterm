@@ -1,6 +1,6 @@
 ---
 title: Remote access
-description: Reach spekterm from your phone — see your sessions, read and answer agents, attach photos and files, answer their prompts, start and rename sessions, and get told when an agent waits for you. Directly, with no relay.
+description: Reach spekterm from your phone — see your sessions, read and answer agents, attach photos and files, answer their prompts, start, rename, hibernate and close sessions, and get told when an agent waits for you. Directly, with no relay.
 sidebar:
   order: 7
 ---
@@ -8,7 +8,7 @@ sidebar:
 Remote access lets the spekterm app on your phone reach spekterm on your computer **directly**: no account,
 no relay, no push service. From the phone you can see every folder and session, read an agent's
 conversation and reply to it, attach photos and files to a reply, answer an agent's permission prompts and
-questions, start, wake or rename a session, handle the inbox, follow your handoffs, and read your OpenSpec
+questions, start, wake, rename, hibernate or close a session, handle the inbox, follow your handoffs, and read your OpenSpec
 changes. You are told when an agent waits for you.
 
 It is **off** until you turn it on.
@@ -20,8 +20,15 @@ It is **off** until you turn it on.
 
 A paired phone can do what you can do in a session: read your agents and shells and **type into them**. Agents
 have a shell, so treat a paired phone like your keyboard. It cannot edit files outside a session, change
-settings, see your Slack connection or any credential, or close and hibernate sessions. The only files it can
-put on your computer are attachments, and only into spekterm's own data folder, under names spekterm chooses.
+settings, or see your Slack connection or any credential. The only files it can put on your computer are
+attachments, and only into spekterm's own data folder, under names spekterm chooses.
+
+### Hibernating and closing from the phone
+
+The phone can hibernate a session (its process ends; it stays in place and you wake it later) or close it
+(it leaves your workspace). Neither takes your keyboard focus or changes your selection on the computer. If a
+session is busy — an agent working or waiting on your choice, a command running in a shell, or spekterm cannot
+tell — the phone is told why first and asks you before ending it anyway.
 
 ### Answering prompts from the phone
 

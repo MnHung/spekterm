@@ -16,7 +16,7 @@ import type { RelationsWorld } from '../handoff-relations'
 import type { PreferencesStore } from '../preferences-store'
 import { SessionStatusService } from '../session-status'
 import type { RendererSession, SessionLineage, SessionStore } from '../session-store'
-import { type SpawnTarget, TerminalError, TerminalService } from '../terminal'
+import { SESSION_END, type SessionEnd, type SpawnTarget, TerminalError, TerminalService } from '../terminal'
 import { agentSettingsFile } from '../agent-injection'
 import { prepareHandoffInjection } from '../handoff-injection'
 import { endHandoffSession } from '../handoff-service'
@@ -213,6 +213,27 @@ function ptyChanged(): void {
 }
 
 /**
+ * A session's process ended, and how (`remote-hibernate-close` D5): a paired device watching its conversation
+ * is told. Not for `disposed` — a window reload ends remote watches itself (`windowGone`).
+ */
+const endListeners = new Set<(sessionId: string, how: SessionEnd) => void>()
+
+export function onSessionEnded(listener: (sessionId: string, how: SessionEnd) => void): () => void {
+  endListeners.add(listener)
+  return () => endListeners.delete(listener)
+}
+
+function sessionEnded(sessionId: string, how: SessionEnd): void {
+  for (const listener of endListeners) {
+    try {
+      listener(sessionId, how)
+    } catch (error) {
+      console.error(`[terminal] session-end listener failed: ${String(error)}`)
+    }
+  }
+}
+
+/**
  * 取得**已存在**的 service，不建立新的。
  *
  * 對話 view 的通道需要問 session 的來源座標，而那個問題只在 session 已經存在時才有意義 ——
@@ -264,7 +285,8 @@ function serviceFor(
     resized: (sessionId, cols, rows) => remoteTerminalOutput.resized(sessionId, cols, rows),
     exit: (sessionId, exitCode, reason) => {
       hibernation.untrack(sessionId)
-      remoteTerminalOutput.exited(sessionId)
+      remoteTerminalOutput.exited(sessionId, SESSION_END[reason])
+      if (reason !== 'disposed') sessionEnded(sessionId, SESSION_END[reason])
       // The pty held any filled-in prompt; with it gone there is nothing left to confirm.
       forgetSubmission(sessionId)
       // Nor can any permission prompt of it still be on screen (`agent-event-bridge`). Without this a reload

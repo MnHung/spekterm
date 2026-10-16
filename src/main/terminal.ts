@@ -57,6 +57,21 @@ export class TerminalError extends Error {
  */
 export type ExitReason = 'self' | 'killed' | 'disposed' | 'hibernated'
 
+/** How a session's process ended, as a paired device is told (`remote-protocol`, `remote-hibernate-close` D5). */
+export type SessionEnd = 'exited' | 'hibernated' | 'closed'
+
+/**
+ * Total over `ExitReason`, so a new reason does not compile until it is placed. `killed` is a close: only
+ * `kill()` sets it, and only the close IPC calls that. `disposed` is unreachable for a device: `windowGone`
+ * stops every watch before the disposed ptys' exits arrive.
+ */
+export const SESSION_END: Record<ExitReason, SessionEnd> = {
+  self: 'exited',
+  hibernated: 'hibernated',
+  killed: 'closed',
+  disposed: 'exited',
+}
+
 export interface TerminalSink {
   data(sessionId: string, chunk: string): void
   exit(sessionId: string, exitCode: number, reason: ExitReason): void

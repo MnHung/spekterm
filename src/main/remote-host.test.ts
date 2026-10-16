@@ -93,3 +93,97 @@ test('waking a session that has a process answers at once, without asking the in
   await h.perform({ kind: 'wake', sessionId: 'c' })
   assert.equal(asked, 1, 'a session with no process is woken by the interface')
 })
+
+/** A host for hibernate / close: `a` a running agent, `b` a running shell, `c` dormant. */
+function sessionActions(facts: { wait?: string; unsent?: boolean; shell?: string } = {}) {
+  const asked: unknown[] = []
+  const refreshed: string[] = []
+  let wait = facts.wait ?? 'ready'
+  const made = host({
+    terminal: (() => ({
+      liveSessionIds: () => ['a', 'b'],
+      sizeOf: (id: string) => (id === 'a' || id === 'b' ? { cols: 120, rows: 40 } : null),
+      idleFactsOf: (id: string) =>
+        id === 'a' ? { target: 'claude', shell: 'unknown' } : id === 'b' ? { target: 'shell', shell: facts.shell ?? 'idle' } : null,
+    })) as unknown as HostDeps['terminal'],
+    request: async (_contents: number, action: unknown) => {
+      asked.push(action)
+      return { ok: true, sessionId: (action as { sessionId: string }).sessionId }
+    },
+    waits: {
+      refresh: (id) => {
+        refreshed.push(id)
+        // The periodic drain may lag: what counts is the state after the refresh.
+        if (facts.wait === 'stale-ready') wait = 'awaiting-choice'
+      },
+      stateOf: () => wait as never,
+      unsent: () => facts.unsent ?? false,
+    },
+  })
+  return { ...made, asked, refreshed }
+}
+
+async function busy(promise: Promise<unknown>): Promise<unknown> {
+  return promise.then(
+    () => 'proceeded',
+    (error: { code: string; detail?: { reason: string } }) => (error.code === 'SESSION_BUSY' ? error.detail?.reason : error.code),
+  )
+}
+
+test('a device hibernates or closes a session that is not idle only when it forces', async () => {
+  const cases: [Parameters<typeof sessionActions>[0], string, string][] = [
+    [{ wait: 'busy' }, 'a', 'working'],
+    [{ wait: 'awaiting-choice' }, 'a', 'choice'],
+    [{ wait: 'unknown' }, 'a', 'unknown'],
+    [{ wait: 'ready', unsent: true }, 'a', 'unsent'],
+    [{ shell: 'busy' }, 'b', 'job'],
+    [{ shell: 'unknown' }, 'b', 'unknown'],
+  ]
+  for (const [facts, sessionId, reason] of cases) {
+    for (const kind of ['hibernate', 'close'] as const) {
+      const { host: h, asked } = sessionActions(facts)
+      assert.equal(await busy(h.perform({ kind, sessionId, force: false })), reason, `${kind} ${JSON.stringify(facts)}`)
+      assert.equal(asked.length, 0, 'the interface is not asked')
+      assert.equal(await busy(h.perform({ kind, sessionId, force: true })), 'proceeded', 'force skips the check')
+      assert.deepEqual(asked, [{ kind, sessionId, force: true }])
+    }
+  }
+})
+
+test('the wait state is refreshed before the check reads it', async () => {
+  const { host: h, refreshed, asked } = sessionActions({ wait: 'stale-ready' })
+  assert.equal(await busy(h.perform({ kind: 'close', sessionId: 'a', force: false })), 'choice')
+  assert.deepEqual(refreshed, ['a'])
+  assert.equal(asked.length, 0)
+})
+
+test('idle sessions proceed; a dormant one hibernates at once and closes without a check', async () => {
+  const { host: h, asked, refreshed } = sessionActions()
+  assert.equal(await busy(h.perform({ kind: 'hibernate', sessionId: 'a', force: false })), 'proceeded')
+  assert.equal(await busy(h.perform({ kind: 'close', sessionId: 'b', force: false })), 'proceeded')
+  assert.deepEqual(await h.perform({ kind: 'hibernate', sessionId: 'c', force: false }), { sessionId: 'c' })
+  assert.equal(await busy(h.perform({ kind: 'close', sessionId: 'c', force: false })), 'proceeded')
+  assert.deepEqual(
+    asked.map((a) => [(a as { kind: string }).kind, (a as { sessionId: string }).sessionId]),
+    [
+      ['hibernate', 'a'],
+      ['close', 'b'],
+      ['close', 'c'],
+    ],
+    'a dormant hibernation never reaches the interface',
+  )
+  assert.deepEqual(refreshed, ['a', 'b'], 'a dormant session is not checked')
+})
+
+test('hibernate and close: an unknown session is not found, and no window refuses both', async () => {
+  const { host: h, asked } = sessionActions()
+  for (const kind of ['hibernate', 'close'] as const) {
+    assert.equal(await busy(h.perform({ kind, sessionId: 'nope', force: true })), 'NOT_FOUND')
+  }
+  const none = sessionActions()
+  const noWindow = host({ window: () => null, request: () => Promise.reject(new Error('must not be asked')) }).host
+  for (const kind of ['hibernate', 'close'] as const) {
+    assert.equal(await busy(noWindow.perform({ kind, sessionId: 'a', force: true })), 'NO_WINDOW')
+  }
+  assert.equal(asked.length + none.asked.length, 0)
+})

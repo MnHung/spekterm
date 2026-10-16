@@ -105,10 +105,12 @@ OpenSpec 結構的側欄，讓使用者不必另外開 IDE 就能一邊駕駛 ag
   - **`src/main/remote-server.ts` is the only module that may create a server or import `https`/`ws`**
     (`scripts/server-source.test.mjs`, file-scoped entries in `scripts/network-surface.test.mjs`). `probe:core`
     runs on a throwaway profile because the real one may have remote access on.
-  - **The renderer stays the authority on sessions**: a device's create, wake and accept are requests to it
-    (`workspace:remote:request`), carried out **quietly** — no selection change, no focused-session change, no
-    keyboard focus (`takeQuietArrival`). "Already running" is answered by the main process from the pty; the
-    renderer's status lags a hibernation by a moment.
+  - **The renderer stays the authority on sessions**: a device's create, wake, rename, hibernate, close and accept
+    are requests to it (`workspace:remote:request`), carried out **quietly** — no selection change, no keyboard
+    focus, and no focused-session change except the one a close of the displayed session forces
+    (`takeQuietArrival`; for hibernate and close, `isFocusHeld`, which lasts one commit — a mark that waits to
+    be asked for can linger and swallow a later focus). "Already running" and "is it idle" are answered by the
+    main process from the pty; the renderer's status lags a hibernation by a moment.
   - **A device's operations are one allow-list** (`OPERATIONS` in `src/main/remote-protocol.ts`); the protocol
     document must list exactly them (`scripts/remote-protocol-doc.test.mjs`).
   - **A device answers a prompt with keys, never text or Enter** (`remote-answer.ts`), re-checked before every

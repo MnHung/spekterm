@@ -61,7 +61,8 @@ export function TerminalView({
   const { t } = useTranslation()
   // 解構出穩定的 callback。若依賴整個 api 物件，session 清單一變動就會重建 xterm
   // （連同 scrollback 一起消失）。
-    const { attach, setTitle, restoredScrollbackOf, registerFocus, registerSerializer, wake, takeQuietArrival } = useSessions()
+    const { attach, setTitle, restoredScrollbackOf, registerFocus, registerSerializer, wake, takeQuietArrival, isFocusHeld } =
+      useSessions()
   const { terminal: termPrefs, gpuEnabled } = usePreferences()
   const hostRef = useRef<HTMLDivElement | null>(null)
     const handleRef = useRef<XtermHandle | null>(null)
@@ -350,11 +351,21 @@ export function TerminalView({
   // output at the wrong width would stay in history. The mark is asked for only at that moment (the first
   // evaluation, or a status change): if the terminal is not on screen then, the mark is simply dropped, and
   // the user's later activation focuses as usual.
+  //
+  // **A transition a device caused** (it hibernated this session, or closed the one this view replaces) holds
+  // the focus too, whatever the trigger — the hold lasts only that commit (`isFocusHeld`, `remote-hibernate-close`
+  // D4). `heldFor` remembers the evaluation it held for, so StrictMode's second run in development (after the
+  // provider already cleared the hold) repeats the same answer instead of focusing.
   const previousStatus = useRef(status)
   // `false` at first, so the first run with a box fits.
   const previousActive = useRef(false)
   const evaluated = useRef(false)
+  const heldFor = useRef<string | null>(null)
   useEffect(() => {
+    // Any other evaluation — the view leaving the screen included — ends what was held, so a later activation
+    // with the same values (the user selecting it again) focuses.
+    const evaluation = `${status}|${active}|${covered}`
+    if (heldFor.current !== evaluation) heldFor.current = null
     const was = previousStatus.current
     const wasActive = previousActive.current
     const arriving = !evaluated.current || was !== status
@@ -370,9 +381,11 @@ export function TerminalView({
     if (covered) return
     if (was !== status && was !== 'dormant' && status !== 'dormant') return
     if (quiet) return
+    if (isFocusHeld(sessionId)) heldFor.current = evaluation
+    if (heldFor.current === evaluation) return
     if (status === 'dormant') wakeButtonRef.current?.focus()
     else handleRef.current?.focus()
-  }, [active, covered, sessionId, status, takeQuietArrival])
+  }, [active, covered, sessionId, status, takeQuietArrival, isFocusHeld])
 
   /**
    * GPU 加速：**只給當下顯示的那一個終端**，且使用者可以整個關掉。

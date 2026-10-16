@@ -1,3 +1,5 @@
+import type { SessionEnd } from './terminal'
+
 /**
  * Recent pty output per session, for remote terminal watches (`remote-protocol`, design D6 of
  * `mobile-remote-bridge`).
@@ -37,8 +39,8 @@ export interface OutputListener {
   data(gen: number, offset: number, chunk: string): void
   /** The pty was resized (by the desktop; a remote client never resizes). */
   size(cols: number, rows: number): void
-  /** The watch is over: the pty ended or was replaced, or remote access was turned off. */
-  ended(reason: 'exited' | 'restarted' | 'off'): void
+  /** The watch is over: the pty ended (how, `SessionEnd`) or was replaced, or remote access was turned off. */
+  ended(reason: SessionEnd | 'restarted' | 'off'): void
 }
 
 interface Ring {
@@ -87,11 +89,11 @@ export class RemoteOutput {
     this.#end(sessionId, 'restarted')
   }
 
-  /** The session's pty is gone. */
-  exited(sessionId: string): void {
+  /** The session's pty is gone, and how. */
+  exited(sessionId: string, how: SessionEnd): void {
     this.#gens.delete(sessionId)
     this.#rings.delete(sessionId)
-    this.#end(sessionId, 'exited')
+    this.#end(sessionId, how)
   }
 
   /** A chunk of the session's pty output (`TerminalSink.data`). */
@@ -163,7 +165,7 @@ export class RemoteOutput {
     return gen
   }
 
-  #end(sessionId: string, reason: 'exited' | 'restarted'): void {
+  #end(sessionId: string, reason: SessionEnd | 'restarted'): void {
     const listeners = this.#listeners.get(sessionId)
     if (!listeners) return
     this.#listeners.delete(sessionId)

@@ -1,13 +1,14 @@
 import { preferredTitle } from '../shared/lineage/label'
 import { dismissRequest, markAnswered, openRequestsOf, refreshWait, subscribeWait, waitStateOf } from './agent-wait'
-import type { FinishedCall } from './agent-events'
+import type { FinishedCall, WaitState } from './agent-events'
+import { busyReason } from './hibernation-policy'
 import { lastKeystrokeAt } from './pty-input'
 import { promptView, writeAnswer } from './remote-answer'
 import { startFollow } from './conversation-follow'
 import { readBriefFor } from './handoff-brief'
 import { lifecycleViewOf } from './handoff-lifecycle-view'
 import { dismissIntake } from './intake-changes'
-import { SUBMIT_KEY_DELAY_MS } from './intake-prefill'
+import { SUBMIT_KEY_DELAY_MS, hasUnconfirmedSubmission } from './intake-prefill'
 import { listView } from './intake-projection'
 import type { RoutingStore } from './intake-routing'
 import type { IntakeService } from './intake-service'
@@ -52,9 +53,18 @@ export interface HostDeps {
   /** Where a device's attachments are stored (`remote-attachments.ts`); `null` until configured. */
   attachments?: AttachmentStore | null
   delay?: (ms: number) => Promise<void>
+  /** What a device's hibernate or close checks (`remote-hibernate-close` D3); the real functions by default. */
+  waits?: {
+    /** Drains the agent's events now: the periodic drain can be 400 ms behind a prompt. */
+    refresh(sessionId: string): void
+    stateOf(sessionId: string): WaitState
+    unsent(sessionId: string): boolean
+  }
 }
 
 const RENDERER_CODES: readonly ErrorCode[] = ['NOT_FOUND', 'CREATE_FAILED', 'FOLDER_REQUIRED', 'NO_WINDOW', 'TIMEOUT', 'BAD_PARAMS']
+
+const REAL_WAITS = { refresh: refreshWait, stateOf: waitStateOf, unsent: hasUnconfirmedSubmission }
 
 function folderViews(folders: FolderLookup): FolderView[] {
   return folders.list().map((folder) => ({
@@ -245,6 +255,27 @@ export function createRemoteHost(deps: HostDeps): RemoteHost {
       // "Already running" is the main process's fact (it holds the pty); the interface's status can lag
       // a hibernation by a moment, so it is not asked whether a session runs — only to wake one that does not.
       if (action.kind === 'wake' && deps.terminal(contentsId)?.sizeOf(action.sessionId)) return { sessionId: action.sessionId }
+      if (action.kind === 'hibernate' || action.kind === 'close') {
+        if (!record(action.sessionId)) throw new RemoteError('NOT_FOUND', `no session ${action.sessionId}`)
+        const terminal = deps.terminal(contentsId)
+        const running = Boolean(terminal?.sizeOf(action.sessionId))
+        // Already dormant: the state asked for holds (as a wake of a running session answers at once).
+        if (action.kind === 'hibernate' && !running) return { sessionId: action.sessionId }
+        const facts = running && !action.force ? terminal?.idleFactsOf(action.sessionId) : null
+        if (facts) {
+          // The one definition of idle, shared with automatic hibernation (`hibernation-policy.ts`). The
+          // desktop is the only side that knows whether something would be lost, so it says why.
+          const waits = deps.waits ?? REAL_WAITS
+          waits.refresh(action.sessionId)
+          const reason = busyReason({
+            target: facts.target,
+            wait: waits.stateOf(action.sessionId),
+            unconfirmedSubmission: waits.unsent(action.sessionId),
+            shell: facts.shell,
+          })
+          if (reason) throw new RemoteError('SESSION_BUSY', `the session is busy (${reason}); send again with force to proceed`, { reason })
+        }
+      }
       const outcome = await deps.request(contentsId, action)
       if (outcome.ok) return { sessionId: outcome.sessionId }
       const code = (RENDERER_CODES as readonly string[]).includes(outcome.code) ? (outcome.code as ErrorCode) : 'CREATE_FAILED'

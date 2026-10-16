@@ -9,7 +9,11 @@ that sessions kept in the workspace for occasional use stop holding a live proce
 ### Requirement: The user can hibernate a running session
 
 The system SHALL let the user hibernate a running session from the session's tab context menu and from its
-row on the rail. Hibernating SHALL end the session's process and leave the session **dormant** — the same
+row on the rail. A paired device SHALL be able to request it too (see `remote-protocol`). Such a request is a
+hibernation the user asked for: it is not subject to the automatic policy's displayed and idle-time
+conditions. A device that does not insist is refused for a session that is not idle by this capability's
+definition of idle.
+Hibernating SHALL end the session's process and leave the session **dormant** — the same
 state a restored, not-yet-woken session is in (see `session-persistence`).
 
 The session SHALL keep everything that identifies it: its place in the tab order and on the rail, its
@@ -222,7 +226,9 @@ process is ended — it became displayed, its agent started working, it produced
 hibernate it. The decision SHALL be re-checked at the moment of execution.
 
 This re-check SHALL apply to automatic hibernation only. A hibernation the user asked for SHALL proceed even
-for the displayed session or a working agent.
+for the displayed session or a working agent. The one exception is a paired device's request that does not
+insist: it SHALL be refused for a session that is not idle (see `remote-protocol`). A device's request that
+insists proceeds like any other request the user makes.
 
 #### Scenario: A session displayed between decision and execution is kept
 
