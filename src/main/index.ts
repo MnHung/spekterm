@@ -61,16 +61,22 @@ import { refreshIntros } from './handoff-injection'
 import { refreshRelations } from './handoff-relations'
 import { HandoffService, registerHandoffService } from './handoff-service'
 import { HandoffCompletion } from './handoff-completion'
-import { observeWaits, openRequestsOf, pokeWait, subscribeWait } from './agent-wait'
+import { inTurnOf, observeWaits, openRequestsOf, pokeWait, refreshWait, subscribeWait } from './agent-wait'
 import { onKeystroke } from './pty-input'
+import { whenRestored } from './restore-gate'
+import { SessionControl } from './session-control'
+import { cancelCommandEnd, expectCommandEnd, lastProcessChangeAt, runStartedAt } from './session-runs'
+import { sessionExists } from '../shared/lineage/existence'
 import { configureTicketLineage, ticketResolutionFor } from './handoff-ticket'
+import { ancestryOf } from '../shared/lineage/ancestry'
 import { preferredTitle } from '../shared/lineage/label'
 import { RoutingStore, routingFile } from './intake-routing'
 import { IntakeStore } from './intake-store'
 import { PanelStore } from './panel-store'
 import { PreferencesStore } from './preferences-store'
 import { SecretStore } from './secret-store'
-import { SessionStore } from './session-store'
+import { type PersistedSession, SessionStore } from './session-store'
+import { HANDOFF_ADAPTER } from './handoff-delivery'
 import { SlackCursorStore } from './slack-cursor-store'
 import { SlackRuntime } from './slack-service'
 import { SlackSettingsStore } from './slack-settings-store'
@@ -87,6 +93,12 @@ const currentDir = dirname(fileURLToPath(import.meta.url))
 
 /** 啟動後多久觸發第一次掃描。夠晚以免與視窗建立搶資源，夠早以免使用者關掉 app 時還沒跑到。 */
 const STARTUP_SCAN_DELAY_MS = 5_000
+
+/**
+ * How long an agent's session command waits for the window to restore its sessions (`agent-session-control` D9).
+ * Bounded: a crashed renderer fires neither `did-navigate` nor `destroyed`.
+ */
+const COMMAND_GATE_TIMEOUT_MS = 60_000
 
 /**
  * PRD §12 的信任模型。明確寫出而非依賴 Electron 預設值 —— 預設值會隨版本改變，
@@ -717,6 +729,59 @@ void app.whenReady().then(async () => {
       remoteAttention.onReported(sessionId, title, summary)
     },
   })
+  /**
+   * An agent's session commands (`agent-session-control`). Existence is the relations file's rule
+   * (`sessionExists` over the same world), so "listed in the tree" and "may be commanded" cannot come apart.
+   */
+  const commandWorld = (): { session: PersistedSession; exists: boolean }[] => {
+    const world = currentRelationsWorld(store, sessionStore)
+    const folders = new Set(world.folders.map((folder) => folder.id))
+    return world.view.map((entry) => ({
+      session: entry.session,
+      exists: sessionExists({
+        inList: true,
+        exited: false,
+        folderInWorkspace: entry.session.folderId === null || folders.has(entry.session.folderId),
+        provisional: entry.provisional,
+        ptyAlive: world.running.has(entry.session.id),
+      }),
+    }))
+  }
+  const sessionControl = new SessionControl({
+    sessions: commandWorld,
+    running: (sessionId) => runningAgents().includes(sessionId),
+    refreshWait: (sessionId) => void refreshWait(sessionId),
+    inTurn: (sessionId) => inTurnOf(sessionId),
+    subscribeWait: (sessionId, listener) => subscribeWait(sessionId, () => listener()),
+    onKeystroke,
+    agentEventsEnabled: () => preferencesStore.get().agentEvents !== false,
+    runs: { runStartedAt, lastProcessChangeAt, expectCommandEnd, cancelCommandEnd },
+    whenReady: async () => {
+      const window = liveWindow()
+      if (!window) return 'no-window'
+      return (await whenRestored(window.webContents.id, COMMAND_GATE_TIMEOUT_MS)) ? 'ready' : 'timeout'
+    },
+    request: (action) => {
+      const window = liveWindow()
+      return window ? requestRenderer(window.webContents.id, action) : Promise.resolve({ ok: false, code: 'NO_WINDOW' })
+    },
+    describe: (sessionId) => {
+      const session = commandWorld().find((entry) => entry.exists && entry.session.id === sessionId)?.session
+      if (!session) return null
+      const item = session.folderId === null ? 'Global' : (store.list().find((f) => f.id === session.folderId)?.name ?? '')
+      const label = preferredTitle(session) ?? session.peerName
+      return label ? `${item} · ${label}` : item
+    },
+    reject: (code, label, detail, failure) => intakeService.reject(code, label, detail, { adapter: HANDOFF_ADAPTER, ...failure }),
+    reportFailure: (code, detail, failure) =>
+      intakeService.reportFailure({ code, ...(detail === undefined ? {} : { detail }), ...failure, at: Date.now() }),
+  })
+  // A waiting command dies with its target's process, whatever ended it (D3).
+  onPtyChange(() => {
+    const running = new Set(runningAgents())
+    for (const sessionId of sessionControl.pendingTargets()) if (!running.has(sessionId)) sessionControl.processEnded(sessionId)
+  })
+
   const handoffService = new HandoffService({
     service: intakeService,
     sourceOf: (sessionId) => {
@@ -728,10 +793,15 @@ void app.whenReady().then(async () => {
       const folder = session.folderId === null ? null : store.list().find((f) => f.id === session.folderId)
       // 與分頁、關係檔同一個取用順序（`preferredTitle`）—— 子 session 再交接時，「← 來源」說的是交接標題。
       const title = preferredTitle(session)
+      // Over **every** record, provisional ones included (`agent-session-control` D4): existence filters what is
+      // shown and targeted, never the walk.
+      const records = new Map(sessionStore.view().map((entry) => [entry.session.id, entry.session]))
+      const ancestors = ancestryOf(sessionId, (id) => records.get(id))
       return {
         folderId: session.folderId,
         label: session.folderId === null ? 'Global' : (folder?.name ?? session.folderId),
         ...(title ? { title } : {}),
+        ...(ancestors.length > 0 ? { ancestors } : {}),
       }
     },
     // **與自我介紹的清單同源** —— 分成兩份的話，agent 手上的選項與接收端認得的選項會分岔。
@@ -739,6 +809,7 @@ void app.whenReady().then(async () => {
     agentEventsEnabled: () => preferencesStore.get().agentEvents !== false,
     requestAutoAccept: (adapter, id, folderId) => requestAutoAccept?.(adapter, id, folderId),
     acceptReport: (sessionId, summary, identity) => completion.acceptReport(sessionId, summary, identity),
+    control: (sourceId, kind, contents, identity, mtimeMs) => sessionControl.deliver(sourceId, kind, contents, identity, mtimeMs),
   })
   registerHandoffService(handoffService)
   void handoffService.start().catch((error) => {

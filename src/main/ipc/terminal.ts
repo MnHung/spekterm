@@ -27,6 +27,7 @@ import type { FsResult } from './fs'
 import { disposeConversationFor } from './conversation'
 import { attachmentStore } from '../remote-attachments'
 import { RemoteOutput } from '../remote-output'
+import { closeRestoreGate, openRestoreGate } from '../restore-gate'
 
 /**
  * Recent pty output for remote terminal watches (`remote-protocol`). Fed from the same `data` path that
@@ -359,6 +360,8 @@ function serviceFor(
    * window; on macOS the process keeps running and a window can be closed and reopened many times.
    */
   const releaseRenderer = (): void => {
+    // The next page has not restored its sessions yet: session commands wait for it (`agent-session-control` D9).
+    closeRestoreGate(contents.id)
     hibernation.setDisplayed(contents.id, null)
     // 尚未被 renderer 送來持久化的 session 永遠不會被送來了（新頁面不知道它們）。
     sessions.dropProvisional()
@@ -546,6 +549,9 @@ export function registerTerminalHandlers(
     if (!Array.isArray(incoming)) return
     const service = serviceFor(store, sessions, preferences, event.sender)
     const contentsId = event.sender.id
+    // At receipt, before the debounce: the renderer sends its list only once its restore is done
+    // (`agent-session-control` D9), and a command must not wait 500 ms more for nothing.
+    openRestoreGate(contentsId)
 
     const existing = pending.get(contentsId)
     if (existing) clearTimeout(existing.timer)

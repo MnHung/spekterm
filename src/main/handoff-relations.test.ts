@@ -122,6 +122,49 @@ describe('relationsOf', () => {
   })
 })
 
+describe('the descendant tree (agent-session-control)', () => {
+  const G2 = '55555555-5555-4555-8555-555555555555'
+
+  it('a grandchild hangs under its parent, with the same fields as a child', () => {
+    const r = relationsOf(P, world([session(P, 'fa'), child(C1, 'fb'), child(G, 'fb', C1)], [P, C1, G]))
+    assert.deepEqual(r?.children, [
+      { name: 'n-2222', repo: 'beta', running: true, children: [{ name: 'n-4444', repo: 'beta', running: true }] },
+    ])
+  })
+
+  it('a descendant whose parent closed hangs under its nearest existing ancestor, marked', () => {
+    // C1 is gone; G recorded the chain at ingestion.
+    const g = session(G, 'fb', { lineage: { parentId: C1, origin: { kind: 'unknown' }, ancestors: [P] } })
+    const r = relationsOf(P, world([session(P, 'fa'), g], [P, G]))
+    assert.deepEqual(r?.children, [{ name: 'n-4444', repo: 'beta', running: true, parentGone: true }])
+  })
+
+  it('a parent whose folder left the workspace is not listed, and the chain still runs through its record', () => {
+    const r = relationsOf(P, world([session(P, 'fa'), child(C1, 'fgone'), child(G, 'fb', C1)], [P, C1, G]))
+    assert.deepEqual(r?.children, [{ name: 'n-4444', repo: 'beta', running: true, parentGone: true }])
+  })
+
+  it('a descendant whose folder left the workspace is not listed', () => {
+    const r = relationsOf(P, world([session(P, 'fa'), child(C1, 'fb'), child(G, 'fgone', C1)], [P, C1, G]))
+    assert.deepEqual(r?.children, [{ name: 'n-2222', repo: 'beta', running: true }])
+  })
+
+  it("siblings carry no descendants, and a sibling's child is not in the tree", () => {
+    const r = relationsOf(C1, world([session(P, 'fa'), child(C1, 'fb'), child(C2, 'fb'), child(G, 'fb', C2)], [P, C1, C2, G]))
+    assert.deepEqual(r?.siblings, [{ name: 'n-3333', repo: 'beta', running: true }])
+    assert.deepEqual(r?.children, [])
+    assert.ok(!JSON.stringify(r).includes('n-4444'))
+  })
+
+  it('the tree holds no path field and no spekterm id at any depth', () => {
+    const r = relationsOf(P, world([session(P, 'fa'), child(C1, 'fb'), child(G, 'fb', C1), child(G2, 'fb', G)], [P, C1, G, G2]))
+    const text = JSON.stringify(r)
+    for (const id of [P, C1, G, G2]) assert.ok(!text.includes(id), id)
+    assert.ok(!/"(path|cwd|dir|parentId|ancestors)"/.test(text))
+    assert.equal(r?.children[0]?.children?.[0]?.children?.[0]?.name, 'n-5555')
+  })
+})
+
 describe('refreshRelations', () => {
   let base: string
   beforeEach(() => {

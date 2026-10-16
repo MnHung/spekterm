@@ -68,6 +68,11 @@ export interface FailureContext {
   target?: string
   /** 來源座標的標籤（folder 名稱／`Global`／已結束）。 */
   origin?: string
+  /**
+   * What failed, when a code alone cannot say: `FIELD_TYPE` and `TOO_LONG` are shared by handoffs and session
+   * commands (`agent-session-control` D6). Only the notification reads it; it is not persisted with the trace.
+   */
+  subject?: 'command'
 }
 
 /** 一次**永久性**失敗 —— 由 adapter 經 `reportFailure()` 送出，供通知與痕跡消費。 */

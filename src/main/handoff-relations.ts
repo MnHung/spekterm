@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
+import { ancestryOf } from '../shared/lineage/ancestry'
 import { sessionExists } from '../shared/lineage/existence'
 import { preferredTitle } from '../shared/lineage/label'
 import type { LifecycleState } from '../shared/lineage/lifecycle'
@@ -37,6 +38,16 @@ export interface RelatedSession {
   state?: LifecycleState
   /** 最新一份完成報告的摘要（有的話）。母 session 錯過訊息時從這裡讀得到結果。 */
   summary?: string
+  /**
+   * The sessions this one handed off, and so on at every depth (`agent-session-control` design D5). Present only on
+   * a descendant entry that has descendants of its own; absent on the parent and on siblings.
+   */
+  children?: RelatedSession[]
+  /**
+   * This descendant's direct parent no longer exists (closed, or its folder left the workspace), so it hangs under
+   * its nearest ancestor that does. Not "closed": a parent can be gone without having been closed.
+   */
+  parentGone?: true
 }
 
 export interface ClosedParent {
@@ -120,9 +131,7 @@ export function relationsOf(selfId: string, world: RelationsWorld): Relations | 
     }
   }
 
-  const children = live
-    .filter((entry) => entry.session.lineage?.parentId === selfId)
-    .map((entry) => describe(entry.session, true))
+  const children = descendantTree(selfId, live, world.view, (session) => describe(session, true))
 
   // **兄弟以同一個 parentId 判定，不以母 session 是否存在判定** —— 母 session 關閉之後，它交接出來
   // 的那幾件事並沒有因此結束，它們之間仍可能需要協調。
@@ -133,6 +142,45 @@ export function relationsOf(selfId: string, world: RelationsWorld): Relations | 
     : []
 
   return { self: { ...(self.peerName ? { name: self.peerName } : {}) }, parent, children, siblings }
+}
+
+/**
+ * The descendants of `selfId` as a tree: each hangs under its nearest existing ancestor within the subtree, and
+ * one whose direct parent is gone says so.
+ *
+ * The chain is walked over **every record** (`all`), not only the existing ones: a session whose folder left the
+ * workspace still links its descendants to their ancestors. Existence (`live`) only decides who is listed, the same
+ * split command authorization uses, so "listed in the tree" and "may be commanded" cannot come apart.
+ */
+function descendantTree(
+  selfId: string,
+  live: readonly { session: PersistedSession }[],
+  all: readonly { session: PersistedSession }[],
+  describe: (session: PersistedSession) => RelatedSession,
+): RelatedSession[] {
+  const records = new Map(all.map((entry) => [entry.session.id, entry.session]))
+  const liveIds = new Set(live.map((entry) => entry.session.id))
+  const under = new Map<string, PersistedSession[]>()
+  for (const { session } of live) {
+    if (session.id === selfId) continue
+    const chain = ancestryOf(session.id, (id) => records.get(id))
+    const reach = chain.indexOf(selfId)
+    if (reach < 0) continue
+    // The nearest ancestor that is listed: a descendant of self that exists, or self.
+    const hang = chain.slice(0, reach).find((id) => liveIds.has(id)) ?? selfId
+    under.set(hang, [...(under.get(hang) ?? []), session])
+  }
+  const build = (id: string): RelatedSession[] =>
+    (under.get(id) ?? []).map((session) => {
+      const entry = describe(session)
+      const nested = build(session.id)
+      return {
+        ...entry,
+        ...(session.lineage?.parentId !== id ? { parentGone: true as const } : {}),
+        ...(nested.length > 0 ? { children: nested } : {}),
+      }
+    })
+  return build(selfId)
 }
 
 /** 最近一次寫出的內容 —— 只寫有變的檔。 */

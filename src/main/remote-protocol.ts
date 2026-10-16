@@ -54,6 +54,13 @@ export type HostAction =
   | { kind: 'hibernate'; sessionId: string; force: boolean }
   | { kind: 'close'; sessionId: string; force: boolean }
   | { kind: 'accept'; adapter: string; id: string; folderId: string }
+  /**
+   * An agent asked to close its own session, and its turn ended (`agent-session-control` D12): show the offer, do
+   * not close. `withdraw-close` takes it back (a keystroke into the session). Window-channel only: neither is a
+   * device operation.
+   */
+  | { kind: 'offer-close'; sessionId: string }
+  | { kind: 'withdraw-close'; sessionId: string }
 
 export interface ConversationSink {
   update(update: FollowUpdate): void

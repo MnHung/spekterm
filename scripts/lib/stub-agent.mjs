@@ -430,6 +430,17 @@ export function makeStubAgent(
       commit: () => 'mv "$SPEKTERM_HANDOFF_DIR/.report.partial" "$SPEKTERM_HANDOFF_DIR/report-$(date +%s%N).json"',
     },
     /**
+     * A session command (`agent-session-control`), written into **that session's own** drop point like a report:
+     * `stage` writes a dot-named staging file the product does not read, `commit` renames it into place.
+     */
+    control: {
+      stage: (payload) => {
+        const json = JSON.stringify(payload).replace(/'/g, "'\\''")
+        return `printf '%s' '${json}' > "$SPEKTERM_HANDOFF_DIR/.control.partial"`
+      },
+      commit: () => 'mv "$SPEKTERM_HANDOFF_DIR/.control.partial" "$SPEKTERM_HANDOFF_DIR/control-$(date +%s%N).json"',
+    },
+    /**
      * The blocks one session's stub read, in order: `{ atMs, text }`. `atMs` is when the block arrived
      * (milliseconds, fractional). See the read loop: one block is one read of whatever the tty held.
      */

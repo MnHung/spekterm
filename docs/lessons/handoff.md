@@ -483,3 +483,80 @@ What was done, and why each choice:
 - **The clock helper needs a budget.** `rescanOnce` first ticked the mocked clock "until a re-read
   started"; the control group with a five-minute default stayed green, because it simply ticked five
   times. It now advances at most one minute of mocked time per call.
+
+## Session commands: "in a turn", the chain, and what yields (`agent-session-control`)
+
+An agent can close, hibernate or rename its own session and its descendants by writing `{"kind": "close" |
+"hibernate" | "rename", ...}` into its drop point (`src/main/session-control.ts`). Four things fail silently if
+forgotten.
+
+### "In a turn" is not the wait state
+
+`ready` is the wrong signal for "the turn has ended", in both directions (measured, CLI 2.1.301,
+`docs/lessons/transcript.md` "Turn boundaries"):
+
+- **`ready` is set too early.** A mid-turn compaction's `SessionStart` sets it, and so does a `Stop` that
+  leaves a background subagent running.
+- **`ready` is set when nothing happened.** `idle_prompt` sets it 60 s after a turn.
+- **`ready` is cleared when nothing happened.** A stray subagent `PreToolUse` after a turn clears it, so a
+  finished child could never be closed.
+- **A turn can report no start at all.** A `!cmd` reports only its `Stop`.
+
+So `inTurnOf` (`agent-wait.ts`) is its own fact. A turn starts with an own `UserPromptSubmit` **or any
+keystroke**, and it ends only at the agent's own boundaries:
+
+- `Stop` with no background subagent running (a background **shell** does not hold it);
+- `StopFailure`;
+- `SessionStart` that is not a compaction;
+- the `SessionStart(compact)` that follows a **manual** `PreCompact` (the user's `/compact` reports no `Stop`).
+
+`busyReason` is not the answer either: it counts an unsent prompt as busy.
+
+A keystroke into the target also **drops** a waiting command. An Esc interruption reports nothing, so the turn
+stays open until the user's next turn, and that turn's end would otherwise fire the command. The safe-direction
+cost: a command sent to an interrupted session never runs, and nobody is told.
+
+**xterm's answers to the agent's startup queries reach the pty as writes** (DA1, XTVERSION, the kitty keyboard
+query). `isTerminalReport` treats them as the terminal's own. Without that, a freshly started session counts as
+typed into, and it is never at rest.
+
+### The chain is taken at ingestion
+
+Lineage used to record only the direct parent, and a closed intermediate broke the link to a grandchild.
+`SessionLineage.ancestors` now holds the rest of the chain. **It is taken when the handoff is ingested**
+(`verified.source.ancestors`), not when its session is created: the two can be days apart, and a parent closed
+in between would leave `[parent]` only. `ancestryOf` (`src/shared/lineage/ancestry.ts`) walks **every record**.
+Existence only decides who is listed and who may be targeted, so the relations tree and command authorization
+cannot disagree.
+
+### What a command yields to
+
+The drop point is read at a session's end only by `kill` (a close). Neither a hibernation nor a quit reads it,
+and the periodic re-read can be up to 30 s late. A close or hibernate is therefore dropped when its file's mtime
+(taken from the read, never a second `stat`) is older than either:
+
+- the target's last process start or end in this run (`session-runs.ts`, process-wide, because macOS reopens
+  windows);
+- the run's start.
+
+An end the command itself caused does not count, so the latest command still wins.
+
+### An agent's close of its own session is offered, not carried out
+
+Dogfood: a close at the end of the turn worked, and took away a reply that mattered the moment it appeared. A
+self-close now sends `offer-close` to the window (`CloseOffer.tsx`, in both views). Nothing ends until the user
+chooses Close; Keep, or any keystroke into the session (`withdraw-close` from the main process, the same
+`onKeystroke` that drops a waiting command), withdraws it. The offer's container is `pointer-events-none`: only
+its two buttons take the pointer, so the reply under it stays selectable and scrollable — the probe hit-tests the
+terminal under it, and a covering backdrop turns that red. It takes no focus. A descendant's close and the
+agent's own hibernation are not offered: "close the finished handoffs" stays one request.
+
+### Classification and delivery
+
+- `CONTROL_UNAVAILABLE` (agent events off) and `CONTROL_NO_WINDOW` are **temporary**, as `agent-intake` rules a
+  failure a resend could overcome: they leave a trace and send no notification. They are consumed anyway:
+  "temporary" decides only the notification.
+- **`deliver` never awaits the window.** The drop points are read one file at a time, so a command waiting on
+  a window would stall every handoff and report behind it. Requests run asynchronously behind a per-window restore
+  gate (`restore-gate.ts`, bounded at 60 s). A failure after the file was consumed reports both halves itself:
+  `reject` and, for a permanent code, `reportFailure`.

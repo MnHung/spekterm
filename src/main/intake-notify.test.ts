@@ -239,6 +239,31 @@ describe('失敗的通知', () => {
   })
 })
 
+describe('a failed session command (agent-session-control)', () => {
+  const failure = (over: Partial<IntakeFailure> = {}): IntakeFailure => ({ code: 'CONTROL_NOT_ALLOWED', at: 1, ...over })
+
+  it('a single one is named a session command, not a handoff, and carries no delivered text', () => {
+    const payload = buildPayload([{ kind: 'failure', failure: failure({ subject: 'command', target: 'TARGET-MARKER' }) }])
+    assert.equal(payload.title, 'Session command')
+    assert.match(payload.body, /^A session command could not be carried out: /)
+    assert.ok(!payload.body.includes('handoff'))
+    assert.ok(!`${payload.title}${payload.body}`.includes('TARGET-MARKER'))
+  })
+
+  it('a shared code without the subject keeps the handoff text', () => {
+    const payload = buildPayload([{ kind: 'failure', failure: failure({ code: 'FIELD_TYPE' }) }])
+    assert.match(payload.body, /^A handoff could not be delivered: /)
+  })
+
+  it('a merged notification keeps its general text', () => {
+    const payload = buildPayload([
+      { kind: 'failure', failure: failure({ subject: 'command' }) },
+      { kind: 'failure', failure: failure({ subject: 'command' }) },
+    ])
+    assert.equal(payload.body, 'Open the inbox to review them.')
+  })
+})
+
 describe('通知的文字', () => {
   it('**標題不含投遞提供的任何值**', () => {
     const payload = buildPayload([

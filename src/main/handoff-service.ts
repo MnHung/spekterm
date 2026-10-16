@@ -2,7 +2,9 @@ import fs from 'node:fs'
 
 import {
   buildDelivery,
+  type CommandKind,
   HANDOFF_ADAPTER,
+  isCommandKind,
   MAX_REPORT_LENGTH,
   outboxKindOf,
   parseHandoffPayload,
@@ -13,7 +15,7 @@ import { clearOutbox, outboxRoot, sourceSessionOf } from './handoff-outbox'
 import { resolveTarget, type TargetCandidate } from './handoff-target'
 import type { DeliverOutcome, IntakeService } from './intake-service'
 import { sourceTitle, type HandoffSource as LineageSource } from './intake-schema'
-import { IntakeSource, type IntakeSourceOptions } from './intake-source'
+import { type FileState, IntakeSource, type IntakeSourceOptions } from './intake-source'
 import { isUuid } from './session-store'
 
 /** 來源 session 的座標。`folderId` 為 `null` ＝ 全域 session。 */
@@ -22,6 +24,8 @@ export interface HandoffSource {
   label: string
   /** 來源 session 當下的標籤（`customTitle ?? title`）。沒有時缺席。 */
   title?: string
+  /** The source's own chain of ancestors now, nearest first (`ancestryOf`). Empty or absent: none. */
+  ancestors?: string[]
 }
 
 /**
@@ -35,6 +39,8 @@ export interface HandoffSource {
 export function lineageSourceOf(sessionId: string, source: HandoffSource | null): LineageSource | undefined {
   if (!isUuid(sessionId)) return undefined
   const title = source?.title ? sourceTitle(source.title) : ''
+  // Only ids, so nothing a path could ride on; `parseAncestors` caps and validates them on every read back.
+  const ancestors = source?.ancestors?.filter(isUuid) ?? []
   return {
     sessionId,
     origin: !source
@@ -43,6 +49,7 @@ export function lineageSourceOf(sessionId: string, source: HandoffSource | null)
         ? { kind: 'global' }
         : { kind: 'folder', folderId: source.folderId, folderName: source.label },
     ...(title !== '' ? { title } : {}),
+    ...(ancestors.length > 0 ? { ancestors } : {}),
   }
 }
 
@@ -77,6 +84,11 @@ export interface HandoffServiceDeps {
    */
   acceptReport?: (sessionId: string, summary: string, identity: string) => ReportDecision
   /**
+   * An agent's session command (`agent-session-control`, `SessionControl.deliver`). Unprovided ⇒ the command kinds
+   * are refused as an unknown kind is. `mtimeMs` is the file's time as the read saw it.
+   */
+  control?: (sourceId: string, kind: CommandKind, contents: string, identity: string, mtimeMs: number | undefined) => DeliverOutcome
+  /**
    * **Tests only**, passed through to the outboxes' `IntakeSource`: a watcher that reports nothing,
    * and an observer of the periodic re-read. **The interval is deliberately not passed through** —
    * the tests exercise the default production uses.
@@ -108,7 +120,7 @@ export class HandoffService {
       service: this.#deps.service,
       // 落點是**每個 session 一層**：`<root>/<sessionId>/*.json`。
       depth: 1,
-      deliver: (contents, file) => this.deliverFile(contents, file),
+      deliver: (contents, file, state) => this.deliverFile(contents, file, state),
       /**
        * **這條路徑上的永久性失敗要發通知** —— 「被拒絕的投遞不發通知」那條規則明文的例外。
        *
@@ -138,7 +150,7 @@ export class HandoffService {
   }
 
   /** 一份投遞檔 → 一次 `deliver()`。 */
-  async deliverFile(contents: string, file: string): Promise<DeliverOutcome> {
+  async deliverFile(contents: string, file: string, state?: FileState): Promise<DeliverOutcome> {
     const { service } = this.#deps
 
     const sessionId = sourceSessionOf(file)
@@ -150,6 +162,13 @@ export class HandoffService {
     if (kind === 'malformed') return { ok: false, code: 'MALFORMED', consume: false, notify: false }
     if (kind === 'unknown') return service.reject('FIELD_TYPE', sessionId, 'kind', { adapter: HANDOFF_ADAPTER })
     if (kind === 'report') return this.#deliverReport(sessionId, contents, file)
+    if (isCommandKind(kind)) {
+      const control = this.#deps.control
+      if (!control) return service.reject('FIELD_TYPE', sessionId, 'kind', { adapter: HANDOFF_ADAPTER })
+      // The time comes from the read, never a second `stat` (`agent-session-control` D6).
+      const outcome = control(sessionId, kind, contents, reportIdentity(file, state?.mtimeMs, contents), state?.mtimeMs)
+      return outcome
+    }
 
     const payload = parseHandoffPayload(contents)
     if (!payload.ok) {

@@ -11,6 +11,7 @@ import {
   stateOf,
   type WaitState,
 } from './agent-events'
+import { lastKeystrokeAt } from './pty-input'
 
 /**
  * 等待狀態的求值 —— **per session、訂閱式，而且只有一個 drainer**。
@@ -52,6 +53,8 @@ export interface WaitSnapshot {
   count: number
   /** The batch contained a turn completion (`DrainResult.turnEnded`). */
   turnEnded: boolean
+  /** A turn is in progress (`inTurnOf`, `agent-session-control` design D3). */
+  inTurn: boolean
   /** One entry per permission request in the batch (`DrainResult.choicesRaised`). */
   choicesRaised: { tool: string; arg: string | null }[]
   /** Tool calls that ended in the batch (`DrainResult.finished`). */
@@ -110,6 +113,18 @@ export function waitStateOf(sessionId: string): WaitState {
   return stateOf(heldOf(sessionId))
 }
 
+/**
+ * Whether a turn is in progress (`agent-session-control` design D3): an own `UserPromptSubmit`, or **any
+ * keystroke**, since the last turn end. A keystroke counts because some turns report no start at all (a `!cmd`
+ * reports only its `Stop`, measured). `lastKeystrokeAt` is wall-clock ms, the clock of the event files' names.
+ */
+export function inTurnOf(sessionId: string, keystrokeAt: number | null = lastKeystrokeAt(sessionId)): boolean {
+  const held = heldOf(sessionId)
+  if (held.submitted) return true
+  if (keystrokeAt === null) return false
+  return held.turnEndAt === null || keystrokeAt > held.turnEndAt
+}
+
 export function pendingRequestOf(sessionId: string): { tool: string; arg: string | null } | null {
   return pendingOf(heldOf(sessionId))
 }
@@ -128,6 +143,7 @@ function snapshotOf(sessionId: string, extra: Partial<WaitSnapshot> = {}): WaitS
     transcriptPath: null,
     count: 0,
     turnEnded: false,
+    inTurn: inTurnOf(sessionId),
     choicesRaised: [],
     finished: [],
     poke: false,
@@ -229,6 +245,9 @@ export function dismissRequest(sessionId: string, requestId: string): boolean {
   if (request.agentId === null) {
     held.starts = held.starts.filter((start) => start.agentId !== null)
     held.base = 'ready'
+    // Every measured dismissal of the agent's own prompt ended its turn, and it reports nothing (D3).
+    held.turnEndAt = Date.now()
+    held.submitted = false
   }
   pokeWait(sessionId)
   return true
@@ -267,7 +286,8 @@ export function subscribeWait(sessionId: string, subscriber: Subscriber): () => 
  */
 export function forgetRequests(sessionId: string): void {
   if (!helds.has(sessionId)) return
-  helds.set(sessionId, heldWait())
+  // A process that ended has no turn in progress (D3 of `agent-session-control`).
+  helds.set(sessionId, heldWait('unknown', Date.now()))
 }
 
 /** session 結束時清除。**agent 回報的「對話結束」不是這個訊號。** */

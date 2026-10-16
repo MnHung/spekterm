@@ -25,6 +25,16 @@ test('an answer\'s own keys and the terminal\'s focus and mouse reports are not'
   assert.equal(isTerminalReport('\x1b[Ix'), false)
 })
 
+test("xterm's answers to the agent's startup queries are the terminal's, and keys are not", () => {
+  for (const answer of ['\x1b[?1;2c', '\x1b[>0;276;0c', '\x1bP>|xterm.js(6.1.0-beta.302)\x1b\\', '\x1b[?0u', '\x1b[?1;2c\x1b[?0u']) {
+    assert.equal(isTerminalReport(answer), true, JSON.stringify(answer))
+  }
+  // Keys, including kitty-encoded ones and modified arrows, stay keystrokes.
+  for (const key of ['\x1b[97u', '\x1b[1;5A', '\x1b[A', 'c', '\x1b[?1;2cx', '\x1b[13;2u']) {
+    assert.equal(isTerminalReport(key), false, JSON.stringify(key))
+  }
+})
+
 test('listeners hear each keystroke', () => {
   const heard: string[] = []
   const off = onKeystroke((id) => heard.push(id))

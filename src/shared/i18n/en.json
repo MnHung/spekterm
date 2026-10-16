@@ -301,6 +301,12 @@
     "paste": "Paste",
     "wakeFailed": "Cannot restore this session: {{message}}",
     "wake": "Wake",
+    "closeOffer": {
+      "label": "The agent asked to close this session",
+      "text": "The agent asked to close this session.",
+      "close": "Close",
+      "keep": "Keep"
+    },
     "hibernate": "Hibernate",
     "dormantShell": "Hibernated · waking opens a new shell in its last working directory. Unexported variables, unsaved command history and running jobs were not kept.",
     "dormantClaude": "Hibernated · waking resumes the conversation",
@@ -661,7 +667,12 @@
       "TARGET_NOT_FOUND": "named a repo that is not in this workspace",
       "TARGET_AMBIGUOUS": "named a repo whose name is not unique",
       "PREFILL_UNAVAILABLE": "could not be opened — agent event reporting is off",
-      "REPORT_NOT_HANDOFF": "reported completion from a session that was not opened by a handoff"
+      "REPORT_NOT_HANDOFF": "reported completion from a session that was not opened by a handoff",
+      "CONTROL_TARGET_NOT_FOUND": "named a session that does not exist",
+      "CONTROL_NOT_ALLOWED": "named a session it did not hand off",
+      "CONTROL_FAILED": "the session could not be acted on",
+      "CONTROL_NO_WINDOW": "no window was open to act on the session",
+      "CONTROL_UNAVAILABLE": "could not wait for the session's turn to end — agent event reporting is off"
     },
     "rules": {
       "label": "Routing rules",
@@ -686,7 +697,9 @@
       "singleNoActor": "{{origin}} — {{title}}",
       "merged": "Open the inbox to review them.",
       "link": "[link]",
-      "failure": "A handoff could not be delivered: {{reason}}"
+      "failure": "A handoff could not be delivered: {{reason}}",
+      "commandTitle": "Session command",
+      "commandFailure": "A session command could not be carried out: {{reason}}"
     },
     "badge": "{{total}} waiting",
     "openedLabel": "Already opened",

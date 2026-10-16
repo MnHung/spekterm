@@ -170,10 +170,14 @@ export function buildPayload(items: readonly NotifyItem[]): NotifyPayload {
    * 使用者要知道是哪一件事，去收件匣看痕跡 —— 而這則通知的效果正是打開收件匣。
    */
   if (failures.length === 1 && batch.length === 0) {
-    return {
-      title: t('intake.notify.title'),
-      body: t('intake.notify.failure', { reason: t(`intake.rejectReason.${failures[0].failure.code}`) }),
+    const { failure } = failures[0]
+    const reason = t(`intake.rejectReason.${failure.code}`)
+    // A session command is not a handoff, and saying "a handoff could not be delivered" sends the user looking
+    // for one (`agent-session-control`). A merged notification below counts items without naming them.
+    if (failure.subject === 'command') {
+      return { title: t('intake.notify.commandTitle'), body: t('intake.notify.commandFailure', { reason }) }
     }
+    return { title: t('intake.notify.title'), body: t('intake.notify.failure', { reason }) }
   }
   if (failures.length > 0) {
     return {

@@ -28,6 +28,7 @@ function harness(options: {
   eventsEnabled?: boolean
   /** 完成報告的採納（`handoff-completion`）。每一次呼叫都記下來。 */
   report?: (sessionId: string, summary: string, identity: string) => ReportDecision
+  control?: HandoffServiceDeps['control']
   sourceTesting?: HandoffServiceDeps['sourceTesting']
 } = {}): Harness {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'handoff-service-'))
@@ -45,6 +46,7 @@ function harness(options: {
     agentEventsEnabled: () => options.eventsEnabled !== false,
     requestAutoAccept: (_adapter, id, folderId) => autoAccepted.push({ id, folderId }),
     ...(options.report ? { acceptReport: options.report } : {}),
+    ...(options.control ? { control: options.control } : {}),
     ...(options.sourceTesting ? { sourceTesting: options.sourceTesting } : {}),
   })
   return {
@@ -543,5 +545,32 @@ describe('the periodic re-read of the outboxes', () => {
     assert.equal(failures.length, 1, 'one notification-bearing failure report')
     const traces = h.service.notices().reduce((sum, n) => sum + n.count, 0)
     assert.equal(traces, 1, 'one rejection trace occurrence')
+  })
+})
+
+describe('session commands (agent-session-control)', () => {
+  test('a command kind goes to the control with its source, its identity and the read\'s time', async () => {
+    const calls: { source: string; kind: string; identity: string; mtimeMs: number | undefined }[] = []
+    const h = harness({
+      control: (source, kind, _contents, identity, mtimeMs) => {
+        calls.push({ source, kind, identity, mtimeMs })
+        return { ok: true, consume: true, notify: false }
+      },
+    })
+    const file = h.file('s1', 'c.json', { kind: 'close', target: 'beta-1a2b' })
+    const outcome = await h.handoff.deliverFile(fs.readFileSync(file, 'utf8'), file, { mtimeMs: 42, size: 1 })
+    assert.equal(outcome.ok, true)
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0]?.source, 's1')
+    assert.equal(calls[0]?.kind, 'close')
+    assert.equal(calls[0]?.mtimeMs, 42)
+    assert.equal(h.store.list().length, 0, 'a command is not an inbox item')
+  })
+
+  test('without a control, the command kinds are refused as an unknown kind', async () => {
+    const h = harness()
+    const file = h.file('s1', 'c.json', { kind: 'hibernate' })
+    const outcome = await h.handoff.deliverFile(fs.readFileSync(file, 'utf8'), file)
+    assert.equal(outcome.code, 'FIELD_TYPE')
   })
 })

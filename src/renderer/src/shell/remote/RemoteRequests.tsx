@@ -4,7 +4,9 @@ import { runAccept } from '../intake/accept-flow'
 import { useSessions } from '../terminal/sessions'
 
 /**
- * Carries out a paired device's session actions (`remote-protocol`, design D4 of `mobile-remote-bridge`).
+ * Carries out a paired device's session actions (`remote-protocol`, design D4 of `mobile-remote-bridge`), and an
+ * agent's session commands (`agent-session-control`): close, hibernate and rename arrive through the same request,
+ * already decided by the main process (who, whether, when), and run here the same quiet way.
  *
  * The renderer owns the session list, so the main process asks it (`workspace:remote:request`) and waits for
  * the outcome. Every action goes through the path the desktop's own controls use, **quietly**: nothing here
@@ -63,6 +65,13 @@ export function RemoteRequests(): null {
               const now = latest.current.all().find((candidate) => candidate.id === session.id)
               if (hibernated || (now && now.status !== 'exited')) reply({ ok: true, sessionId: session.id })
               else reply({ ok: false, code: 'NOT_FOUND', message: 'the session has ended' })
+              return
+            }
+            if (action.kind === 'offer-close' || action.kind === 'withdraw-close') {
+              // An agent's close of its own session is offered, not carried out (`agent-session-control` D12).
+              if (action.kind === 'offer-close') api.offerClose(action.sessionId)
+              else api.withdrawCloseOffer(action.sessionId)
+              reply({ ok: true, sessionId: action.sessionId })
               return
             }
             if (action.kind === 'wake') {

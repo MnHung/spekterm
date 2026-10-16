@@ -56,15 +56,24 @@ export function isPermanentRejection({ code, notify }: RejectionOutcome): boolea
     case 'TARGET_NOT_FOUND':
     case 'TARGET_AMBIGUOUS':
     case 'REPORT_NOT_HANDOFF': // 同一個 session 再報告一次，它仍然不是交接建立的。
+    case 'CONTROL_TARGET_NOT_FOUND': // The same name, resent, names the same nothing.
+    case 'CONTROL_NOT_ALLOWED':
+    case 'CONTROL_FAILED': // The session is gone, or the interface failed on it.
       return true
 
     // ── 暫時：狀態或設定改變後可能成功 ──────────────────────────────────────
     // `MALFORMED` —— 可能只是寫到一半，補寫完就過。
     // `CAPACITY` —— 使用者清一清收件匣就過。
     // `PREFILL_UNAVAILABLE` —— 使用者把 agent 事件回報打開就過。
+    // `CONTROL_NO_WINDOW` —— a window coming back would let it succeed. The file is consumed anyway (`reject()`
+    // always consumes), so "temporary" decides only the notification: a stale close cannot fire later
+    // (`agent-session-control` D6).
+    // `CONTROL_UNAVAILABLE` —— agent events off: a setting, as `PREFILL_UNAVAILABLE`.
     case 'MALFORMED':
     case 'CAPACITY':
     case 'PREFILL_UNAVAILABLE':
+    case 'CONTROL_NO_WINDOW':
+    case 'CONTROL_UNAVAILABLE':
       return false
 
     // ── 一個代碼、兩種行為 ──────────────────────────────────────────────────

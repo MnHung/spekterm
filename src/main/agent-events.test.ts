@@ -40,6 +40,8 @@ const ev = (name: string, extra: Partial<AgentEvent> = {}): AgentEvent => ({
   permissionMode: null,
   source: null,
   runningAgents: null,
+  backgroundAgentRunning: false,
+  trigger: null,
   ...extra,
 })
 
@@ -87,8 +89,8 @@ test('payload 以白名單取欄位，絕對路徑不外流（transcript_path �
   })
   assert.ok(parsed)
   assert.deepEqual(Object.keys(parsed).sort(), [
-    'agentId', 'answers', 'inputHash', 'name', 'notificationType', 'permissionMode', 'plan', 'questions',
-    'runningAgents', 'source', 'toolArg', 'toolName', 'toolUseId', 'transcriptPath',
+    'agentId', 'answers', 'backgroundAgentRunning', 'inputHash', 'name', 'notificationType', 'permissionMode', 'plan',
+    'questions', 'runningAgents', 'source', 'toolArg', 'toolName', 'toolUseId', 'transcriptPath', 'trigger',
   ])
   // `toolArg` 是**單一辨識參數**，其值本身可能是路徑 —— 那是刻意的（使用者要看得出 agent 在動
   // 哪個檔）。真正必須不外流的是**其餘一切**：工作目錄、暫存目錄、以及參數裡的其他欄位。

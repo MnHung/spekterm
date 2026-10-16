@@ -61,6 +61,9 @@ function narrowRemoteAction(raw: unknown): RemoteAction | null {
   if ((o.kind === 'hibernate' || o.kind === 'close') && typeof o.sessionId === 'string' && typeof o.force === 'boolean') {
     return { kind: o.kind, sessionId: o.sessionId, force: o.force }
   }
+  if ((o.kind === 'offer-close' || o.kind === 'withdraw-close') && typeof o.sessionId === 'string') {
+    return { kind: o.kind, sessionId: o.sessionId }
+  }
   if (o.kind === 'accept' && typeof o.adapter === 'string' && typeof o.id === 'string' && typeof o.folderId === 'string') {
     return { kind: 'accept', adapter: o.adapter, id: o.id, folderId: o.folderId }
   }

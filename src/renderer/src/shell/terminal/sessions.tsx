@@ -198,6 +198,14 @@ export interface SessionsApi {
   setTitle(sessionId: string, title: string): void
   /** 使用者親自命名（＝永久接管命名權）。空字串＝交還命名權，回到跟隨 pty。 */
   rename(sessionId: string, name: string): void
+  /**
+   * The agent in this session asked to close it and its turn ended (`agent-session-control` D12): its views show
+   * the offer, and nothing closes until the user chooses to. Cleared when the session stops running.
+   */
+  closeOffered(sessionId: string): boolean
+  offerClose(sessionId: string): void
+  /** The user kept the session, or something was typed into it. */
+  withdrawCloseOffer(sessionId: string): void
   /** 重排同一個 folder 之內的 session 順序。索引是該 folder 之內的序位。 */
   reorder(folderId: string | null, fromIndex: number, toIndex: number): void
   /**
@@ -299,6 +307,8 @@ function placeChild(sessions: SessionState[], newId: string): SessionState[] {
 
 export function SessionsProvider({ children }: { children: React.ReactNode }): React.JSX.Element {
   const [sessions, setSessions] = useState<SessionState[]>([])
+  /** Sessions whose agent asked to close them (D12 of `agent-session-control`). */
+  const [closeOffers, setCloseOffers] = useState<ReadonlySet<string>>(() => new Set())
   // 鍵是 session 的歸屬（`null` ＝ 全域）。Map 對 `null` 鍵完全合法，於是全域項目的 focus
   // 記憶不需要第二套資料結構。
   const [focused, setFocused] = useState<ReadonlyMap<string | null, string>>(() => new Map())
@@ -420,6 +430,27 @@ export function SessionsProvider({ children }: { children: React.ReactNode }): R
   })
 
   const isFocusHeld = useCallback((sessionId: string) => heldFocus.current?.ids.has(sessionId) ?? false, [])
+
+  // An offer lives only while its session runs: a close, a hibernation, an exit or a wake ends it. Adjusted while
+  // rendering (the list it was last checked against is kept), not in an effect.
+  const [offersCheckedAgainst, setOffersCheckedAgainst] = useState(sessions)
+  if (offersCheckedAgainst !== sessions) {
+    setOffersCheckedAgainst(sessions)
+    const running = new Set(sessions.filter((session) => session.status === 'running').map((session) => session.id))
+    const kept = [...closeOffers].filter((id) => running.has(id))
+    if (kept.length !== closeOffers.size) setCloseOffers(new Set(kept))
+  }
+  const offerClose = useCallback((sessionId: string) => {
+    setCloseOffers((current) => (current.has(sessionId) ? current : new Set([...current, sessionId])))
+  }, [])
+  const withdrawCloseOffer = useCallback((sessionId: string) => {
+    setCloseOffers((current) => {
+      if (!current.has(sessionId)) return current
+      const next = new Set(current)
+      next.delete(sessionId)
+      return next
+    })
+  }, [])
   /** A shell's screen serialized when its hibernation was requested; it becomes the replay once the pty is gone. */
   const hibernationSnapshots = useRef(new Map<string, string>())
   /** sessionId → serialize that session's screen. Registered by `TerminalView`. */
@@ -823,6 +854,9 @@ export function SessionsProvider({ children }: { children: React.ReactNode }): R
       close,
       setTitle,
       rename,
+      closeOffered: (sessionId) => closeOffers.has(sessionId),
+      offerClose,
+      withdrawCloseOffer,
       reorder,
       setOrder,
       attach,
@@ -831,6 +865,9 @@ export function SessionsProvider({ children }: { children: React.ReactNode }): R
       restoredScrollbackOf,
     }),
     [
+      closeOffers,
+      offerClose,
+      withdrawCloseOffer,
       sessions,
       focused,
       attention,

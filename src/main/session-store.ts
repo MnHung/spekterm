@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { type CompletionState, parseCompletion } from '../shared/lineage/lifecycle'
+import { parseAncestors } from '../shared/lineage/ancestry'
 import type { HandoffBrief, SessionLineage } from '../shared/lineage/types'
 import { MAX_FIELD_LENGTH, parseHandoffSource } from './intake-schema'
 import { decidePeerName, isValidPeerName } from './peer-name'
@@ -124,11 +125,13 @@ export function parseLineage(raw: unknown): SessionLineage | undefined {
   const parsed = parseHandoffSource({ sessionId: r.parentId, origin: r.origin, title: r.parentTitle })
   if (!parsed) return undefined
   const brief = parseHandoffBrief(r.brief)
+  const ancestors = parseAncestors(r.ancestors)
   return {
     parentId: parsed.sessionId,
     origin: parsed.origin,
     ...(parsed.title ? { parentTitle: parsed.title } : {}),
     ...(brief ? { brief } : {}),
+    ...(ancestors ? { ancestors } : {}),
   }
 }
 

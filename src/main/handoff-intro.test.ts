@@ -164,3 +164,36 @@ test('告訴母 session 關係檔裡看得到子 session 的狀態與摘要', ()
   assert.match(text, /"state"/)
   assert.match(text, /"summary"/)
 })
+
+test('the session commands (agent-session-control)', async (t) => {
+  const base = { folders: [], outbox: '/o' }
+
+  await t.test('every agent session is told them, not only one created by a handoff', () => {
+    const text = introText(base)
+    assert.ok(text.includes('{"kind": "close"}'))
+    assert.ok(text.includes('{"kind": "hibernate"}'))
+    assert.ok(text.includes('{"kind": "rename", "name": "<new label>"}'))
+    assert.match(text, /With no "target" it acts on your own session/)
+  })
+
+  await t.test('states the end-of-turn rule, the keystroke cancel, the events requirement and the missing reply', () => {
+    const text = introText({ ...base, relations: '/r.json', name: 'alpha-1a2b' })
+    assert.match(text, /wait until the target finishes its current turn/)
+    assert.match(text, /Closing your own session does not close it: once your reply ends, the user is offered to close\s+or keep it/)
+    assert.match(text, /If the user types into the target before a command is\s+carried out, it is dropped/)
+    assert.match(text, /need agent event reporting to be on/)
+    assert.match(text, /You are not told whether a command was carried out/)
+    assert.match(text, /a closed one is gone, a hibernated one has "running": false/)
+    assert.match(text, /"children" tree of your relations file/)
+  })
+
+  await t.test('the name limit it states is the one applied', () => {
+    assert.ok(introText(base).includes(`"name" is at most ${MAX_FIELD_LENGTH} characters`))
+  })
+
+  await t.test('the relations paragraph describes the nesting and parentGone', () => {
+    const text = introText({ ...base, relations: '/r.json' })
+    assert.match(text, /Children nest/)
+    assert.match(text, /"parentGone": true/)
+  })
+})

@@ -17,6 +17,16 @@ import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { CALL_TIMEOUT_MS, CONNECT_TIMEOUT_MS, connect, connectToApp } from './lib/cdp.mjs'
 
+/**
+ * **The instruments' diagnostics go to stderr in this file.** `pollFor` prints its exhausted-wait line (`⏱ …`) with
+ * `console.log`, and these tests exhaust waits on purpose. In a test file's child process stdout is also the
+ * channel the `node:test` runner reads its serialized results from, and under load the runner failed to parse it
+ * ("Unable to deserialize cloned data due to invalid or unsupported version"): 3 of 5 full `npm test` runs on the
+ * `agent-session-control` tree, 0 of 5 without it (the extra test files change the scheduling). The probes keep
+ * printing to stdout; only this file moves.
+ */
+console.log = (...args) => console.error(...args)
+
 /** 每條測試的上限 —— 遠大於測試自訂的毫秒級時限，遠小於預設的 30 秒。 */
 const TEST_TIMEOUT = 3_000
 

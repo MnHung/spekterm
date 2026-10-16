@@ -574,3 +574,33 @@ agent, tool and input: parallel calls' starts can arrive 1.5 ms apart, before ei
   (`[Image #1]`). The record is then a list of a text block (the path removed) and an image block, which the
   conversation projection does not show. Inside a sentence, in backticks, the path stays text and the agent
   uses Read, which is why the attachment sentence is written that way.
+
+## Turn boundaries (`agent-session-control`, CLI 2.1.301, 2026-10-16)
+
+Measured with a real `claude` (`--model haiku`, `--setting-sources project`) driven through a pty, every hook
+dumping its full payload, and the pty's output scanned for terminal queries. **Re-measure after a CLI upgrade**:
+the turn rule of `agent-session-control` (design D3) rests on every row.
+
+| Action | Events that followed |
+|---|---|
+| prompt, text answer, then 75 s idle | `UserPromptSubmit`, `Stop` (`background_tasks: []`), **`Notification`/`idle_prompt` 60 s after `Stop`** |
+| `!sleep 8; echo done` | **nothing until `Stop`**, 11 s later (the command's end) |
+| `/compact` (manual) after one exchange | `PreCompact` (`trigger: "manual"`), a helper `SubagentStop` (+9.5 s), `SessionStart` (`source: "compact"`); **no `Stop`, no `UserPromptSubmit`** |
+| Esc 4 s into a text answer, then 75 s idle | **nothing at all**: no `Stop`, no `idle_prompt` |
+| `Bash` with `run_in_background`, turn ended | `PreToolUse`, `PostToolUse`, `Stop` with `background_tasks: [{ id, type: "shell", status: "running", description, command }]`; when it finished: `UserPromptSubmit` (the notice), `Stop` with `[]` |
+
+Three consequences:
+
+- **A turn can start with no event.** A `!cmd` reports only its end, so "a turn is in progress" has to start
+  from the write into the pty, not from an event.
+- **A manual compaction ends without a `Stop`.** Telling it from a compaction inside a turn needs `PreCompact`'s
+  `trigger`, which is why `PreCompact` is among the hooked events.
+- **A background shell is listed like a background agent**, told apart only by `type: "shell"`.
+
+**Terminal queries.** The agent sends DA1 (`CSI c`), XTVERSION (`CSI > q`) and the kitty keyboard query
+(`CSI ? u`) twice at startup, the second time after `SessionStart`, and none afterwards, through a turn and 75 s
+of idling. It also turns on focus reporting, bracketed paste, the alternate screen and mouse tracking. xterm.js
+6.1 answers the first three (`CSI ? 1 ; 2 c`, `DCS > | xterm.js(<version>) ST`, `CSI ? <flags> u`), and those
+answers reach the pty as writes. `isTerminalReport` (`src/main/pty-input.ts`) therefore counts them as the
+terminal's own, alongside focus and mouse reports. Without that, a session the user never typed into would
+count as typed into after its start.

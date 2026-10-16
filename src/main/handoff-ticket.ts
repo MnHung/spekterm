@@ -135,6 +135,8 @@ export function ticketResolutionFor(record: IntakeRecord | undefined): TicketRes
       origin: source.origin,
       ...(source.title ? { parentTitle: source.title } : {}),
       ...(brief ? { brief: { title: content.authored.title, receivedAt: content.receivedAt } } : {}),
+      // Copied, never recomputed here: the chain is the one taken at ingestion (`agent-session-control` D4).
+      ...(source.ancestors?.length ? { ancestors: [...source.ancestors] } : {}),
     },
     // **經 `bodyOf()`** —— 呈現、交付與交接單取的是同一個值（`intake-context-source` 守著這條）。
     ...(brief ? { briefBody: bodyOf({ id: record.id, ...content }) } : {}),

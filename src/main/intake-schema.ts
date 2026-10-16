@@ -33,6 +33,7 @@
  * 漏掉任何一段都不會有東西變紅。既有的正確形式見 `preferences-store` 的 `sanitizeFamily`。
  */
 
+import { parseAncestors } from '../shared/lineage/ancestry'
 import type { HandoffSourceOrigin } from '../shared/lineage/types'
 
 /**
@@ -113,6 +114,12 @@ export interface HandoffSource {
   origin: HandoffSourceOrigin
   /** 來源 session 當時的標籤。**agent 可控的文字**（pty 宣告，或使用者輸入）—— 見 `sourceTitle()`。 */
   title?: string
+  /**
+   * The source's own chain of ancestors at ingestion, nearest first (`agent-session-control` design D4). The
+   * session created for this handoff records `[source, ...ancestors]` above itself. Taken now, not at creation:
+   * the two can be days apart, and a parent closed in between would leave the chain broken.
+   */
+  ancestors?: string[]
 }
 
 const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -155,10 +162,12 @@ export function parseHandoffSource(raw: unknown): HandoffSource | undefined {
     default:
       return undefined
   }
+  const ancestors = parseAncestors(r.ancestors)
   return {
     sessionId: r.sessionId,
     origin,
     ...(typeof r.title === 'string' && r.title !== '' ? { title: sourceTitle(r.title) } : {}),
+    ...(ancestors ? { ancestors } : {}),
   }
 }
 
@@ -217,6 +226,16 @@ export type IntakeRejection =
   | 'PREFILL_UNAVAILABLE'
   /** 完成報告來自一個**不是**由交接建立的 session（`handoff-completion`）。 */
   | 'REPORT_NOT_HANDOFF'
+  /** A session command named no existing session (`agent-session-control`). */
+  | 'CONTROL_TARGET_NOT_FOUND'
+  /** A session command named a session that is neither its source nor a descendant of it. */
+  | 'CONTROL_NOT_ALLOWED'
+  /** The interface could not carry a session command out: the session vanished in between, or an error. */
+  | 'CONTROL_FAILED'
+  /** No window carried a session command out in time. */
+  | 'CONTROL_NO_WINDOW'
+  /** A close or hibernate of a running session while agent events are off: its turn cannot be observed. */
+  | 'CONTROL_UNAVAILABLE'
   | 'MALFORMED'
   | 'MISSING_ID'
   | 'INVALID_ID'

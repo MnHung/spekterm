@@ -441,6 +441,32 @@ describe('落點的一般化', () => {
     assert.equal(path.basename(path.dirname(seen[0])), 'sess-b')
   })
 
+  it('the injected deliver receives the stat its read took (agent-session-control D6)', async () => {
+    const h = harness()
+    const dir = path.join(h.inbox, 'sess-c')
+    fs.mkdirSync(dir, { recursive: true })
+    const file = path.join(dir, 'm.json')
+    fs.writeFileSync(file, payload())
+    const when = new Date('2026-10-16T01:02:03.000Z')
+    fs.utimesSync(file, when, when)
+
+    const states: number[] = []
+    const source = new IntakeSource({
+      root: h.inbox,
+      adapter: 'handoff',
+      service: h.service,
+      depth: 1,
+      deliver: async (contents, _file, state) => {
+        states.push(state.mtimeMs)
+        return h.service.deliver(contents, 'handoff')
+      },
+    })
+    sources.push(source)
+    await source.start()
+
+    assert.deepEqual(states, [when.getTime()])
+  })
+
   it('不注入 deliver 時沿用 service.deliver 與宣告的 adapter', async () => {
     const h = harness()
     fs.mkdirSync(h.inbox, { recursive: true })

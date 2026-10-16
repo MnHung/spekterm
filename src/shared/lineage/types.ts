@@ -34,4 +34,14 @@ export interface SessionLineage {
   parentTitle?: string
   /** 只有 agent 發起的交接（非第三方本文）才有。 */
   brief?: HandoffBrief
+  /**
+   * The ids above the parent, nearest first, so `[parentId, ...ancestors]` is the whole chain
+   * (`agent-session-control` design D4). Taken when the handoff was ingested, not when this session was created.
+   * Absent on records written before chains were kept: `ancestryOf` derives those from the records that remain.
+   *
+   * **Main process only.** The renderer receives it with the rest of the lineage and ignores it; the rail's tree
+   * stays on `parentId` (`session-forest.ts`), and nothing the renderer persists can write it (`lineage` is a
+   * main-owned field of the session store).
+   */
+  ancestors?: string[]
 }

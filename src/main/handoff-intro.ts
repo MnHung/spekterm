@@ -119,9 +119,42 @@ export function introText({ folders, outbox, name, relations, reportable }: Intr
     'A rejected handoff looks exactly like a successful one from where you stand.',
     'Say that you wrote the handoff, not that it was delivered.',
     ...peerLines(name, relations),
+    ...commandLines(Boolean(relations)),
     ...(reportable ? reportLines() : []),
   ]
   return lines.join('\n')
+}
+
+/**
+ * The session commands (`agent-session-control`). **Told to every agent session**: every agent can act on itself.
+ *
+ * The limit is derived from the constant the judgement uses (`scripts/handoff-intro-source.test.mjs` forbids the
+ * literal): an agent with no reply channel cannot learn an unstated constraint.
+ */
+function commandLines(hasRelations: boolean): string[] {
+  return [
+    '',
+    'You can also ask spekterm to close, hibernate or rename a session. Write one of these into your outbox',
+    'above, with the same atomic-write rules:',
+    '  {"kind": "close"}',
+    '  {"kind": "hibernate"}',
+    '  {"kind": "rename", "name": "<new label>"}',
+    'With no "target" it acts on your own session. Add "target": "<name>" to act on a session you handed',
+    hasRelations
+      ? 'off, or one they handed off: use a name from the "children" tree of your relations file. Your parent,'
+      : 'off, or one they handed off, by its name. Your parent,',
+    'your siblings and any other session are refused.',
+    'Close ends the session and removes it. Hibernate ends its process but keeps it, dormant, until the user',
+    'wakes it. Both wait until the target finishes its current turn, so make a command on your own session your',
+    'last action. Closing your own session does not close it: once your reply ends, the user is offered to close',
+    'or keep it, and it stays open until they choose. If the user types into the target before a command is',
+    'carried out, it is dropped. Close and hibernate of a running session need agent event reporting to be on.',
+    `Rename takes effect at once and changes only the label. "name" is at most ${MAX_FIELD_LENGTH} characters, on one`,
+    'line; an empty name gives naming back to the terminal title. No name used for messaging changes.',
+    'You are not told whether a command was carried out. For a session you handed off, your relations file',
+    'shows the result: a closed one is gone, a hibernated one has "running": false, a renamed one shows the new',
+    '"title".',
+  ]
 }
 
 /**
@@ -177,6 +210,9 @@ function peerLines(name: string | undefined, relations: string | undefined): str
           'reply, ask for one.',
           'Each child and sibling in that file also has a "state" (working, waiting, done, or idle) and,',
           'once it has reported finishing its work, a "summary".',
+          'Children nest: a child lists the sessions it handed off under its own "children", and so on at',
+          'every depth. A descendant marked "parentGone": true lost its direct parent (closed, or its repo',
+          'left the workspace) and is listed under its nearest ancestor that still exists.',
         ]
       : []),
   ]

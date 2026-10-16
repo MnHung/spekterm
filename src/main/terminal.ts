@@ -5,6 +5,7 @@ import { type IPty, spawn } from 'node-pty'
 import { clearAgentStatus, prepareInjection } from './agent-status'
 import { clearAgentEvents, prepareEventInjection } from './agent-events'
 import { noteWrite, type WriteOrigin } from './pty-input'
+import { noteProcessEnd, noteProcessStart } from './session-runs'
 import { prepareAttachmentAccess } from './remote-attachments'
 import { type Injection, type InjectionContribution, composeInjection } from './agent-injection'
 import { isWithin } from './fs-boundary'
@@ -622,6 +623,7 @@ export class TerminalService {
     })
 
     this.sink.spawned?.(sessionId)
+    noteProcessStart(sessionId)
 
     let exited!: () => void
     lastExit.set(sessionId, new Promise<void>((resolve) => { exited = resolve }))
@@ -644,6 +646,7 @@ export class TerminalService {
       if (reason === 'self' && session && this.#heal(sessionId, session, exitCode)) return
 
       this.#sessions.delete(sessionId)
+      noteProcessEnd(sessionId)
       this.sink.exit(sessionId, exitCode, reason)
     })
   }

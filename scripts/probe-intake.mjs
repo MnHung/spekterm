@@ -4139,6 +4139,254 @@ async function runMaximizeHandoff(_mode, _modeConfig, context) {
   )
 }
 
+/**
+ * An agent's session commands (`agent-session-control`): close, hibernate and rename of its own session and of
+ * its descendants, carried out when the target's turn ends, dropped by typing, refused outside the subtree.
+ *
+ * P is opened through the inbox; P hands off C, D and E; C hands off G. Every child is a stub agent whose turns the
+ * probe scripts with `fire` (a submission starts a turn, `Stop` ends it). "Alive" is read from `/proc` (the stub's
+ * process), never from the interface, and "closed" from `sessions.json` and the rail.
+ */
+async function runSessionControl(_mode, _modeConfig, context) {
+  const { profile, folders } = seedProfile()
+  seedRouting(profile, { fallbackFolderId: folders[0].id })
+  const configDir = mkTemp('spekterm-intake-config-')
+  const marker = `spek-intake-${process.pid}-${Date.now()}`
+  const stub = makeStubAgent(mkTemp, configDir, { readyDelaySeconds: 1, busySeconds: 1 })
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+  drop(profile, 'source', intake({ id: 'ctl-src', title: 'CTL-SOURCE' }))
+  const app = await freshApp(context, { profile, configDir, stub, marker })
+  await openInbox(app)
+  await pollFor({ read: () => app.client.evaluate(acceptExpression('CTL-SOURCE')), settled: Boolean, timeoutMs: 20_000, label: 'P opened' })
+  const outbox = await awaitOutbox(profile, "P's drop point")
+  const parentId = basename(outbox)
+  const closeInbox = `(() => {
+    const dialog = document.querySelector('[role="dialog"]${label('intake.label')}')
+    if (dialog) dialog.querySelector(${JSON.stringify(label('intake.close'))})?.click()
+    return !document.querySelector('[role="dialog"]${label('intake.label')}')
+  })()`
+  await pollFor({ read: () => app.client.evaluate(closeInbox), settled: Boolean, timeoutMs: 15_000, label: 'inbox closed' })
+
+  for (const title of ['C', 'D', 'E']) {
+    writeFileSync(join(outbox, `${title}.json`), JSON.stringify({ target: basename(folders[1].path), title: `CTL-${title}`, body: `work ${title}` }))
+  }
+  const byTitle = (list, title) => list.find((s) => s.lineage?.brief?.title === `CTL-${title}`)
+  const children = await pollFor({
+    read: () => persistedSessions(profile).filter((s) => s.lineage?.parentId === parentId && typeof s.claudeSessionId === 'string'),
+    settled: (list) => list.length === 3,
+    timeoutMs: 60_000,
+    label: 'C, D and E persisted',
+  }).catch(() => [])
+  check(results, 'precondition: P handed off C, D and E', children.length === 3, `got ${children.length}`)
+  const C = byTitle(children, 'C')
+  const D = byTitle(children, 'D')
+  const E = byTitle(children, 'E')
+  if (!C || !D || !E) return
+
+  writeFileSync(join(outboxRootOf(profile), C.id, 'G.json'), JSON.stringify({ target: basename(folders[1].path), title: 'CTL-G', body: 'work G' }))
+  const G = await pollFor({
+    read: () => persistedSessions(profile).find((s) => s.lineage?.parentId === C.id && typeof s.claudeSessionId === 'string') ?? null,
+    settled: Boolean,
+    timeoutMs: 40_000,
+    label: 'G persisted',
+  }).catch(() => null)
+  check(results, 'precondition: C handed off G', G !== null, '')
+  if (!G) return
+  check(results, "G's lineage records the chain above its parent, taken at ingestion", (G.lineage?.ancestors ?? []).includes(parentId), JSON.stringify(G.lineage?.ancestors))
+  await pollFor({
+    read: () => stub.sessionInputs(),
+    settled: (all) => [C, D, E, G].every((s) => (all[s.claudeSessionId]?.lines.length ?? 0) >= 1),
+    timeoutMs: 30_000,
+    label: 'every child received its first prompt',
+  })
+  // The stub's first turn: a tool call for one second, then Stop.
+  await sleep(2_500)
+
+  const tree = await pollFor({
+    read: () => relationsOf(profile, parentId)?.children ?? [],
+    settled: (list) => list.find((c) => c.name === C.peerName)?.children?.some((g) => g.name === G.peerName) === true,
+    timeoutMs: 15_000,
+    label: "P's relations list G under C",
+  }).catch(() => relationsOf(profile, parentId)?.children ?? [])
+  check(results, "P's relations file lists its grandchild under its child", tree.find((c) => c.name === C.peerName)?.children?.some((g) => g.name === G.peerName) === true, JSON.stringify(tree))
+
+  const command = (session, payload) => stub.command(session.claudeSessionId, [stub.control.stage(payload), stub.control.commit()].join('\n'))
+  const alive = (session) => agentAlive(session.claudeSessionId)
+  const recordOf = (session) => persistedSessions(profile).find((s) => s.id === session.id) ?? null
+  const P = persistedSessions(profile).find((s) => s.id === parentId)
+
+  // ── C may not act on its parent: refused, visible as a notification and an inbox trace ──
+  const notesBefore = notifications(profile).length
+  command(C, { kind: 'close', target: P?.peerName })
+  const refusal = copy('intake.rejectReason.CONTROL_NOT_ALLOWED')
+  const refusalNotes = await pollFor({
+    read: () => notifications(profile).slice(notesBefore),
+    settled: (list) => list.some((entry) => JSON.stringify(entry).includes(copy('intake.notify.commandTitle'))),
+    timeoutMs: 20_000,
+    label: 'the refusal notification',
+  }).catch(() => [])
+  await openInbox(app)
+  const trace = await pollFor({
+    read: () => app.client.evaluate(`document.querySelector('[role="dialog"]${label('intake.label')}')?.textContent ?? ''`),
+    settled: (text) => text.includes(refusal),
+    timeoutMs: 15_000,
+    label: 'the refusal trace',
+  }).catch(() => '')
+  await pollFor({ read: () => app.client.evaluate(closeInbox), settled: Boolean, timeoutMs: 15_000, label: 'inbox closed' })
+  check(
+    results,
+    'a command on the parent is refused: the parent runs, the notification names a session command, the inbox holds the trace',
+    alive(P) && refusalNotes.some((entry) => JSON.stringify(entry).includes(copy('intake.notify.commandTitle'))) && trace.includes(refusal) && trace.includes(String(P?.peerName)),
+    `alive=${alive(P)} notes=${JSON.stringify(refusalNotes.map((n) => n.title))} trace=${trace.includes(refusal)}`,
+  )
+
+  // ── rename while the target works: at once ──
+  stub.command(D.claudeSessionId, 'fire UserPromptSubmit')
+  await sleep(800)
+  command(P, { kind: 'rename', target: D.peerName, name: 'Renamed\nD' })
+  const renamed = await pollFor({ read: () => recordOf(D)?.customTitle ?? null, settled: (t) => t === 'Renamed D', timeoutMs: 15_000, label: 'D renamed' }).catch(() => recordOf(D)?.customTitle)
+  check(results, 'a rename takes effect while the target works, flattened to one line', renamed === 'Renamed D', String(renamed))
+  stub.command(D.claudeSessionId, 'fire Stop')
+
+  // ── a busy child is closed only when its turn ends ──
+  // An absolute selection to hold: with nothing selected, "unchanged" would pass for any implementation.
+  const selectionBefore = await pollFor({
+    read: () => app.client.evaluate(`(() => { ${railRowClick(folders[0].name)} return ${RAIL_SELECTION} })()`),
+    settled: (current) => current === folders[0].name,
+    timeoutMs: 15_000,
+    label: "P's folder selected",
+  })
+  const focusBefore = await app.client.evaluate(`document.activeElement?.className ?? ''`)
+  stub.command(C.claudeSessionId, 'fire UserPromptSubmit')
+  await sleep(800)
+  command(P, { kind: 'close', target: C.peerName })
+  await sleep(3_000)
+  check(results, 'a close on a child in its turn waits: the child still runs, its record remains', alive(C) && recordOf(C) !== null, `alive=${alive(C)} record=${recordOf(C) !== null}`)
+  stub.command(C.claudeSessionId, 'fire Stop')
+  const closedC = await pollFor({ read: () => !alive(C) && recordOf(C) === null, settled: Boolean, timeoutMs: 20_000, label: 'C closed' }).catch(() => false)
+  check(results, "the child is closed once its turn ends: its process and its record are gone", closedC, `alive=${alive(C)} record=${recordOf(C) !== null}`)
+
+  // ── the grandchild stays P's descendant after C closed ──
+  const orphan = await pollFor({
+    read: () => (relationsOf(profile, parentId)?.children ?? []).find((c) => c.name === G.peerName) ?? null,
+    settled: (entry) => entry?.parentGone === true,
+    timeoutMs: 15_000,
+    label: 'G under P, parentGone',
+  }).catch(() => null)
+  check(results, "after its parent closed, the grandchild hangs under P, marked parentGone", orphan?.parentGone === true, JSON.stringify(relationsOf(profile, parentId)?.children))
+
+  // ── P hibernates G (at rest) at once, through the closed intermediate ──
+  command(P, { kind: 'hibernate', target: G.peerName })
+  const dormantG = await pollFor({ read: () => !alive(G) && recordOf(G) !== null, settled: Boolean, timeoutMs: 20_000, label: 'G hibernated' }).catch(() => false)
+  check(results, 'a grandchild at rest is hibernated at once through a closed intermediate: no process, record kept', dormantG, `alive=${alive(G)} record=${recordOf(G) !== null}`)
+  const selectionAfter = await app.client.evaluate(RAIL_SELECTION)
+  const focusAfter = await app.client.evaluate(`document.activeElement?.className ?? ''`)
+  check(
+    results,
+    'acting on sessions that are not displayed leaves the rail selection and the focused element alone',
+    selectionBefore === folders[0].name && selectionAfter === folders[0].name && focusAfter === focusBefore,
+    `selection ${selectionBefore} → ${selectionAfter}; focus ${focusBefore} → ${focusAfter}`,
+  )
+
+  // ── a background subagent keeps D's turn open ──
+  const bgStop = JSON.stringify({ hook_event_name: 'Stop', background_tasks: [{ id: 'bg1', type: 'local_agent', status: 'running' }] })
+  stub.command(D.claudeSessionId, ['fire UserPromptSubmit', `firej Stop '${bgStop}'`].join('\n'))
+  await sleep(800)
+  command(P, { kind: 'hibernate', target: D.peerName })
+  await sleep(3_000)
+  check(results, 'a Stop with a background subagent running does not end the turn', alive(D), `alive=${alive(D)}`)
+  stub.command(D.claudeSessionId, ['fire UserPromptSubmit', 'fire Stop'].join('\n'))
+  const dormantD = await pollFor({ read: () => !alive(D) && recordOf(D) !== null, settled: Boolean, timeoutMs: 20_000, label: 'D hibernated' }).catch(() => false)
+  check(results, 'the turn after the subagent ends ends it, and the hibernation happens', dormantD, `alive=${alive(D)}`)
+
+  // ── typing into the target drops the waiting command ──
+  stub.command(E.claudeSessionId, 'fire UserPromptSubmit')
+  await sleep(800)
+  command(P, { kind: 'close', target: E.peerName })
+  await sleep(1_500)
+  await app.client.evaluate(`window.workspace.terminal.write(${JSON.stringify(E.id)}, 'x')`)
+  await sleep(500)
+  stub.command(E.claudeSessionId, 'fire Stop')
+  await sleep(3_000)
+  check(results, 'a keystroke into the target drops its waiting close: it survives its turn end', alive(E) && recordOf(E) !== null, `alive=${alive(E)} record=${recordOf(E) !== null}`)
+
+  // ── an agent closes itself: offered when its turn ends, closed only by the user (D12) ──
+  const offerLabel = label('sessions.closeOffer.label')
+  const OFFER = `(() => {
+    const groups = [...document.querySelectorAll('[role="group"]${offerLabel}')].filter((g) => g.getBoundingClientRect().width > 0)
+    if (groups.length !== 1) return { shown: false, count: groups.length }
+    const buttons = [...groups[0].querySelectorAll('button')]
+    const stage = document.querySelector('[aria-label="${copy('stage.terminal')}"]')
+    const screen = stage ? [...stage.querySelectorAll('.xterm-screen')].find((el) => el.getBoundingClientRect().width > 0) : null
+    const r = screen?.getBoundingClientRect()
+    // A point on the terminal itself, under the offer's backdrop: what a click or a wheel there reaches.
+    const hit = r ? document.elementFromPoint(r.x + r.width / 2, r.y + r.height * 0.75) : null
+    return {
+      shown: true,
+      buttons: buttons.map((b) => b.textContent),
+      readable: Boolean(hit && hit.closest('.xterm')),
+      focusInOffer: groups[0].contains(document.activeElement),
+    }
+  })()`
+  const clickOffer = (text) => app.client.evaluate(`(() => {
+    const group = [...document.querySelectorAll('[role="group"]${offerLabel}')].find((g) => g.getBoundingClientRect().width > 0)
+    const button = [...(group?.querySelectorAll('button') ?? [])].find((b) => b.textContent === ${JSON.stringify(text)})
+    if (!button) return false
+    button.click()
+    return true
+  })()`)
+  // Display E, so its terminal view (and the offer on it) is on screen.
+  await pollFor({
+    read: () => app.client.evaluate(`(() => {
+      const row = [...document.querySelectorAll('aside li > div[role="button"]')].find((el) => (el.textContent ?? '').includes('CTL-E'))
+      row?.click()
+      const stage = document.querySelector('[aria-label="${copy('stage.terminal')}"]')
+      return Boolean(stage && [...stage.querySelectorAll('.xterm-screen')].some((el) => el.getBoundingClientRect().width > 0))
+    })()`),
+    settled: Boolean,
+    timeoutMs: 15_000,
+    label: 'E displayed',
+  })
+  const selfClose = (extra = []) =>
+    stub.command(E.claudeSessionId, ['fire UserPromptSubmit', 'fire PreToolUse', stub.control.stage({ kind: 'close' }), stub.control.commit(), ...extra, 'sleep 2', 'fire Stop'].join('\n'))
+
+  selfClose()
+  // The command is written early in a 2 s turn: nothing may show before the turn's Stop.
+  await sleep(1_000)
+  const beforeStop = await app.client.evaluate(OFFER)
+  check(results, 'nothing is offered while the agent is still in its turn', beforeStop?.shown === false && alive(E), `offer=${JSON.stringify(beforeStop)} alive=${alive(E)}`)
+  const offered = await pollFor({ read: () => app.client.evaluate(OFFER), settled: (o) => o?.shown === true, timeoutMs: 20_000, label: 'the offer shown' }).catch(() => null)
+  await sleep(2_000)
+  check(
+    results,
+    "an agent's close of its own session is offered when its turn ends, and the session keeps running",
+    offered?.shown === true && alive(E) && recordOf(E) !== null,
+    `offer=${JSON.stringify(offered)} alive=${alive(E)} record=${recordOf(E) !== null}`,
+  )
+  check(
+    results,
+    'the offer leaves the terminal under it reachable, and takes no focus',
+    offered?.readable === true && offered?.focusInOffer === false,
+    JSON.stringify(offered),
+  )
+  await clickOffer(copy('sessions.closeOffer.keep'))
+  const kept = await pollFor({ read: () => app.client.evaluate(OFFER), settled: (o) => o?.shown === false, timeoutMs: 10_000, label: 'offer withdrawn by Keep' }).catch(() => null)
+  check(results, 'Keep withdraws the offer, and the session runs on', kept?.shown === false && alive(E), `offer=${JSON.stringify(kept)} alive=${alive(E)}`)
+
+  selfClose()
+  await pollFor({ read: () => app.client.evaluate(OFFER), settled: (o) => o?.shown === true, timeoutMs: 20_000, label: 'the offer shown again' }).catch(() => null)
+  await app.client.evaluate(`window.workspace.terminal.write(${JSON.stringify(E.id)}, 'y')`)
+  const typedAway = await pollFor({ read: () => app.client.evaluate(OFFER), settled: (o) => o?.shown === false, timeoutMs: 10_000, label: 'offer withdrawn by typing' }).catch(() => null)
+  check(results, 'typing into the session withdraws the offer', typedAway?.shown === false && alive(E), `offer=${JSON.stringify(typedAway)} alive=${alive(E)}`)
+
+  selfClose()
+  await pollFor({ read: () => app.client.evaluate(OFFER), settled: (o) => o?.shown === true, timeoutMs: 20_000, label: 'the offer shown a third time' }).catch(() => null)
+  await clickOffer(copy('sessions.closeOffer.close'))
+  const closedE = await pollFor({ read: () => !alive(E) && recordOf(E) === null, settled: Boolean, timeoutMs: 20_000, label: 'E closed by the user' }).catch(() => false)
+  check(results, 'choosing Close closes the session', closedE, `alive=${alive(E)} record=${recordOf(E) !== null}`)
+}
+
 const SECTIONS = [
   { name: 'runIngest', run: runIngest },
   { name: 'runPlainText', run: runPlainText },
@@ -4166,6 +4414,7 @@ const SECTIONS = [
   { name: 'runHibernateLineage', run: runHibernateLineage },
   { name: 'runHibernateUnsent', run: runHibernateUnsent },
   { name: 'runMaximizeHandoff', run: runMaximizeHandoff },
+  { name: 'runSessionControl', run: runSessionControl },
 ]
 
 const outcome = await runSections({

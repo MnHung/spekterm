@@ -81,6 +81,11 @@ OpenSpec 結構的側欄，讓使用者不必另外開 IDE 就能一邊駕駛 ag
   地址；agent 從關係檔（隨時更新）查得到母、子、兄弟的名字，**訊息本身由 Claude Code 傳遞**。
   **代價：指定名字會把 agent 的終端標題固定成那個名字**（使用者以重新命名取回任務名稱）。
   完整的實測見 `docs/lessons/handoff.md`（第十一至十四節）。
+  **An agent can also close, hibernate or rename its own session and its descendants** (`agent-session-control`,
+  `kind: "close" | "hibernate" | "rename"` in the same drop point). Close and hibernate wait for the target's turn
+  to end, and the user's typing cancels them. **An agent's close of its own session is only offered**: an overlay
+  with Close / Keep, the content readable underneath. "In a turn" is **not** the wait state's `ready` (see
+  `docs/lessons/handoff.md`, "Session commands").
 - **鍵盤** —— 見下文「快捷鍵」。
 - **Website** (`project-website`) — `spekterm.com` is built from `site/` (Astro + Starlight, its own
   package, nothing of it reaches the app): **the website of both spekterm (`/`) and spek (`/spek/`)**,

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { SpawnTarget } from '../types'
 import { ContextMenu, type MenuItem } from '../files/dialogs'
 import { usePreferences } from '../PreferencesProvider'
+import { CloseOffer } from './CloseOffer'
 import { type SessionStatus, useSessions } from './sessions'
 import { type XtermHandle, createXterm } from './xterm'
 import { useTranslation } from 'react-i18next'
@@ -63,6 +64,9 @@ export function TerminalView({
   // （連同 scrollback 一起消失）。
     const { attach, setTitle, restoredScrollbackOf, registerFocus, registerSerializer, wake, takeQuietArrival, isFocusHeld } =
       useSessions()
+  // Read in render only, never in an effect: `closeOffered` changes with every offer (D12 of
+  // `agent-session-control`).
+  const { closeOffered, close, withdrawCloseOffer } = useSessions()
   const { terminal: termPrefs, gpuEnabled } = usePreferences()
   const hostRef = useRef<HTMLDivElement | null>(null)
     const handleRef = useRef<XtermHandle | null>(null)
@@ -504,6 +508,13 @@ export function TerminalView({
             </div>
           </div>
         ))}
+
+      {status === 'running' && closeOffered(sessionId) && (
+        // Top-centred: the agent's last reply sits at the bottom, above its input box (D12).
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex justify-center pt-3">
+          <CloseOffer onClose={() => close(sessionId)} onKeep={() => withdrawCloseOffer(sessionId)} />
+        </div>
+      )}
 
       {menu && (
         <ContextMenu

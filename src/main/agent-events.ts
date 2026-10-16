@@ -107,6 +107,9 @@ export const HOOKED_EVENTS = [
   'SessionStart',
   'SessionEnd',
   'SubagentStop',
+  // Only for its `trigger`: the user's `/compact` ends with `SessionStart(compact)` and no `Stop` (measured), and
+  // only this tells it from a compaction inside a turn (`agent-session-control` D3). It moves no wait state.
+  'PreCompact',
 ] as const
 
 /**
@@ -208,6 +211,14 @@ export interface AgentEvent {
   source: string | null
   /** The subagents a `Stop` lists as running background tasks; `null` when the field is absent. */
   runningAgents: string[] | null
+  /**
+   * A `Stop` lists a running background task that is not a shell (`type: "shell"`, measured CLI 2.1.301). Such a
+   * task holds the turn open (`agent-session-control` D3); a background shell does not. `false` when the field is
+   * absent.
+   */
+  backgroundAgentRunning: boolean
+  /** `PreCompact`'s `trigger` (`manual` for the user's `/compact`, `auto`). */
+  trigger: string | null
 }
 
 function str(value: unknown): string | null {
@@ -275,6 +286,15 @@ function parseAnswers(input: unknown): Record<string, string> | null {
   return answers
 }
 
+function backgroundAgentRunning(tasks: unknown): boolean {
+  if (!Array.isArray(tasks)) return false
+  return tasks.some((task) => {
+    if (task === null || typeof task !== 'object') return false
+    const t = task as Record<string, unknown>
+    return t.status === 'running' && t.type !== 'shell'
+  })
+}
+
 function runningAgents(tasks: unknown): string[] | null {
   if (!Array.isArray(tasks)) return null
   const ids: string[] = []
@@ -322,6 +342,8 @@ export function parseEvent(raw: unknown): AgentEvent | null {
     permissionMode: str(o.permission_mode),
     source: str(o.source),
     runningAgents: name === 'Stop' ? runningAgents(o.background_tasks) : null,
+    backgroundAgentRunning: name === 'Stop' && backgroundAgentRunning(o.background_tasks),
+    trigger: name === 'PreCompact' ? str(o.trigger) : null,
   }
 }
 
@@ -438,10 +460,31 @@ export interface HeldWait {
   base: WaitState
   requests: OpenRequest[]
   starts: ToolStart[]
+  /**
+   * Turn tracking (`agent-session-control` design D3). **Only the agent's own turn boundaries move it**, unlike
+   * `base`, which notifications, compaction and subagents also move.
+   *
+   * - `turnEndAt`: when the last turn ended (wall-clock ms, the event files' clock); `null` before any.
+   * - `submitted`: an own `UserPromptSubmit` arrived since then.
+   * - `manualCompact`: the last `PreCompact` was the user's, so the `SessionStart(compact)` after it ends the turn.
+   *
+   * Whether a session is in a turn also needs the last keystroke (`inTurn` in `agent-wait.ts`): a `!cmd` reports
+   * nothing until its `Stop`.
+   */
+  turnEndAt: number | null
+  submitted: boolean
+  manualCompact: boolean
 }
 
-export function heldWait(base: WaitState = 'unknown'): HeldWait {
-  return { base, requests: [], starts: [] }
+export function heldWait(base: WaitState = 'unknown', turnEndAt: number | null = null): HeldWait {
+  return { base, requests: [], starts: [], turnEndAt, submitted: false, manualCompact: false }
+}
+
+/** The fold's turn end: the last turn closed at `at`. */
+function endTurn(held: HeldWait, at: number): void {
+  held.turnEndAt = at
+  held.submitted = false
+  held.manualCompact = false
 }
 
 /** The reported state: awaiting-choice while any request is open, otherwise the base state. */
@@ -595,6 +638,8 @@ function apply(held: HeldWait, event: AgentEvent, at: number, newId: () => strin
     case 'StopFailure':
     case 'UserPromptSubmit':
       if (own) {
+        if (event.name === 'UserPromptSubmit') held.submitted = true
+        else if (event.name === 'StopFailure' || !event.backgroundAgentRunning) endTurn(held, at)
         held.requests = held.requests.filter((request) => request.agentId !== null)
         held.starts = held.starts.filter((start) => start.agentId !== null)
         if (event.name === 'Stop' && event.runningAgents !== null) {
@@ -611,8 +656,14 @@ function apply(held: HeldWait, event: AgentEvent, at: number, newId: () => strin
       if (event.source !== 'compact') {
         held.requests = []
         held.starts = []
+        endTurn(held, at)
+      } else if (held.manualCompact) {
+        endTurn(held, at)
       }
       held.base = nextWaitState(event)
+      return
+    case 'PreCompact':
+      held.manualCompact = event.trigger === 'manual'
       return
     default:
       held.base = nextWaitState(event)
@@ -620,7 +671,11 @@ function apply(held: HeldWait, event: AgentEvent, at: number, newId: () => strin
 }
 
 function copyHeld(held: HeldWait): HeldWait {
-  return { base: held.base, requests: held.requests.map((r) => ({ ...r })), starts: held.starts.map((s) => ({ ...s })) }
+  return {
+    ...held,
+    requests: held.requests.map((r) => ({ ...r })),
+    starts: held.starts.map((s) => ({ ...s })),
+  }
 }
 
 /**

@@ -86,7 +86,7 @@ export function inboxRoot(userDataPath: string): string {
 }
 
 /** The `(mtimeMs, size)` a file had when it was read — what the re-read record compares. */
-interface FileState {
+export interface FileState {
   mtimeMs: number
   size: number
 }
@@ -141,7 +141,11 @@ export interface IntakeSourceOptions {
    * 哪個子目錄決定、目標由查表解析，兩者都**不能**是投遞內容裡的欄位（否則任何放進落點的
    * 檔案都能自選 folder）。於是那些值只能經這條路徑以參數供應。
    */
-  deliver?: (contents: string, file: string) => Promise<DeliverOutcome>
+  /**
+   * `state` is the stat the read took. An adapter that needs the file's time takes it from here, not from a second
+   * `stat` that could see a newer file at the same path, or none (`agent-session-control` D6).
+   */
+  deliver?: (contents: string, file: string, state: FileState) => Promise<DeliverOutcome>
   /**
    * 這個落點的**永久性**失敗要不要讓使用者立刻知道（作業系統通知）。
    *
@@ -174,7 +178,7 @@ export class IntakeSource {
   readonly #service: IntakeService
   readonly #onProcessed?: (file: string, consumed: boolean) => void
   readonly #depth: number
-  readonly #deliver: (contents: string, file: string) => Promise<DeliverOutcome>
+  readonly #deliver: (contents: string, file: string, state: FileState) => Promise<DeliverOutcome>
   readonly #notifyFailures: boolean
   readonly #watch: WatcherFactory
   readonly #onRescan?: (phase: 'start' | 'end') => void
@@ -425,7 +429,7 @@ export class IntakeSource {
     //（dogfood 第一次投遞就踩到 —— 保存處的目錄尚未建立）。
     let outcome
     try {
-      outcome = await this.#deliver(read.contents, file)
+      outcome = await this.#deliver(read.contents, file, read.state)
     } catch (error) {
       console.error(`[intake] delivery failed ${file}: ${String(error)}`)
       // Recorded, so the re-read does not retry it in this process: the store changes memory

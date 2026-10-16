@@ -295,6 +295,12 @@
     "paste": "貼上",
     "wakeFailed": "無法還原這個 session：{{message}}",
     "wake": "喚醒",
+    "closeOffer": {
+      "label": "agent 要求關閉這個 session",
+      "text": "agent 要求關閉這個 session。",
+      "close": "關閉",
+      "keep": "保留"
+    },
     "hibernate": "休眠",
     "dormantShell": "休眠中 · 喚醒時會在它最後的工作目錄重開一個 shell。未匯出的變數、未存下的指令歷史與執行中的工作都沒有保留。",
     "dormantClaude": "休眠中 · 喚醒後會接回對話",
@@ -648,7 +654,12 @@
       "TARGET_NOT_FOUND": "指名了一個不在這個工作區裡的 repo",
       "TARGET_AMBIGUOUS": "指名的 repo 名稱不是唯一的",
       "PREFILL_UNAVAILABLE": "無法開啟 —— agent 的事件回報已關閉",
-      "REPORT_NOT_HANDOFF": "由一個不是交接建立的 session 回報了完成"
+      "REPORT_NOT_HANDOFF": "由一個不是交接建立的 session 回報了完成",
+      "CONTROL_TARGET_NOT_FOUND": "指定了一個不存在的 session",
+      "CONTROL_NOT_ALLOWED": "指定了一個不是它交接出去的 session",
+      "CONTROL_FAILED": "無法對那個 session 執行",
+      "CONTROL_NO_WINDOW": "沒有開著的視窗可以對 session 執行",
+      "CONTROL_UNAVAILABLE": "無法等到那個 session 的這一輪結束 —— agent 的事件回報已關閉"
     },
     "rules": {
       "label": "Routing 規則",
@@ -673,7 +684,9 @@
       "singleNoActor": "{{origin}} —— {{title}}",
       "merged": "打開收件匣查看它們。",
       "link": "[連結]",
-      "failure": "一則交接沒有送達：{{reason}}"
+      "failure": "一則交接沒有送達：{{reason}}",
+      "commandTitle": "Session 指令",
+      "commandFailure": "一個 session 指令沒有執行：{{reason}}"
     },
     "badge": "{{total}} 則待處理",
     "openedLabel": "已開啟",

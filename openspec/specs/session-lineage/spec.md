@@ -216,6 +216,14 @@ rail 項目** —— 同一個 rail 項目中的樹狀呈現（見 `workspace-la
 長出來的，兄弟亦然。關係 SHALL NOT 只經由自我介紹提供；關係改變時（子或兄弟 session 建立、任一方不再存在、
 改名、進入或離開執行中）SHALL NOT 需要重建 agent 的脈絡，agent 下一次查詢即得到新的值。
 
+**Each child SHALL also carry the sessions it handed off, and so on at every depth** (its descendants, see
+"A session records its whole chain of ancestors"), as a tree under the children. Each descendant SHALL carry the
+same fields as a child (fixed name, rail item, label, whether it is running, lifecycle state, latest result), so
+an agent can find, address and act on a grandchild as it can a child (see `agent-session-control`).
+A descendant whose direct parent no longer exists SHALL appear under its nearest ancestor that still exists, and
+SHALL be marked as having lost its direct parent. Its own relations still show that parent as closed. The parent
+and the siblings SHALL NOT carry descendants.
+
 系統 SHALL NOT 在提供給 agent 的關係中放入任何路徑欄位或 spekterm 的 session 識別碼 —— agent 需要的
 只有名字。
 
@@ -278,6 +286,23 @@ SHALL 標明它不在執行中，本能力 SHALL NOT 為此喚醒它。
 - **WHEN** P 的子 session C 尚未投遞任何完成報告
 - **THEN** P 查詢自己的關係，結果中 C 標明其狀態，且沒有結果
 
+#### Scenario: A grandparent sees its grandchild
+
+- **WHEN** session P handed off to C, and C then handed off to G, while P's context was not rebuilt
+- **THEN** P now queries its relations, and G appears under C, with G's fixed name, rail item, label, whether it
+  is running, and its state
+
+#### Scenario: A grandchild stays in the tree after the session between them closes
+
+- **WHEN** continuing "A grandparent sees its grandchild", the user closes C
+- **THEN** P's relations no longer contain C
+- **AND** G appears directly under P, marked as having lost its direct parent
+
+#### Scenario: Siblings carry no descendants
+
+- **WHEN** P handed off to C1 and C2, and C2 handed off to G
+- **THEN** C1's relations list C2 as a sibling, and G does not appear in C1's relations
+
 ### Requirement: 關係的標示文案來自字典
 
 本能力新增的使用者可見文字（來源標示、子 session 標示與其數量、已關閉的註明、全域項目的名稱）
@@ -303,3 +328,46 @@ SHALL 來自字典並依使用者選擇的語言呈現；數量 SHALL 依該語�
 
 - **WHEN** 持久化檔案中 session A 的來源為 B、B 的來源為 A，應用程式啟動
 - **THEN** A 與 B 皆呈現於 rail
+
+### Requirement: A session records its whole chain of ancestors
+
+A session created by a handoff SHALL record the whole chain of sessions above it: its parent, its parent's
+parent, and so on. The chain SHALL be taken **when the handoff is received**, as the rest of the source's snapshot
+is, not when the session is created later. It SHALL be recorded before the session's process starts. A session SHALL be a **descendant** of every
+session in that chain. The chain SHALL survive the closing of any session in it: closing an intermediate session
+SHALL NOT make its descendants strangers to the sessions above it.
+
+For a session recorded before chains were kept, the chain SHALL be rebuilt from the records that still exist. A
+link that was already broken by a closed intermediate session SHALL stay broken.
+
+A chain that cannot be read SHALL be ignored without losing the rest of the session's lineage. A chain SHALL NOT
+make a session disappear from the rail. The chain SHALL be bounded in length, and SHALL NOT loop.
+
+The chain SHALL NOT appear in what is provided to agents: they see fixed names only. The rail's indentation and
+its source and handoff marks SHALL be unchanged by the chain: they still show only the direct parent.
+
+#### Scenario: The chain survives an app restart and an intermediate close
+
+- **WHEN** P handed off to C, C handed off to G, the application restarts, and the user closes C
+- **THEN** G is still a descendant of P
+
+#### Scenario: A chain survives a late acceptance
+
+- **WHEN** C, a child of P, hands off a piece of work that falls back to pending in the inbox, the user closes C, and
+  the user then accepts the item, creating G
+- **THEN** G is a descendant of P
+
+#### Scenario: A chain recorded before this change is rebuilt from existing records
+
+- **WHEN** the session list holds P, C and G, with C's and G's lineage naming only their direct parents
+- **THEN** G is a descendant of P
+
+#### Scenario: A broken chain does not remove a session
+
+- **WHEN** a session's recorded chain of ancestors is unreadable in the session list
+- **THEN** the session appears on the rail with its direct parent intact
+
+#### Scenario: The rail shows only the direct parent
+
+- **WHEN** P handed off to C, and C handed off to G, all three in the same folder
+- **THEN** G is indented under C on the rail, not under P

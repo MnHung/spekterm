@@ -8,8 +8,9 @@
  *
  * **A keystroke is any write except two kinds:**
  * - a device answer's own keys (`origin: 'answer'`): the answer must not make its own prompt unanswerable;
- * - the terminal's own reports: focus in/out, which the agent turns on (`ESC [ ? 1004 h`, measured), and
- *   mouse reports, in case an agent turns them on. A click or a window switch is not someone answering.
+ * - the terminal's own reports: focus in/out, which the agent turns on (`ESC [ ? 1004 h`, measured), mouse
+ *   reports (the agent turns mouse tracking on, measured CLI 2.1.301), and the terminal's answers to the agent's
+ *   startup queries (`REPORT`). A click, a window switch or a query's answer is not someone typing.
  *
  * The time is wall-clock ms, the clock of the event files' names (`agent-events.ts` `fileTimeOf`).
  */
@@ -19,8 +20,17 @@ const listeners = new Set<(sessionId: string) => void>()
 
 export type WriteOrigin = 'answer'
 
+/**
+ * Focus and mouse reports, plus xterm.js's answers to the queries the agent sends at startup (measured, CLI 2.1.301,
+ * `docs/lessons/transcript.md` "Turn boundaries"): DA1 (`CSI ? 1 ; 2 c`), DA2 (`CSI > … c`), XTVERSION
+ * (`DCS > | xterm.js(…) ST`) and the kitty keyboard flags (`CSI ? <flags> u`). Without them a session nobody typed
+ * into would count as typed into right after its start, and a turn would never be over (`agent-session-control`).
+ * None of the answers is a key's encoding: keys never start `CSI ?` or `CSI >`, and a DCS is never a key.
+ * The cursor-position answer (`CSI <row> ; <col> R`) is left out on purpose: it is also a modified F3, and the agent
+ * was not seen asking for it.
+ */
 // eslint-disable-next-line no-control-regex
-const REPORT = /^(?:\x1b\[[IO]|\x1b\[M[\s\S]{3}|\x1b\[<\d+;\d+;\d+[Mm])+$/
+const REPORT = /^(?:\x1b\[[IO]|\x1b\[M[\s\S]{3}|\x1b\[<\d+;\d+;\d+[Mm]|\x1b\[\?[\d;]*c|\x1b\[>[\d;]*c|\x1bP>\|[^\x1b]*\x1b\\|\x1b\[\?\d+u)+$/
 
 /** Whether `data` is only the terminal's own focus or mouse reports. */
 export function isTerminalReport(data: string): boolean {

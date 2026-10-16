@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 
-import { type DeliveryProvenance, type HandoffSource, normalizeAuthored } from './intake-schema'
+import { type DeliveryProvenance, type HandoffSource, MAX_FIELD_LENGTH, normalizeAuthored } from './intake-schema'
 
 /** 交接的 adapter 名。去重的主鍵之一（`(adapter, id)`）。 */
 export const HANDOFF_ADAPTER = 'handoff'
@@ -34,7 +34,16 @@ export const MAX_REPORT_LENGTH = 4_000
  * - 其餘值 —— 不認得，拒絕且可見。
  * - `malformed` —— 讀不成一個 JSON 物件：**不消費**，可能只是寫到一半（與交接同一條處置）。
  */
-export type OutboxKind = 'handoff' | 'report' | 'unknown' | 'malformed'
+export type OutboxKind = 'handoff' | 'report' | CommandKind | 'unknown' | 'malformed'
+
+/** The agent's session commands (`agent-session-control`). */
+export type CommandKind = 'close' | 'hibernate' | 'rename'
+
+const COMMAND_KINDS: readonly string[] = ['close', 'hibernate', 'rename'] satisfies CommandKind[]
+
+export function isCommandKind(kind: OutboxKind): kind is CommandKind {
+  return COMMAND_KINDS.includes(kind)
+}
 
 export function outboxKindOf(contents: string): OutboxKind {
   let raw: unknown
@@ -46,7 +55,8 @@ export function outboxKindOf(contents: string): OutboxKind {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return 'malformed'
   const kind = (raw as Record<string, unknown>).kind
   if (kind === undefined) return 'handoff'
-  return kind === 'report' ? 'report' : 'unknown'
+  if (kind === 'report') return 'report'
+  return typeof kind === 'string' && COMMAND_KINDS.includes(kind) ? (kind as CommandKind) : 'unknown'
 }
 
 export type ReportResult =
@@ -65,6 +75,38 @@ export function parseReport(contents: string): ReportResult {
   if (summary.trim() === '') return { ok: false, reason: 'EMPTY' }
   if (summary.length > MAX_REPORT_LENGTH) return { ok: false, reason: 'TOO_LONG', length: summary.length }
   return { ok: true, summary }
+}
+
+export interface SessionCommand {
+  kind: CommandKind
+  /** A fixed name, or absent for the agent's own session. */
+  target?: string
+  /** Rename only: flattened to one line, possibly empty (hands naming back). */
+  name?: string
+}
+
+export type CommandResult =
+  | { ok: true; command: SessionCommand }
+  | { ok: false; reason: 'FIELD_TYPE'; field: string }
+  | { ok: false; reason: 'TOO_LONG'; length: number }
+
+/**
+ * Reads a session command (`agent-session-control`, design D1). **Only `target` and `name` are read**: anything
+ * else, a field claiming a source above all, has no effect — the source is the drop point the file landed in.
+ *
+ * The name is flattened as a source title is (`sourceTitle`'s rule) and counted in code points, the unit that rule
+ * slices by. A longer one is refused, not shortened: a shortened label looks whole.
+ */
+export function parseCommand(kind: CommandKind, contents: string): CommandResult {
+  const raw = JSON.parse(contents) as Record<string, unknown>
+  const target = raw.target
+  if (target !== undefined && (typeof target !== 'string' || target === '')) return { ok: false, reason: 'FIELD_TYPE', field: 'target' }
+  if (kind !== 'rename') return { ok: true, command: { kind, ...(target !== undefined ? { target } : {}) } }
+  if (typeof raw.name !== 'string') return { ok: false, reason: 'FIELD_TYPE', field: 'name' }
+  const name = normalizeAuthored(raw.name).replace(/\n+/g, ' ').trim()
+  const length = [...name].length
+  if (length > MAX_FIELD_LENGTH) return { ok: false, reason: 'TOO_LONG', length }
+  return { ok: true, command: { kind, ...(target !== undefined ? { target } : {}), name } }
 }
 
 /**
