@@ -30,6 +30,16 @@ test('主行程宣告的 desktop entry 名稱與安裝腳本使用的相同', ()
   assert.equal(fromMain, fromScript)
 })
 
+test('package.json declares the same desktop name, so the packaged entry and window class agree', () => {
+  const { desktopName } = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'))
+  const fromScript = literalOf('scripts/lib/desktop-entry.mjs', /const ENTRY_NAME = '([^']+)'/)
+  assert.equal(desktopName, fromScript, 'electron-builder names the AppImage entry and its StartupWMClass from desktopName')
+  assert.ok(
+    readFileSync(join(repoRoot, 'scripts/lib/desktop-entry.mjs'), 'utf8').includes(`StartupWMClass=${fromScript.replace(/\.desktop$/, '')}`),
+    'the installed entry must name the same window class',
+  )
+})
+
 test('主行程真的設定了它（否則守衛在守一個沒有人用的常數）', () => {
   const source = readFileSync(join(repoRoot, 'src/main/index.ts'), 'utf8')
   assert.ok(

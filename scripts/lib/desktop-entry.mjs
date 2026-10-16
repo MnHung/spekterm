@@ -40,8 +40,12 @@ export function desktopPaths(env) {
  * - **`Icon` 用絕對路徑而非圖示名。** 圖示名要對就得依賴 `gtk-update-icon-cache` 與主題查找，
  *   而那條路失敗時**沒有任何訊息** —— 選單只會安靜地顯示一個預設齒輪。代價是放棄多解析度，
  *   而我們本來就只有一張 512×512。
- * - **`StartupWMClass` 必須有**，否則執行中的視窗不會與選單圖示歸為一組。它的值是
- *   `productName`，而那個值已凍結（`app-identity`），不會漂移。
+ * - **`StartupWMClass` 必須有**，否則執行中的視窗不會與選單圖示歸為一組。Its value is the main
+ *   window's WM_CLASS, **`spekterm`, not `productName`** — measured with `xprop` on the packaged app:
+ *   the main window is `("spekterm", "spekterm")`, from the desktop name `spekterm.desktop`; only a
+ *   10×10 leader window carries `Spekterm`. It once said `Spekterm` here, matching that leader window
+ *   rather than the window people click. The AppImage's own entry agrees since `package.json` has
+ *   `desktopName` (`syncDesktopName` writes it from there); `desktop-name.test.mjs` keeps the names in step.
  */
 export function desktopEntry({ binary, icon }) {
   return [
@@ -53,7 +57,7 @@ export function desktopEntry({ binary, icon }) {
     `Icon=${icon}`,
     'Terminal=false',
     'Categories=Development;',
-    'StartupWMClass=Spekterm',
+    'StartupWMClass=spekterm',
     '',
   ].join('\n')
 }

@@ -81,7 +81,7 @@ test('安裝後桌面項目存在且指向已安裝的產物', () => {
     assert.ok(existsSync(icon), 'Icon 指向的檔案必須實際存在')
 
     // 執行中的視窗要與選單圖示歸為一組。
-    assert.equal(entryField(paths.entry, 'StartupWMClass'), 'Spekterm')
+    assert.equal(entryField(paths.entry, 'StartupWMClass'), 'spekterm')
   } finally {
     cleanup()
   }

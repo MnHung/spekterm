@@ -1,6 +1,7 @@
 {
   "name": "spekterm",
   "productName": "Spekterm",
+  "desktopName": "spekterm.desktop",
   "version": "0.2.6",
   "private": true,
   "license": "MIT",
