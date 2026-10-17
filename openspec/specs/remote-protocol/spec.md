@@ -67,6 +67,14 @@ Listing SHALL return:
   whether it is running, the agent's wait state for agent sessions, its handoff lifecycle state and
   lineage where it has them, and whether its agent's close of itself is offered to the user.
 
+For an agent session whose wait state is "waits for input", the list SHALL also carry whether that state has been
+seen (`session-wait-indicator`): seen when someone looked at the session since its last turn ended (the desktop's
+focused window displays it, or a device watches its conversation — watching its terminal output does not count), or
+when no turn has ended since its agent started. The field SHALL be present, true or false, whenever the wait state is
+"waits for input", and absent otherwise, so that a client can tell this desktop from one that predates the field. It
+SHALL become false at every turn end that no one is looking at. The handoff lifecycle state follows the same mark
+(`handoff-completion`).
+
 A change to any of these SHALL be sent to connected clients as a new complete list.
 
 While the application has no window, the session list SHALL be empty and SHALL state that no window exists.
@@ -80,6 +88,32 @@ While the application has no window, the session list SHALL be empty and SHALL s
 
 - **WHEN** an agent session's agent works for several seconds and then finishes its turn
 - **THEN** the client first receives a session list in which that session is working, and then one in which it waits for input
+
+#### Scenario: A turn that ends unseen is listed as not seen
+
+- **WHEN** a client is connected, does not watch agent session S, S is not displayed in a focused window, and S's
+  agent finishes a turn
+- **THEN** the client receives a session list in which S waits for input and is not seen
+
+#### Scenario: Watching a session marks it seen
+
+- **WHEN** S is listed as waiting for input and not seen, and the client starts watching S's conversation
+- **THEN** the client receives a session list in which S waits for input and is seen
+
+#### Scenario: A terminal watch does not mark a session seen
+
+- **WHEN** S is listed as waiting for input and not seen, and the client starts watching S's terminal output
+- **THEN** S is still listed as not seen
+
+#### Scenario: A turn that ends during a watch is seen at once
+
+- **WHEN** the client watches S's conversation and S's agent finishes a turn
+- **THEN** the first session list in which S waits for input lists it as seen
+
+#### Scenario: The seen field is absent unless the session waits for input
+
+- **WHEN** the client receives a session list in which an agent session is working, and one with a shell session
+- **THEN** neither of those sessions carries the seen field
 
 ### Requirement: The conversation a client watches is the same content the desktop's conversation view shows
 
