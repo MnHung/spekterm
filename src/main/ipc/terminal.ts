@@ -109,9 +109,32 @@ export function displayedSessionOf(contentsId: number): string | null {
   return hibernation.displayedBy(contentsId)
 }
 
+/** A paired device reads this session's conversation (`session-wait-indicator`); a terminal watch does not count. */
+export function conversationWatched(sessionId: string): boolean {
+  return hibernation.conversationWatched(sessionId)
+}
+
 /** A remote watch counts as displayed for automatic hibernation (`session-hibernation`). */
 export function setRemoteWatched(watchKey: string, sessionId: string | null): void {
   hibernation.setRemoteWatched(watchKey, sessionId)
+  for (const listener of watchListeners) listener(watchKey, sessionId)
+}
+
+/**
+ * A window reported the session it displays, or a device started or stopped a watch — after the report is recorded.
+ * The seen mark (`ipc/wait.ts`) hangs off these; it may not be imported here, as it reads this module.
+ */
+const displayedListeners = new Set<(contentsId: number, sessionId: string | null) => void>()
+const watchListeners = new Set<(watchKey: string, sessionId: string | null) => void>()
+
+export function onDisplayedReport(listener: (contentsId: number, sessionId: string | null) => void): () => void {
+  displayedListeners.add(listener)
+  return () => displayedListeners.delete(listener)
+}
+
+export function onRemoteWatch(listener: (watchKey: string, sessionId: string | null) => void): () => void {
+  watchListeners.add(listener)
+  return () => watchListeners.delete(listener)
 }
 
 /** 所有服務中目前持有 pty 的 claude session —— 關係檔的「是否在執行」。 */
@@ -603,7 +626,9 @@ export function registerTerminalHandlers(
   ipcMain.on(TERMINAL_CHANNELS.displayed, (event, sessionId: unknown) => {
     // Make sure the service exists, so its cleanup hooks also clear this report.
     serviceFor(store, sessions, preferences, event.sender)
-    hibernation.setDisplayed(event.sender.id, typeof sessionId === 'string' ? sessionId : null)
+    const displayed = typeof sessionId === 'string' ? sessionId : null
+    hibernation.setDisplayed(event.sender.id, displayed)
+    for (const listener of displayedListeners) listener(event.sender.id, displayed)
   })
 
   /**

@@ -34,6 +34,8 @@ sent**, and you press `Enter` yourself — spekterm does not send it twice.
   Across repositories, the child shows **From** its parent, and the parent shows how many sessions it
   handed off. Click either to jump.
 - Each handed-off session has a state, shown on both ends: **Working**, **Waiting for you**, or **Done**.
+  **Waiting for you** follows the session's dot: once you have looked at the session, it shows no state
+  until it works again (see [What the dots say](/docs/using/terminals-and-sessions/#what-the-dots-say)).
 
 When the child agent finishes, it writes a short report. spekterm marks the session **Done**, shows the
 summary in the brief, and sends a desktop notification — clicking it opens the brief. The child agent

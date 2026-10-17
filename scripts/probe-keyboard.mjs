@@ -411,7 +411,9 @@ const RAIL_ROW_SEL = `aside[aria-label="${copy('rail.label')}"] > ul > li > div[
 
 const RAIL_ORDER = `[...document.querySelectorAll('aside[aria-label="${copy('rail.label')}"] > ul > li > div[role="button"]')]
   .filter((row) => row.getAttribute('aria-label') !== ${JSON.stringify(copy('rail.globalName'))})
-  .map((row) => (row.getAttribute('title') ?? '').split('/').pop())`
+  // The row's aria-label is the item's name; its title is the path plus the most urgent session state
+  // (session-wait-indicator), so it no longer reads as a name.
+  .map((row) => row.getAttribute('aria-label') ?? '')`
 
 /**
  * rail 兩段各自的項目 —— 置頂狀態就是「它在哪一段」，那正是使用者看到的事實。

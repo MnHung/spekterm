@@ -146,9 +146,21 @@ under a name the desktop chooses (`attachments.put`). No operation takes a path 
 `p`: `{}` → `r`: `{ "window": bool, "folders": [Folder], "sessions": [Session] }`
 
 - `Folder`: `{ id, name, branch: string|null, pinned: bool, hasOpenSpec: bool }`, in rail order.
-- `Session`: `{ id, folderId: string|null (null = the global item), target: "claude"|"shell", label, running: bool, wait?, lifecycle?, lineage?, closeOffered? }`
+- `Session`: `{ id, folderId: string|null (null = the global item), target: "claude"|"shell", label, running: bool, wait?, seen?, lifecycle?, lineage?, closeOffered? }`
   - `wait` (agent sessions): `"ready"` (waiting for input), `"busy"`, `"awaiting-choice"` (a permission prompt), `"unknown"`.
-  - `lifecycle` (handoff-created sessions): `"working"`, `"waiting"`, `"done"`, `"idle"`.
+  - `seen` (present, `true` or `false`, exactly while `wait` is `"ready"`; absent otherwise): whether someone has
+    looked at the session since its agent's last turn ended. Looking is the session displayed in the desktop's
+    focused window, or a device watching its **conversation** (`conversation.watch`); watching its terminal output
+    does not count. It becomes `false` again at every turn end that no one is looking at, and a turn that ends while
+    someone is looking is `true` the first time it is listed ready. An agent that only started, resumed (a wake
+    included) or cleared its conversation has no turn end and is `true`. The desktop shows `ready` + `seen: false`
+    as "Waiting for you" and `ready` + `seen: true` as idle. **A `ready` session with no `seen` field comes from a
+    desktop older than the field**: treat `ready` as waiting there.
+    One divergence is known and not carried: a permission prompt the user answered by typing at the desktop reports
+    nothing, so the list still says `"awaiting-choice"` (its `prompt.answerable` is already `false`) while the desktop
+    no longer shows it as a choice.
+  - `lifecycle` (handoff-created sessions): `"working"`, `"waiting"`, `"done"`, `"idle"`. `"waiting"` follows the same
+    mark: a choice, or `ready` that is not seen; a seen `ready` session is `"idle"`.
   - `lineage`: `{ parentId, title? }`.
   - `closeOffered: true` (a running agent session only; absent otherwise): the session's agent asked to close its own
     session and the user has not answered. The desktop shows "The agent asked to close this session" with Close and

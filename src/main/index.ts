@@ -17,9 +17,9 @@ import { broadcastLifecycle, registerHandoffHandlers, registerKeepCloseOffer, re
 import { registerSettingsHandlers } from './ipc/settings'
 import { registerSlackHandlers } from './ipc/slack'
 import { registerShellHandlers } from './ipc/shell'
+import { displayedInFocus, noteWaitBatch, registerWaitHandlers, windowFocused } from './ipc/wait'
 import {
   currentRelationsWorld,
-  displayedSessionOf,
   existingTerminalService,
   liveSessionsOf,
   onPtyChange,
@@ -209,6 +209,8 @@ function createWindow({ dirty, store, sessions, closeAsk, presence, onRendererGo
     onRendererGone?.()
   })
 
+  // Turning to a window shows its displayed session: that is looking at it (`session-wait-indicator`).
+  window.on('focus', () => windowFocused(window.webContents.id))
   window.on('ready-to-show', () => {
     window.show()
   })
@@ -619,11 +621,9 @@ void app.whenReady().then(async () => {
         title: preferredTitle(session) ?? `${session.spawnTarget} ${session.ordinal}`,
       }
     },
-    // The session the user is looking at: displayed in the window that has focus.
-    displayedInFocus: (sessionId) => {
-      const focused = BrowserWindow.getFocusedWindow()
-      return focused !== null && !focused.isDestroyed() && displayedSessionOf(focused.webContents.id) === sessionId
-    },
+    // The session the user is looking at: displayed in the window that has focus. The seen mark asks the same
+    // question (`looked-at.ts`), plus a device's conversation watch, which `suppressed` leaves out.
+    displayedInFocus,
   })
   let remoteOpenSpec: OpenSpecService | null = null
   const remoteService = new RemoteService({
@@ -664,6 +664,8 @@ void app.whenReady().then(async () => {
   })
   // Every drained batch of every session: attention events, and the session list's wait states.
   observeWaits((sessionId, snapshot, previous) => {
+    // The seen mark first, so an unseen turn end reaches the window and the lists in this same tick.
+    noteWaitBatch(sessionId, snapshot)
     remoteAttention.onWait(sessionId, snapshot)
     if (snapshot.state !== previous) remoteService.listChanged('sessions')
   })
@@ -879,12 +881,23 @@ void app.whenReady().then(async () => {
   }
   onPtyChange(trackCompletion)
   // 生命週期的呈現狀態是關係的一部分（`session-lineage`）；也要推給畫面（`handoff-completion`）。
-  onCompletionChange = () => {
+  const lifecycleChanged = (): void => {
     refreshAllRelations()
     broadcastLifecycle()
     remoteService.listChanged('handoffs')
     remoteService.listChanged('sessions')
   }
+  onCompletionChange = lifecycleChanged
+  /**
+   * Every running agent session's attention for the window's dots (`session-wait-indicator`). A handoff session's
+   * lifecycle reads the same seen mark, so a change there takes the lifecycle's path. It runs after the wait
+   * subscribers — `HandoffCompletion` among them wrote the relations with the mark's old value this tick.
+   */
+  registerWaitHandlers({
+    sessions: sessionStore,
+    lineageChanged: lifecycleChanged,
+    remoteChanged: () => remoteService.listChanged('sessions'),
+  })
 
   /**
    * 啟動後跑一輪 Slack 的回補。

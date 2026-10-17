@@ -111,6 +111,18 @@ describe('HibernationTracker (session-hibernation)', () => {
     assert.equal(tracker.eligible('c', 'idle', HOUR), true)
   })
 
+  it('only a conversation watch counts as a device reading the session', () => {
+    const { tracker } = setup()
+    tracker.setRemoteWatched('remote:1:conversation', 'c')
+    tracker.setRemoteWatched('remote:2:terminal', 't')
+    assert.equal(tracker.conversationWatched('c'), true)
+    assert.equal(tracker.conversationWatched('t'), false, 'a terminal watch is not reading the conversation')
+    tracker.setRemoteWatched('remote:1:conversation', 't')
+    assert.equal(tracker.conversationWatched('c'), false, 'the watch moved away')
+    tracker.setDisplayed(1, 'w')
+    assert.equal(tracker.conversationWatched('w'), false, 'a window is not a device')
+  })
+
   it('a remote watch and a window are counted separately', () => {
     const { tracker, advance } = setup()
     tracker.track('s', 'shell')

@@ -40,7 +40,11 @@ OpenSpec 結構的側欄，讓使用者不必另外開 IDE 就能一邊駕駛 ag
   座標（來源 repo／工作目錄／錨定的 change）是 **per-folder** 的，落盤於 `panel.json`。
 - **agent 對話 view** —— agent session 有終端與對話兩種可切換的呈現（**終端為預設**）。
   內容來自 agent 自己寫下的紀錄（`~/.claude/projects/**/*.jsonl` 增量 tail），
-  「現在能不能送輸入」來自注入的 hooks。**SHALL NOT 解析終端畫面** —— 生態系有三個專案走過
+  「現在能不能送輸入」來自注入的 hooks。
+  **The status dots read the same hooks** (`session-wait-indicator`): working / waiting for you / asks for a choice /
+  idle. "Waiting" means a turn ended that no one has looked at; **the seen mark is owned by the main process**
+  (`wait-seen.ts`) and shared with the phone (`seen` in the remote list) and the handoff lifecycle's "waiting".
+  **SHALL NOT 解析終端畫面** —— 生態系有三個專案走過
   那條路，一個要在自己的 app 裡再養一個 VT100 模擬器，一個已失效，一個公開宣告不可維護後刪光。
 - **收件匣** —— 活動列的 `Handoffs` 入口已接上（PRD §11 Phase 7 的本機 inbox）。外部 producer
   往 `<userData>/intake-inbox/` 投遞一份 JSON，使用者**看過本文之後**接受它，就在**他確認的**

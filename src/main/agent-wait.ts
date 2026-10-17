@@ -53,6 +53,8 @@ export interface WaitSnapshot {
   count: number
   /** The batch contained a turn completion (`DrainResult.turnEnded`). */
   turnEnded: boolean
+  /** The batch contained a start, resume or clear of the conversation (`DrainResult.sessionStarted`). */
+  sessionStarted: boolean
   /** A turn is in progress (`inTurnOf`, `agent-session-control` design D3). */
   inTurn: boolean
   /** One entry per permission request in the batch (`DrainResult.choicesRaised`). */
@@ -143,6 +145,7 @@ function snapshotOf(sessionId: string, extra: Partial<WaitSnapshot> = {}): WaitS
     transcriptPath: null,
     count: 0,
     turnEnded: false,
+    sessionStarted: false,
     inTurn: inTurnOf(sessionId),
     choicesRaised: [],
     finished: [],
@@ -159,6 +162,7 @@ export function foldDrain(sessionId: string, result: DrainResult): WaitSnapshot 
     transcriptPath: result.transcriptPath,
     count: result.count,
     turnEnded: result.turnEnded,
+    sessionStarted: result.sessionStarted,
     choicesRaised: result.choicesRaised,
     finished: result.finished,
   })

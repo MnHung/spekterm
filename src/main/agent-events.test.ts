@@ -155,6 +155,21 @@ test('a failed turn does not count as a turn completion', () => {
   assert.equal(result.turnEnded, false)
 })
 
+test('a SessionStart that is not a compaction marks the batch as a start', () => {
+  const root = tmp()
+  configureAgentEvents(root)
+  const dir = prepareEventInjection('s1', true)!.env.SPEKTERM_EVENT_DIR
+  for (const source of ['startup', 'resume', 'clear']) {
+    fs.writeFileSync(path.join(dir, '100-1.json'), JSON.stringify({ hook_event_name: 'SessionStart', source }))
+    assert.equal(drainEvents('s1', heldWait('unknown')).sessionStarted, true, source)
+  }
+  fs.writeFileSync(path.join(dir, '100-1.json'), '{"hook_event_name":"SessionStart","source":"compact"}')
+  assert.equal(drainEvents('s1', heldWait('busy')).sessionStarted, false)
+  fs.writeFileSync(path.join(dir, '100-1.json'), '{"hook_event_name":"Stop"}')
+  assert.equal(drainEvents('s1', heldWait('busy')).sessionStarted, false)
+  assert.equal(drainEvents('s1', heldWait('ready')).sessionStarted, false)
+})
+
 test('a subagent\'s failed turn during a choice does not allow sending', () => {
   const root = tmp()
   configureAgentEvents(root)

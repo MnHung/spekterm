@@ -104,6 +104,18 @@ export class HibernationTracker {
     return this.#displayed.get(contentsId) ?? null
   }
 
+  /**
+   * A paired device watches this session's **conversation** — the user reading it on the phone, which holds that watch
+   * only while the conversation is on its screen (`session-wait-indicator`). A terminal watch is a device streaming
+   * output and does not count.
+   */
+  conversationWatched(sessionId: string): boolean {
+    for (const [key, id] of this.#displayed) {
+      if (id === sessionId && typeof key === 'string' && key.endsWith(':conversation')) return true
+    }
+    return false
+  }
+
   isDisplayed(sessionId: string): boolean {
     for (const id of this.#displayed.values()) if (id === sessionId) return true
     return false

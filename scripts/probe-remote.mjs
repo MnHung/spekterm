@@ -2194,6 +2194,79 @@ async function runCloseOffer(_mode, _config, context) {
   )
 }
 
+/**
+ * session-wait-indicator: the list's `seen` follows the desktop's seen mark.
+ *
+ * The stub starts without its startup `Stop` and reports its start four seconds after spawn, by when a shell is
+ * displayed: a start reported while shown is seen at once, and the baseline could then not tell a start from a
+ * turn end. Turns are driven with stub commands, so no keystroke reaches the session (a device's terminal input
+ * would count as one).
+ */
+async function runSeen(_mode, _config, context) {
+  // The section before may leave its app running; a second app on the same port would answer for this one.
+  if (context.app) await context.app.close()
+  const repos = makeRepos()
+  const profile = seedProfile(repos, { remote: { enabled: true, port: LISTEN_A } })
+  const { app, stub } = await start(context, profile, { startupStop: false, readyDelaySeconds: 4 })
+  const { client } = await phone(app)
+  await selectFolder(app, repos.names.f)
+  await desktopCreate(app, 'claude')
+  await desktopCreate(app, 'shell')
+  const conversation = (await pollFor({ read: () => stub.peerNames(), settled: (l) => l.length >= 1, timeoutMs: 20_000, label: 'the agent started' })).at(-1)?.conversation
+  const agentOf = (sessions) => sessions.find((s) => s.folderId === 'f' && s.target === 'claude')
+  const shellOf = (sessions) => sessions.find((s) => s.folderId === 'f' && s.target === 'shell')
+
+  const started = await pollFor({ read: async () => agentOf((await list(client)).sessions), settled: (s) => s?.wait === 'ready', timeoutMs: 20_000, label: 'the agent ready' })
+  check(results, 'a started agent is listed ready and seen (the baseline)', started?.wait === 'ready' && started.seen === true, JSON.stringify(started))
+  const id = started?.id
+
+  const from = client.events.length
+  stub.command(conversation, 'fire UserPromptSubmit\nsleep 1\nfire Stop')
+  const busy = await client.waitEvent('sessions.changed', { from, match: (d) => agentOf(d.sessions)?.wait === 'busy', timeoutMs: 10_000, label: 'listed working' })
+  const unseen = await client.waitEvent('sessions.changed', { from, match: (d) => agentOf(d.sessions)?.wait === 'ready' && agentOf(d.sessions)?.seen === false, timeoutMs: 15_000, label: 'listed not seen' })
+  check(results, 'a turn that ends unwatched and not displayed is listed ready and not seen', Boolean(unseen), JSON.stringify(unseen ? agentOf(unseen.d.sessions) : null))
+  check(
+    results,
+    'the seen field is absent while the agent works, and on a shell',
+    Boolean(busy) && !('seen' in agentOf(busy.d.sessions)) && !('seen' in (shellOf(busy.d.sessions) ?? { seen: 'no shell' })),
+    JSON.stringify({ busy: busy ? agentOf(busy.d.sessions) : null, shell: busy ? shellOf(busy.d.sessions) : null }),
+  )
+
+  await call(client, 'terminal.watch', { sessionId: id })
+  await sleep(1_500)
+  const terminalWatched = agentOf((await list(client)).sessions)
+  await call(client, 'terminal.unwatch')
+  check(results, 'a terminal watch does not mark the session seen', terminalWatched?.seen === false, JSON.stringify(terminalWatched))
+
+  const watchFrom = client.events.length
+  await call(client, 'conversation.watch', { sessionId: id })
+  const seen = await client.waitEvent('sessions.changed', { from: watchFrom, match: (d) => agentOf(d.sessions)?.seen === true, timeoutMs: 10_000, label: 'listed seen' })
+  check(results, "watching a session's conversation lists it seen", Boolean(seen), JSON.stringify(agentOf((await list(client)).sessions)))
+  const tabs = await pollFor({
+    read: () => app.client.evaluate(`[...document.querySelectorAll('[role="tablist"][aria-label="${copy('sessions.tabs')}"] [role="tab"]')].map((t) => t.getAttribute('title') ?? '')`),
+    settled: (titles) => titles[0]?.includes(copy('sessions.attentionIdle')),
+    timeoutMs: 10_000,
+    label: 'the desktop tab idle',
+  })
+  check(results, "a device's conversation watch clears the waiting state on the desktop", tabs[0]?.includes(copy('sessions.attentionIdle')), JSON.stringify(tabs))
+
+  const turnFrom = client.events.length
+  stub.command(conversation, 'fire UserPromptSubmit\nsleep 1\nfire Stop')
+  const watchedBusy = await client.waitEvent('sessions.changed', { from: turnFrom, match: (d) => agentOf(d.sessions)?.wait === 'busy', timeoutMs: 10_000, label: 'working during the watch' })
+  // The first ready listing **after** the busy one: the listing before the turn is ready and seen too.
+  const firstReady = watchedBusy
+    ? await client.waitEvent('sessions.changed', { from: client.events.indexOf(watchedBusy) + 1, match: (d) => agentOf(d.sessions)?.wait === 'ready', timeoutMs: 15_000, label: 'ready after the watched turn' })
+    : null
+  check(
+    results,
+    'a turn that ends during a conversation watch is seen the first time it is listed ready',
+    Boolean(watchedBusy) && agentOf(firstReady?.d.sessions ?? [])?.seen === true,
+    JSON.stringify({ busy: Boolean(watchedBusy), ready: firstReady ? agentOf(firstReady.d.sessions) : null }),
+  )
+  await call(client, 'conversation.unwatch')
+  await app.close()
+}
+
 const SECTIONS = [
   { name: 'runListener', run: runListener },
   { name: 'runPairing', run: runPairing },
@@ -2213,6 +2286,7 @@ const SECTIONS = [
   { name: 'runHibernateCloseConversation', run: runHibernateCloseConversation },
   { name: 'runWatchEndAutoHibernate', run: runWatchEndAutoHibernate },
   { name: 'runCloseOffer', run: runCloseOffer },
+  { name: 'runSeen', run: runSeen },
 ].map((section) => ({
   ...section,
   // A section that hangs leaves its app behind; the profile prefix finds it (character class: not this command).

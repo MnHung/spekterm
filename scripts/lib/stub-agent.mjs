@@ -86,6 +86,13 @@ export function makeStubAgent(
      * spawn, so the fixture cannot be placed beforehand.
      */
     transcriptFixture = '',
+    /**
+     * Report `Stop` right after `SessionStart` at startup (the default, which every existing probe was written
+     * against). A real agent's start or resume reports `SessionStart` only, so a startup `Stop` reads as a turn end:
+     * `session-wait-indicator`'s "a started session is not waiting" cannot be shown with it, and a baseline taken
+     * with it is already "waiting" — an unseen-turn assertion would pass whether the product detected turn ends or not.
+     */
+    startupStop = true,
   } = {},
 ) {
   const home = mkTemp('spekterm-agentview-stub-')
@@ -288,7 +295,7 @@ export function makeStubAgent(
     // 讀不到 —— 供「來源不可讀時明說，而非靜默呈現為沒有內容」。**在寫完之後才拿掉權限**，
     // 於是 `stat` 讀得到大小、`open` 卻失敗，正是那條 requirement 的情境。
     unreadable ? 'chmod 000 "$tp"' : '',
-    'fire Stop',
+    startupStop ? 'fire Stop' : '',
     ') &',
     /*
       **探針下的指令**（`handoff-completion`）：`<commands>/<對話 id>.*` 出現就在**這個 shell 裡**執行它

@@ -926,11 +926,14 @@ try {
   const PINNED_UL = `document.querySelector('aside[aria-label="${copy('rail.label')}"] > ul[aria-label="${copy('rail.pinnedList')}"]')`
   const REST_UL = `document.querySelector('aside[aria-label="${copy('rail.label')}"] > ul[aria-label="${copy('rail.folderList')}"]')`
 
-  /** 兩段各自的 folder 名稱（以列的 title＝路徑取 basename，與 RAIL_ROWS 同一套）。 */
+  /**
+   * The folder names of each section, from the row's aria-label (the item's name). Its title is the path plus the
+   * most urgent session state (session-wait-indicator), so it no longer reads as a name.
+   */
   const SECTIONS = `(() => {
     const namesOf = (ul) => [...(ul?.querySelectorAll(':scope > li > div[role="button"]') ?? [])]
       .filter((row) => row.getAttribute('aria-label') !== ${JSON.stringify(copy('rail.globalName'))})
-      .map((row) => (row.getAttribute('title') ?? '').split('/').pop())
+      .map((row) => row.getAttribute('aria-label') ?? '')
     return { pinned: namesOf(${PINNED_UL}), rest: namesOf(${REST_UL}) }
   })()`
 

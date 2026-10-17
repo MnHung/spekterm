@@ -30,6 +30,8 @@ agent 會寫一個簡短的標題與一段描述工作的內容。spekterm 讀�
 - 同一個 repo 裡，交接出去的 session 在 rail 上會縮排在它的來源 session 底下。跨 repo 時，子 session
   會標示 **來自** 它的母 session，母 session 則標示它交接出去了幾個 session。點任一邊就能跳過去。
 - 每個交接出去的 session 都有一個狀態，母子兩端都看得到：**進行中**、**等你** 或 **已完成**。
+  **等你** 跟著 session 的圓點走：你看過那個 session 之後，它就不顯示狀態，直到它再開始工作
+  （見[圓點代表什麼](/zh-tw/docs/using/terminals-and-sessions/#圓點代表什麼)）。
 
 子 agent 做完時，會寫一份簡短的報告。spekterm 會把 session 標成 **已完成**、在交接單裡呈現摘要，並發出
 桌面通知 —— 點它會打開交接單。子 agent 也可以直接把結果傳給母 agent；見下方。

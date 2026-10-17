@@ -2,7 +2,9 @@ import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ContextMenu, type MenuItem } from './files/dialogs'
 import { SessionNameDialog } from './terminal/SessionNameDialog'
-import { StatusDot, sessionLabel, sessionTitle, statusTitle } from './terminal/session-badge'
+import { StateDot, StatusDot, rowStateOf, rowStateWords, sessionLabel, sessionTitle, statusTitle } from './terminal/session-badge'
+import { useAttention } from './terminal/wait'
+import { mostUrgent } from '@shared/wait/attention'
 import { type SessionState, useSessions } from './terminal/sessions'
 import { LineageMarkers, useLineage } from './terminal/lineage'
 import { useCompletedAmong, useLifecycle } from './terminal/lifecycle'
@@ -164,6 +166,7 @@ function SessionGroup({
   onMove: (siblings: readonly string[], from: number, to: number) => void
 }): React.JSX.Element {
   const { t } = useTranslation()
+  const { attentionOf } = useAttention()
 
   const rectOf = useCallback(
     (index: number): DOMRect | null => {
@@ -190,6 +193,7 @@ function SessionGroup({
         const isFocused = session.id === focusedSessionId
         const label = sessionLabel(session)
         const full = sessionTitle(session)
+        const attention = attentionOf(session.id)
         const dragging = reorder.drag?.fromIndex === index
         const children = forest.childrenOf.get(id) ?? []
         const displayDepth = Math.min(depth, 3)
@@ -221,7 +225,7 @@ function SessionGroup({
                 event.stopPropagation()
                 onContextMenu(session, event.clientX, event.clientY)
               }}
-              title={`${full} — ${statusTitle(session)}`}
+              title={`${full} — ${statusTitle(session, attention)}`}
               style={{ paddingLeft: `${2.25 + displayDepth * INDENT_STEP_REM}rem` }}
               className={
                 // 縮排造出樹狀層次（mockup 的 .ws-session-row）；交接的子 session 再往內縮一層。
@@ -243,7 +247,7 @@ function SessionGroup({
                     : 'text-ink-dim hover:bg-hover/60')
               }
             >
-              <StatusDot session={session} />
+              <StatusDot session={session} attention={attention} />
               <span className="min-w-0 flex-1 truncate font-mono">{label}</span>
 
               <LineageMarkers session={session} />
@@ -349,6 +353,10 @@ function RailRow({
   dragged: boolean
 }): React.JSX.Element {
   const { t } = useTranslation()
+  const { attentionOf } = useAttention()
+  // The item's most urgent session state (`session-wait-indicator`): a collapsed item still says that something
+  // inside it needs the user. No session, no dot.
+  const urgent = mostUrgent(sessions.map((session) => rowStateOf(session, attentionOf(session.id))))
   // 每個 folder 各持有自己的選單狀態 —— rail 上有很多列，共用一份會錨錯位置。
   const spawn = useSpawnMenu(onCreateSession)
     const [menu, setMenu] = useState<{ x: number; y: number; session: SessionState } | null>(null)
@@ -519,7 +527,7 @@ function RailRow({
                 setFolderMenu({ x: event.clientX, y: event.clientY })
               }
         }
-        title={item.title}
+        title={urgent ? `${item.title} — ${t('rail.mostUrgent', { state: rowStateWords(urgent) })}` : item.title}
         className={
           // select-none：拖曳時不該把名稱與分支反白選起來。
           'flex items-center gap-2 px-3 py-2 text-base select-none ' +
@@ -578,6 +586,9 @@ function RailRow({
             {sessions.length}
           </span>
         )}
+
+        {/* After the count, as the mockup places it; its words are in the row's title. */}
+        {urgent && <StateDot state={urgent} />}
 
         {item.missingPath !== undefined && (
           <span

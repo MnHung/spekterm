@@ -13,6 +13,7 @@ import { SessionsProvider } from './terminal/sessions'
 import { LineageProvider } from './terminal/lineage'
 import { HandoffBriefProvider } from './terminal/HandoffBrief'
 import { LifecycleProvider } from './terminal/lifecycle'
+import { WaitProvider } from './terminal/wait'
 import { IntakeProvider } from './intake/intake-state'
 import { IntakeAutoAccept } from './intake/IntakeAutoAccept'
 import { RemoteRequests } from './remote/RemoteRequests'
@@ -67,6 +68,8 @@ export function AppShell(): React.JSX.Element {
           <HandoffBriefProvider>
           {/* 生命週期（`handoff-completion`）—— 狀態標記與「收掉已完成」。要 `useLineage()`。 */}
           <LifecycleProvider>
+          {/* Every running agent session's attention (`session-wait-indicator`) — the rail's and the tabs' dots. */}
+          <WaitProvider>
           <PanelCoordinateProvider>
           <OpenSpecProvider>
             {/*
@@ -145,6 +148,7 @@ export function AppShell(): React.JSX.Element {
             </div>
           </OpenSpecProvider>
           </PanelCoordinateProvider>
+          </WaitProvider>
           </LifecycleProvider>
           </HandoffBriefProvider>
           </LineageProvider>

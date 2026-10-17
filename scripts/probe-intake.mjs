@@ -3909,6 +3909,76 @@ async function runHibernateLineage(_mode, _modeConfig, context) {
  * A session holding a filled-in prompt whose send key did not take (`dropFirstSubmit`) is never
  * hibernated automatically: resuming would discard the unsent text (session-hibernation).
  */
+/**
+ * session-wait-indicator / handoff-completion: a child whose turn ended unseen is "waiting"; once the user looks at
+ * it, it presents no state — in the parent's relations file (`idle`) and on its rail row. Needs the window to have
+ * focus; without it the step is a recorded gap (the rule is carried by `lifecycle.test.ts` and `looked-at.test.ts`).
+ */
+async function runLineageSeen(_mode, _modeConfig, context) {
+  const { profile, folders } = seedProfile()
+  seedRouting(profile, { fallbackFolderId: folders[0].id })
+  const configDir = mkTemp('spekterm-intake-config-')
+  const marker = `spek-intake-seen-${process.pid}-${Date.now()}`
+  const stub = makeStubAgent(mkTemp, configDir, { readyDelaySeconds: 2 })
+  const nameB = basename(folders[1].path)
+
+  drop(profile, 'source', intake({ id: 'seen-src', title: 'SEEN-SOURCE' }))
+  const app = await freshApp(context, { profile, configDir, stub, marker })
+  await openInbox(app)
+  await pollFor({ read: () => app.client.evaluate(acceptExpression('SEEN-SOURCE')), settled: Boolean, timeoutMs: 20_000, label: 'the parent is created by accepting' })
+  const outbox = await awaitOutbox(profile, 'the parent drop point appears')
+  const P = basename(outbox)
+  writeFileSync(join(outbox, 'child.json'), JSON.stringify({ target: nameB, title: 'SEEN-CHILD', body: 'child' }))
+  const child = await pollFor({
+    read: () => persistedSessions(profile).find((s) => s.lineage?.parentId === P && s.claudeSessionId) ?? null,
+    settled: Boolean,
+    timeoutMs: 30_000,
+    label: 'the child is persisted with its parent',
+  }).catch(() => null)
+  check(results, 'precondition: a handoff created the child', child !== null, JSON.stringify(persistedSessions(profile)))
+  if (!child) return
+
+  const childOf = () => relationsOf(profile, P)?.children?.find((c) => c.name === child.peerName) ?? null
+  const railMark = () =>
+    app.client.evaluate(`(() => {
+      const row = [...document.querySelectorAll('aside [role="button"]')].find((el) => (el.textContent ?? '').includes('SEEN-CHILD'))
+      if (!row) return '(no row)'
+      const marks = [${['working', 'waiting', 'done'].map((key) => JSON.stringify(copy(`handoffLifecycle.${key}`))).join(', ')}]
+      return [...row.querySelectorAll('[role="img"]')].map((el) => el.getAttribute('aria-label')).find((l) => marks.includes(l)) ?? '(none)'
+    })()`)
+
+  // Its first prompt was sent and its turn ended while it was not displayed.
+  const waiting = await pollFor({ read: childOf, settled: (c) => c?.state === 'waiting', timeoutMs: 30_000, label: 'the child waits' }).catch(() => childOf())
+  check(results, 'precondition: the child whose turn ended unseen is waiting', waiting?.state === 'waiting', JSON.stringify(waiting))
+
+  if (!(await app.client.evaluate('document.hasFocus()'))) {
+    console.log('  (the window has no focus: looking at the child is carried by lifecycle.test.ts and looked-at.test.ts — a recorded gap)')
+    return
+  }
+  await app.client.evaluate(`document.querySelector('[aria-label="${nameB}"]')?.click()`)
+  await pollFor({
+    read: () =>
+      app.client.evaluate(`(() => {
+        const tab = [...document.querySelectorAll('[role="tablist"][aria-label="${copy('sessions.tabs')}"] [role="tab"]')].find((t) => (t.textContent ?? '').includes('SEEN-CHILD'))
+        tab?.click()
+        return tab?.getAttribute('aria-selected') === 'true'
+      })()`),
+    settled: Boolean,
+    timeoutMs: 15_000,
+    label: 'the child is displayed',
+  })
+  const idle = await pollFor({ read: childOf, settled: (c) => c?.state === 'idle', timeoutMs: 10_000, label: 'the parent sees the child idle' }).catch(() => childOf())
+  const mark = await pollFor({ read: railMark, settled: (m) => m === '(none)', timeoutMs: 10_000, label: 'the waiting mark is gone' }).catch(() => railMark())
+  // The tab's own state tells "not taken as looked at" from "looked at, but the lifecycle did not follow".
+  const tab = await app.client.evaluate(`[...document.querySelectorAll('[role="tablist"][aria-label="${copy('sessions.tabs')}"] [role="tab"]')].find((t) => (t.textContent ?? '').includes('SEEN-CHILD'))?.getAttribute('title') ?? null`)
+  check(
+    results,
+    'looking at a child without a report clears its waiting state (relations idle, no mark on the rail)',
+    idle?.state === 'idle' && idle?.running === true && mark === '(none)',
+    `relations=${JSON.stringify(idle)} mark=${mark} tab=${JSON.stringify(tab)}`,
+  )
+}
+
 async function runHibernateUnsent(_mode, _modeConfig, context) {
   const THRESHOLD_S = 4
   const { profile, folders } = seedProfile()
@@ -3946,10 +4016,12 @@ async function runHibernateUnsent(_mode, _modeConfig, context) {
   // The child is not displayed; its first prompt was written but the send key was swallowed. Past the
   // send-confirmation window (10 s) and the threshold, plus two ticks.
     await new Promise((resolve) => setTimeout(resolve, (10 + THRESHOLD_S + 4) * 1000))
-  // It must be waiting (ready) — otherwise "still running" would be owed to its state, not to the
-  // unsent prompt.
+  // It must not be working — otherwise "still running" would be owed to its state, not to the unsent prompt.
+  // Waiting or idle both mean the agent waits for input: the prompt written into its input is a keystroke, which
+  // counts as looking at it (`session-wait-indicator`), so a ready child here is usually idle. A missing state
+  // (no lifecycle at all) still fails.
   const state = relationsOf(profile, P)?.children?.find((c) => c.name === child.peerName)?.state
-  check(results, 'precondition: the child with the unsent prompt is waiting for the user', state === 'waiting', `state=${state}`)
+  check(results, 'precondition: the child with the unsent prompt waits for input (waiting or idle, not working)', state === 'waiting' || state === 'idle', `state=${state}`)
   check(results, 'a session holding an unsent filled-in prompt is not hibernated automatically', agentAlive(child.claudeSessionId), `alive=${agentAlive(child.claudeSessionId)}`)
 }
 
@@ -4413,6 +4485,7 @@ const SECTIONS = [
     { name: 'runLineageDrag', run: runLineageDrag },
   { name: 'runHibernateLineage', run: runHibernateLineage },
   { name: 'runHibernateUnsent', run: runHibernateUnsent },
+  { name: 'runLineageSeen', run: runLineageSeen },
   { name: 'runMaximizeHandoff', run: runMaximizeHandoff },
   { name: 'runSessionControl', run: runSessionControl },
 ]

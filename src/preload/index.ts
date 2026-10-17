@@ -19,6 +19,7 @@ import type {
 type PendingRequest = DrainResult['pending']
 import type { RestoredSession } from '../main/ipc/terminal'
 import type { HandoffBriefView, LifecycleView } from '../main/ipc/handoff'
+import type { AttentionView } from '../main/ipc/wait'
 import type { DirEntry, FileContent } from '../main/fs-service'
 import type { SlackState, SlackTokenKind } from '../main/slack-state'
 import type { ProjectedPreferences } from '../main/preferences-store'
@@ -511,6 +512,15 @@ const workspaceApi = {
    *
    * `brief` 只收 session 識別碼；主行程只對存在且帶交接單的 session 回應。
    */
+  /** Every running agent session's attention state (`session-wait-indicator`). Read-only: the main process owns it. */
+  wait: {
+    list: (): Promise<AttentionView[]> => ipcRenderer.invoke('workspace:wait:list'),
+    onChanged: (listener: (views: AttentionView[]) => void): (() => void) => {
+      const handler = (_event: IpcRendererEvent, views: AttentionView[]): void => listener(views)
+      ipcRenderer.on('workspace:wait:changed', handler)
+      return () => ipcRenderer.removeListener('workspace:wait:changed', handler)
+    },
+  },
   handoff: {
     brief: (sessionId: string): Promise<HandoffBriefView | null> =>
       ipcRenderer.invoke('workspace:handoff:brief', sessionId),

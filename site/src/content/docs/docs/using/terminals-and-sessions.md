@@ -39,6 +39,29 @@ and why each key was chosen, is on the [Keyboard shortcuts](/docs/reference/keyb
 The look of the terminal — font, size, line height, and GPU drawing — is under **Settings**; see
 [Settings](/docs/reference/settings/).
 
+## What the dots say
+
+The dot beside each session, on its tab and on the rail, tells you whether a `claude` session needs you,
+without opening it. Hover over it to see the state in words.
+
+| Dot | State |
+|---|---|
+| Amber, pulsing | **Waiting for you**: the agent finished its turn and you have not looked at it since, or it **asks for a choice** (a permission prompt or a question) |
+| Green, glowing | **Working**: the agent is in a turn |
+| Green ring | **Idle**: the turn ended and you have already seen it |
+| Green | Running: a shell, or an agent whose state is not known (agent events are off) |
+| Grey | Hibernated, or ended |
+| Red | Ended with an error |
+
+Turning to a session in the spekterm window — or opening its conversation in the companion phone app —
+counts as looking at it, and its dot calms from waiting to idle. A session that has just started or woken
+is idle, not waiting. Each folder row on the rail carries one dot for its most urgent session, so a
+collapsed folder still shows that something inside it waits.
+
+Two things the agent does not report: pressing `Esc` to interrupt a turn leaves the dot on **Working**
+until your next prompt, and a permission prompt you answer by typing in the terminal is taken as answered
+from your keystroke.
+
 ## After a restart: dormant sessions
 
 Closing spekterm ends every session's process. If any are still running, spekterm asks first and lists

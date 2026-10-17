@@ -38,7 +38,7 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { check, connectToApp, pollFor, pressKey } from './lib/cdp.mjs'
-import { copy, label } from './lib/copy.mjs'
+import { copy, label, prefixOf } from './lib/copy.mjs'
 import { makeStubAgent } from './lib/stub-agent.mjs'
 import { awaitMounted } from './lib/mounted.mjs'
 import { electronExtraArgs } from './lib/display.mjs'
@@ -1762,6 +1762,252 @@ async function runCloseConfirmAgent(_mode, _config, context) {
 }
 
 
+// ── session-wait-indicator ─────────────────────────────────────────────────
+
+/** One folder's rail rows and the stage's tabs, in the shared order, plus the two folder rows' titles. */
+function attentionState(names) {
+  return `(() => {
+    const titles = (root, selector) => [...(root?.querySelectorAll(selector) ?? [])].map((el) => el.getAttribute('title') ?? '')
+    const tablist = document.querySelector('[role="tablist"][aria-label="${copy('sessions.tabs')}"]')
+    const rows = document.querySelector('[aria-label="${copy('rail.folderSessions', { name: names.f })}"]')
+    return {
+      tabs: titles(tablist, '[role="tab"]'),
+      rows: titles(rows, ':scope > li > [role="button"]'),
+      folder: document.querySelector('[aria-label="${names.f}"]')?.getAttribute('title') ?? null,
+      empty: document.querySelector('[aria-label="${names.g}"]')?.getAttribute('title') ?? null,
+      focus: document.hasFocus(),
+    }
+  })()`
+}
+
+const STATUS = (key) => copy('sessions.statusRunningWith', { state: copy(key) })
+const WAITING = STATUS('sessions.attentionWaiting')
+const CHOICE = STATUS('sessions.attentionChoice')
+const WORKING = STATUS('sessions.attentionWorking')
+const IDLE = STATUS('sessions.attentionIdle')
+const URGENT = (key) => copy('rail.mostUrgent', { state: copy(key) })
+/** Any attention words at all, for "running and nothing more". */
+const ANY_ATTENTION = [WAITING, CHOICE, WORKING, IDLE]
+
+/** A turn: the prompt is reported, the agent works for a moment, the turn ends. */
+const TURN = (seconds = 1) => `fire UserPromptSubmit\nsleep ${seconds}\nfire Stop`
+
+async function createSessionOf(app, repoName, match) {
+  await pollFor({ read: () => app.client.evaluate(selectRepoExpression(repoName)), settled: (ok) => ok === true, timeoutMs: 15_000, label: 'select the repo' })
+  await pollFor({ read: () => app.client.evaluate(CREATE_SESSION), settled: (r) => r === 'clicked', timeoutMs: 15_000, label: 'the create entry' })
+  await pollFor({
+    read: () =>
+      app.client.evaluate(`(() => {
+        const item = [...document.querySelectorAll('[role="menuitem"]')]
+          .find((el) => el.textContent.trim().toLowerCase().includes(${JSON.stringify(match)}))
+        if (!item) return false
+        item.click()
+        return true
+      })()`),
+    settled: (ok) => ok === true,
+    timeoutMs: 15_000,
+    label: `the spawn menu offers ${match}`,
+  })
+}
+
+/**
+ * **The status dots say whether an agent needs the user** (`session-wait-indicator`).
+ *
+ * The dots are `aria-hidden`; what they say is in the row's and the tab's title, from the dictionary — that is
+ * what is read here. The stub starts without its startup `Stop`, as a real agent does: with it, every session would
+ * start "waiting", and an "unseen turn end shows waiting" assertion would pass with no turn-end detection at all.
+ *
+ * Folder F holds agents A, B, C and a shell; folder G holds nothing. The steps that need the window to have focus
+ * (looking at a session clears it) check `document.hasFocus()` first and record a gap without it — the focus rule is
+ * carried by `looked-at.test.ts`.
+ */
+async function runAttention(_mode, _config, context) {
+  if (context.app) await context.app.close()
+  const repo = mkTemp('spekterm-agentview-repoW-')
+  const empty = mkTemp('spekterm-agentview-repoW2-')
+  const configDir = mkTemp('spekterm-agentview-configW-')
+  // The start is reported four seconds after spawn, by when a later session is displayed: a start that is shown
+  // as it arrives is seen at once, and the baseline below could then not tell a turn end from a start.
+  const stub = makeStubAgent(mkTemp, configDir, { startupStop: false, readyDelaySeconds: 4 })
+  const profile = mkTemp('spekterm-agentview-profile-')
+  writeFileSync(
+    join(profile, 'workspace.json'),
+    JSON.stringify({
+      version: 1,
+      folders: [
+        { id: 'f1', path: repo, addedAt: '2026-09-06T00:00:00.000Z' },
+        { id: 'f2', path: empty, addedAt: '2026-09-06T00:00:00.000Z' },
+      ],
+    }),
+  )
+  const names = { f: repo.split('/').pop(), g: empty.split('/').pop() }
+  const app = await launch({ profile, configDir, stub, port: PORT })
+  context.app = app
+  const state = () => app.client.evaluate(attentionState(names))
+
+  for (let i = 0; i < 3; i++) await createSessionOf(app, names.f, 'claude')
+  await createSessionOf(app, names.f, 'shell')
+  const started = await pollFor({ read: () => stub.peerNames(), settled: (list) => list.length >= 3, timeoutMs: 30_000, label: 'three agents started' })
+  const [a, b, c] = started.map((entry) => entry.conversation)
+  // Four tabs, read before the agents report their start (four seconds after spawn).
+  const created = await pollFor({ read: state, settled: (s) => s.tabs.length === 4, timeoutMs: 3_000, label: 'four tabs' })
+  check(
+    results,
+    'the shell is displayed before the agents report their start (the baseline can tell a start from a turn end)',
+    created.tabs.length === 4 && !created.tabs.slice(0, 3).some((t) => ANY_ATTENTION.some((w) => t.includes(w))),
+    JSON.stringify(created.tabs),
+  )
+
+  const baseline = await pollFor({
+    read: state,
+    settled: (s) => s.tabs.length === 4 && s.tabs.slice(0, 3).every((t) => t.includes(IDLE)),
+    timeoutMs: 25_000,
+    label: 'three idle agents',
+  })
+  check(
+    results,
+    'a started agent that reported only its start is idle, not waiting (the baseline)',
+    baseline.tabs.slice(0, 3).every((t) => t.includes(IDLE)) && !baseline.tabs.some((t) => t.includes(WAITING)),
+    JSON.stringify(baseline.tabs),
+  )
+  check(
+    results,
+    'a shell session states running and no attention state',
+    baseline.tabs[3]?.includes(copy('sessions.statusRunning')) && !ANY_ATTENTION.some((w) => baseline.tabs[3].includes(w)),
+    JSON.stringify(baseline.tabs[3]),
+  )
+  check(
+    results,
+    'a folder with no session names no state',
+    baseline.empty !== null && !baseline.empty.includes(prefixOf('rail.mostUrgent')),
+    JSON.stringify(baseline.empty),
+  )
+
+  // B is displayed while A finishes a turn: A was not looked at.
+  await app.client.evaluate(focusTabExpression(1))
+  stub.command(a, TURN())
+  const unseen = await pollFor({ read: state, settled: (s) => s.tabs[0]?.includes(WAITING), timeoutMs: 20_000, label: 'A waits' })
+  check(
+    results,
+    'a turn that ends unseen states "waiting for you" on the rail row and the tab',
+    unseen.tabs[0]?.includes(WAITING) && unseen.rows[0]?.includes(WAITING),
+    JSON.stringify({ tab: unseen.tabs[0], row: unseen.rows[0] }),
+  )
+  check(results, "the folder row's title states waiting", unseen.folder?.includes(URGENT('sessions.attentionWaiting')), JSON.stringify(unseen.folder))
+
+  // C works: waiting still outranks working on the folder row.
+  stub.command(c, 'fire UserPromptSubmit')
+  const working = await pollFor({ read: state, settled: (s) => s.tabs[2]?.includes(WORKING), timeoutMs: 20_000, label: 'C works' })
+  check(results, 'a turn in progress states "working"', working.tabs[2]?.includes(WORKING), JSON.stringify(working.tabs[2]))
+  check(
+    results,
+    'with one session working and another waiting, the folder row states waiting',
+    working.folder?.includes(URGENT('sessions.attentionWaiting')) && working.tabs[0]?.includes(WAITING),
+    JSON.stringify({ folder: working.folder, a: working.tabs[0] }),
+  )
+
+  // Collapsed, the folder row still says it.
+  await app.client.evaluate(`document.querySelector('${label('rail.collapseSessions', { name: names.f })}')?.click()`)
+  const collapsed = await pollFor({ read: state, settled: (s) => s.rows.length === 0, timeoutMs: 10_000, label: 'F collapsed' })
+  check(
+    results,
+    'a collapsed folder still states waiting on its row',
+    collapsed.rows.length === 0 && collapsed.folder?.includes(URGENT('sessions.attentionWaiting')),
+    JSON.stringify({ rows: collapsed.rows.length, folder: collapsed.folder }),
+  )
+  await app.client.evaluate(`document.querySelector('${label('rail.expandSessions', { name: names.f })}')?.click()`)
+  await pollFor({ read: state, settled: (s) => s.rows.length === 4, timeoutMs: 10_000, label: 'F expanded' })
+
+  // A background subagent's tool start after the turn: not a new turn.
+  stub.command(a, `firej PreToolUse '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_use_id":"t-late","agent_id":"sub1","tool_input":{"command":"ls"}}'`)
+  await new Promise((resolve) => setTimeout(resolve, 2_000))
+  const late = await state()
+  check(results, "a subagent's late tool start leaves the session waiting", late.tabs[0]?.includes(WAITING), JSON.stringify(late.tabs[0]))
+  stub.command(c, 'fire Stop')
+
+  if (!late.focus) {
+    console.log('  (the window has no focus: "looking clears it" is carried by looked-at.test.ts and wait-seen.test.ts — a recorded gap)')
+    return
+  }
+
+  // Looking at A clears it.
+  await app.client.evaluate(focusTabExpression(0))
+  const looked = await pollFor({ read: state, settled: (s) => s.tabs[0]?.includes(IDLE), timeoutMs: 10_000, label: 'A looked at' })
+  check(results, 'turning to a session in the focused window states "idle"', looked.tabs[0]?.includes(IDLE), JSON.stringify(looked.tabs[0]))
+
+  // B finishes a turn while displayed: working, then idle, never waiting.
+  await app.client.evaluate(focusTabExpression(1))
+  await pollFor({ read: state, settled: (s) => s.tabs[1]?.includes(IDLE), timeoutMs: 10_000, label: 'B displayed and idle' })
+  const seenStates = []
+  stub.command(b, TURN(2))
+  await pollFor({
+    read: async () => {
+      const s = await state()
+      seenStates.push(s.tabs[1])
+      return s
+    },
+    settled: (s) => seenStates.some((t) => t?.includes(WORKING)) && s.tabs[1]?.includes(IDLE),
+    timeoutMs: 20_000,
+    label: 'B worked and is idle',
+  })
+  check(
+    results,
+    'a turn that ends while the user watches goes working → idle, never waiting',
+    seenStates.some((t) => t?.includes(WORKING)) && seenStates.at(-1)?.includes(IDLE) && !seenStates.some((t) => t?.includes(WAITING)),
+    JSON.stringify([...new Set(seenStates)]),
+  )
+
+  // A, displayed, asks for permission: a choice even while looked at; typing into it answers it.
+  await app.client.evaluate(focusTabExpression(0))
+  stub.command(
+    a,
+    [
+      `firej PreToolUse '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_use_id":"t-ask","tool_input":{"command":"rm x"}}'`,
+      `firej PermissionRequest '{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"rm x"}}'`,
+    ].join('\n'),
+  )
+  const asking = await pollFor({ read: state, settled: (s) => s.tabs[0]?.includes(CHOICE), timeoutMs: 15_000, label: 'A asks' })
+  check(results, 'a permission prompt states "asks for a choice" even when displayed', asking.tabs[0]?.includes(CHOICE), JSON.stringify(asking.tabs[0]))
+  await app.client.evaluate(`(() => {
+    const box = [...document.querySelectorAll('[aria-label="${copy('stage.terminal')}"] .xterm-helper-textarea')]
+      .find((el) => el.closest('.xterm')?.getBoundingClientRect().width > 0)
+    box?.focus()
+    return Boolean(box)
+  })()`)
+  await app.client.send('Input.insertText', { text: 'n' })
+  const answered = await pollFor({ read: state, settled: (s) => !s.tabs[0]?.includes(CHOICE), timeoutMs: 10_000, label: 'A answered at the desktop' })
+  check(results, 'a choice typed into at the desktop no longer shows as a choice', !answered.tabs[0]?.includes(CHOICE), JSON.stringify(answered.tabs[0]))
+
+  // After A was seen, a new turn that ends while B is displayed is unseen again.
+  stub.command(a, `firej PostToolUse '{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_use_id":"t-ask","tool_input":{"command":"rm x"}}'\nfire Stop`)
+  await pollFor({ read: state, settled: (s) => s.tabs[0]?.includes(IDLE), timeoutMs: 10_000, label: 'A idle again' })
+  await app.client.evaluate(focusTabExpression(1))
+  stub.command(a, TURN())
+  const again = await pollFor({ read: state, settled: (s) => s.tabs[0]?.includes(WAITING), timeoutMs: 20_000, label: 'A waits again' })
+  check(results, 'a new turn end after being seen states "waiting for you" again', again.tabs[0]?.includes(WAITING), JSON.stringify(again.tabs[0]))
+}
+
+/** An agent that reports nothing (event reporting not honored) keeps the running dot (`session-wait-indicator`). */
+async function runAttentionUnreported(_mode, _config, context) {
+  if (context.app) await context.app.close()
+  const repo = mkTemp('spekterm-agentview-repoU-')
+  const configDir = mkTemp('spekterm-agentview-configU-')
+  const stub = makeStubAgent(mkTemp, configDir, { honorHooks: false })
+  const profile = seedProfile(repo)
+  const app = await launch({ profile, configDir, stub, port: PORT })
+  context.app = app
+  await createSessionOf(app, repo.split('/').pop(), 'claude')
+  await pollFor({ read: () => stub.peerNames(), settled: (list) => list.length >= 1, timeoutMs: 30_000, label: 'the agent started' })
+  await new Promise((resolve) => setTimeout(resolve, 2_000))
+  const tab = await app.client.evaluate(`document.querySelector('[role="tablist"][aria-label="${copy('sessions.tabs')}"] [role="tab"]')?.getAttribute('title') ?? null`)
+  check(
+    results,
+    'an agent session whose wait state is unknown states running and no attention state',
+    tab?.includes(copy('sessions.statusRunning')) && !ANY_ATTENTION.some((w) => tab.includes(w)),
+    JSON.stringify(tab),
+  )
+}
+
 const SECTIONS = [
   { name: 'runViewAndSend', run: runViewAndSend },
   { name: 'runRebuiltWidth', run: runRebuiltWidth, requires: ['runViewAndSend'] },
@@ -1781,6 +2027,8 @@ const SECTIONS = [
   { name: 'runPasteRecorded', run: runPasteRecorded },
   { name: 'runAutoHibernateAgent', run: runAutoHibernateAgent },
   { name: 'runCloseConfirmAgent', run: runCloseConfirmAgent },
+  { name: 'runAttention', run: runAttention },
+  { name: 'runAttentionUnreported', run: runAttentionUnreported },
 ]
 
 const outcome = await runSections({

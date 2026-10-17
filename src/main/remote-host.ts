@@ -24,6 +24,7 @@ import type { FolderView, HostAction, RemoteHost, SessionList, SessionView } fro
 import type { SessionStore } from './session-store'
 import type { TerminalService } from './terminal'
 import type { FolderLookup } from './workspace-store'
+import { seenMarks } from './wait-seen'
 
 /**
  * The application as the remote protocol sees it (`remote-protocol`). Every method reuses the desktop's
@@ -111,6 +112,12 @@ async function openspecCall<T>(run: () => Promise<T>): Promise<T> {
   }
 }
 
+/** An agent session's wait state, and while it is ready, whether its last turn end was seen (`session-wait-indicator`). */
+function waitFields(sessionId: string): Pick<SessionView, 'wait' | 'seen'> {
+  const wait = waitStateOf(sessionId)
+  return wait === 'ready' ? { wait, seen: seenMarks.seenOf(sessionId) } : { wait }
+}
+
 export function createRemoteHost(deps: HostDeps): RemoteHost {
   const delay = deps.delay ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
 
@@ -135,7 +142,7 @@ export function createRemoteHost(deps: HostDeps): RemoteHost {
           target,
           label: preferredTitle(session) ?? (session.ordinal ? `${target} ${session.ordinal}` : target),
           running: live.has(session.id),
-          ...(target === 'claude' ? { wait: waitStateOf(session.id) } : {}),
+          ...(target === 'claude' ? waitFields(session.id) : {}),
           ...(lifecycle.has(session.id) ? { lifecycle: lifecycle.get(session.id) } : {}),
           ...(session.lineage
             ? { lineage: { parentId: session.lineage.parentId, ...(session.lineage.parentTitle ? { title: session.lineage.parentTitle } : {}) } }

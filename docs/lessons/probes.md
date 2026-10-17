@@ -1180,3 +1180,12 @@ only (issue #82). **An assertion on a state that the failure also produces must 
 it**: the wake's answer and a `sessions.changed` showing it running, read in order. The exhausted-wait line
 (`⏱`) in a passing section is where this showed; read it, it is not noise.
 
+
+## `run-probes.mjs` does not build — `npm run test:e2e` does
+
+`test:e2e` is `npm run build && node scripts/run-probes.mjs`, and `run-probes.mjs` sets `SPEKTERM_PROBE_BUILT=1`
+so no probe builds either. Calling `run-probes.mjs` directly (to pass `PROBE_LIST`) therefore tests whatever `out/`
+holds — and right after a round of controls, `out/` holds **the last mutation**. `session-wait-indicator` lost a full
+run to it: a section went red three times in a row, while every fresh build of the same source passed. The tell was
+that the debugging build (with log lines added) never failed. **Build first:** `npm run build && PROBE_LIST=… node
+scripts/run-probes.mjs`, and treat "red only on the shared build" as a stale-artifact question before a timing one.

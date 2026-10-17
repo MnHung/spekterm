@@ -1,6 +1,7 @@
 import { lifecycleOf, type LifecycleState } from '../shared/lineage/lifecycle'
 import { waitStateOf } from './agent-wait'
 import type { SessionStore } from './session-store'
+import { seenMarks } from './wait-seen'
 
 /** 一個交接 session 在畫面上的生命週期（`handoff-completion`）。 */
 export interface LifecycleView {
@@ -23,7 +24,7 @@ export function lifecycleViewOf(sessions: SessionStore): LifecycleView[] {
       const report = session.completion ? sessions.readHandoffBrief(session.id)?.report : undefined
       return {
         sessionId: session.id,
-        state: lifecycleOf(session.completion, waitStateOf(session.id)),
+        state: lifecycleOf(session.completion, waitStateOf(session.id), seenMarks.seenOf(session.id)),
         ...(report ? { summary: report.summary, reportedAt: report.reportedAt } : {}),
       }
     })

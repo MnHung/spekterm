@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { heldWait } from './agent-events'
+import { clearWait, foldDrain } from './agent-wait'
 import { createRemoteHost, type HostDeps } from './remote-host'
+import { seenMarks } from './wait-seen'
 import { RemoteOutput } from './remote-output'
 
 function host(overrides: Partial<HostDeps> = {}) {
@@ -298,4 +301,26 @@ test('keep withdraws in the main process, then always asks the window (remote-cl
   await assert.rejects(h.keep('zzz'), (error: { code?: string }) => error.code === 'NOT_FOUND')
   const { host: windowless } = host({ window: () => null })
   await assert.rejects(windowless.keep('a'), (error: { code?: string }) => error.code === 'NO_WINDOW')
+})
+
+test('seen is listed exactly while an agent session is ready (session-wait-indicator)', () => {
+  const ready = (id: string): void => {
+    foldDrain(id, { held: heldWait('ready'), transcriptPath: null, count: 0, turnEnded: false, sessionStarted: false, choicesRaised: [], finished: [] } as never)
+  }
+  const turnEnd = { state: 'ready', inTurn: false, turnEnded: true, sessionStarted: false, poke: false } as const
+  try {
+    ready('a')
+    assert.equal(host().host.sessionList().sessions.find((s) => s.id === 'a')?.seen, true, 'a just-started agent has nothing to see')
+    seenMarks.onBatch('a', turnEnd)
+    assert.equal(host().host.sessionList().sessions.find((s) => s.id === 'a')?.seen, false, 'an unseen turn end')
+    seenMarks.lookedAt('a')
+    assert.equal(host().host.sessionList().sessions.find((s) => s.id === 'a')?.seen, true, 'looked at')
+    foldDrain('a', { held: heldWait('busy'), transcriptPath: null, count: 0, turnEnded: false, sessionStarted: false, choicesRaised: [], finished: [] } as never)
+    const list = host().host.sessionList().sessions
+    assert.equal('seen' in list.find((s) => s.id === 'a')!, false, 'absent while busy')
+    assert.equal('seen' in list.find((s) => s.id === 'b')!, false, 'absent for a shell')
+  } finally {
+    clearWait('a')
+    seenMarks.forget('a')
+  }
 })

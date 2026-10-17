@@ -604,3 +604,27 @@ of idling. It also turns on focus reporting, bracketed paste, the alternate scre
 answers reach the pty as writes. `isTerminalReport` (`src/main/pty-input.ts`) therefore counts them as the
 terminal's own, alongside focus and mouse reports. Without that, a session the user never typed into would
 count as typed into after its start.
+
+## The status dots read these boundaries (`session-wait-indicator`)
+
+The rail and tab dots (and the remote list's `seen`) are derived from the same events, so the rows above decide
+what they can show. Three consequences, each with a carrier in `src/main/wait-seen.test.ts` or
+`src/shared/wait/attention.test.ts`:
+
+- **An interrupted turn stays "working".** Esc reports nothing, and the keystroke keeps `inTurn` true, so the dot
+  shows working until the next prompt. No event exists to fix it; it never shows a false "waiting".
+- **A denied prompt is read from the keystroke.** Esc or No on a permission prompt reports nothing (the request
+  stays open until the next turn event), so a keystroke after every open request's tool start counts as the
+  answer. The remote list still says `awaiting-choice` until the agent's next event.
+- **A background subagent's late `PreToolUse` is not a turn.** It can arrive after the turn's `Stop` (one run in
+  five) and sets the base state to busy with `inTurn: false`; the dot reads it as the turn-ended row.
+
+Two that come from spekterm, not the CLI:
+
+- **The last keystroke outlives the process.** `pty-input.ts` keeps it for the app's life, and `clearWait` drops
+  `turnEndAt` on hibernation, so a woken session is "in a turn" until its `SessionStart(resume)`. The seen mark
+  therefore does not count a turn that "ended" in a batch holding a non-compaction `SessionStart`
+  (`DrainResult.sessionStarted`).
+- **The probe stub fires `Stop` right after `SessionStart` at startup**; a real agent does not. A probe that
+  asserts "a started session is not waiting" uses `startupStop: false`, and reports the start after another
+  session is displayed — a start shown as it arrives is seen at once and proves nothing.

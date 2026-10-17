@@ -37,6 +37,11 @@ export interface SessionView {
   label: string
   running: boolean
   wait?: WaitState
+  /**
+   * Present exactly while `wait` is `ready`: whether someone looked at the session since its last turn ended
+   * (`session-wait-indicator`). Its absence on a ready session means an older desktop.
+   */
+  seen?: boolean
   lifecycle?: string
   lineage?: { parentId: string; title?: string }
   /** The agent asked to close its own session, and the user has not answered (`remote-close-offer`). */

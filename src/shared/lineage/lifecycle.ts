@@ -28,10 +28,16 @@ export function isDone(completion: CompletionState | undefined): boolean {
   return completion !== undefined && completion.reopenedAt === undefined
 }
 
-export function lifecycleOf(completion: CompletionState | undefined, wait: WaitValue): LifecycleState {
+/**
+ * `seen` is the main process's seen mark (`session-wait-indicator`): a ready child the user has already looked at is
+ * not "waiting for you" — the same words the session's status dot stops saying at that moment. Working stays the raw
+ * busy state: a child given new work through Claude Code's messaging may report it with no prompt submission.
+ */
+export function lifecycleOf(completion: CompletionState | undefined, wait: WaitValue, seen: boolean): LifecycleState {
   if (isDone(completion)) return 'done'
   if (wait === 'busy') return 'working'
-  if (wait === 'ready' || wait === 'awaiting-choice') return 'waiting'
+  if (wait === 'awaiting-choice') return 'waiting'
+  if (wait === 'ready') return seen ? 'idle' : 'waiting'
   return 'idle'
 }
 

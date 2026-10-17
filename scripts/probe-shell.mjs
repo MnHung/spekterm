@@ -234,6 +234,8 @@ const PROBE_EXPRESSION = `(async () => {
           'panel',
           // handoff 於 handoff-session-lifecycle 引入：交接單與生命週期。只收 session 識別碼。
           'handoff',
+          // wait (session-wait-indicator): every running agent session's attention state, read-only.
+          'wait',
           'insights',
           'conversation',
           'intake',
@@ -267,6 +269,9 @@ const PROBE_EXPRESSION = `(async () => {
     surplusHandoffKeys: Object.keys(api?.handoff ?? {}).filter(
       (key) => !['brief', 'lifecycle', 'onLifecycle', 'onReveal', 'keepCloseOffer'].includes(key),
     ),
+    // wait (session-wait-indicator): read-only, a list and its change event. Enumerated per member for the same
+    // reason as insights: a method added under it later would otherwise pass unnoticed.
+    surplusWaitKeys: Object.keys(api?.wait ?? {}).filter((key) => !['list', 'onChanged'].includes(key)),
     // **insights 底下也要逐成員列舉。** 只在頂層 namespace 清單裡登記的話，
     // 底下再加幾個方法這支探針一聲都不會響 —— 而讀後感往這裡加了四個會送出使用者訊息的入口。
     surplusInsightsKeys: Object.keys(api?.insights ?? {}).filter(
@@ -485,6 +490,9 @@ try {
   check(results, 'handoff 介面只暴露已定義邊界要求的能力',
     r?.surplusHandoffKeys?.length === 0,
     r?.surplusHandoffKeys?.length ? `多出：${r.surplusHandoffKeys.join(', ')}` : '無多餘能力')
+  check(results, 'the wait interface exposes only its read-only list and change event',
+    r?.surplusWaitKeys?.length === 0,
+    r?.surplusWaitKeys?.length ? `surplus: ${r.surplusWaitKeys.join(', ')}` : 'nothing surplus')
   check(results, 'intake 介面只暴露已定義邊界要求的能力',
     r?.surplusIntakeKeys?.length === 0,
     r?.surplusIntakeKeys?.length ? `多出：${r.surplusIntakeKeys.join(', ')}` : '無多餘能力')

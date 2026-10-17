@@ -524,6 +524,12 @@ export interface DrainResult {
    */
   turnEnded: boolean
   /**
+   * The batch contains a `SessionStart` that is not a compaction's: the agent started, resumed or cleared its
+   * conversation. Such a batch ends no turn the user is waiting on, though a stale keystroke (`pty-input.ts` keeps
+   * the last one for the app's life) can make the turn look in progress just before it (`session-wait-indicator`).
+   */
+  sessionStarted: boolean
+  /**
    * One entry per permission request reported in the batch, in order. **Not derivable from `state`**: an
    * answered prompt followed by the next one folds to `awaiting-choice` → `awaiting-choice`. Only
    * `PermissionRequest` counts — the `Notification` the agent sends for the same prompt would raise it twice.
@@ -697,12 +703,13 @@ export function drainEvents(sessionId: string, held: HeldWait = heldWait(), opti
     choicesRaised: [] as DrainResult['choicesRaised'],
     finished: [] as FinishedCall[],
   }
-  const finish = (transcriptPath: string | null, count: number, turnEnded: boolean): DrainResult => ({
+  const finish = (transcriptPath: string | null, count: number, turnEnded: boolean, sessionStarted = false): DrainResult => ({
     state: stateOf(next),
     transcriptPath,
     count,
     pending: pendingOf(next),
     turnEnded,
+    sessionStarted,
     choicesRaised: result.choicesRaised,
     finished: result.finished,
     held: next,
@@ -721,6 +728,7 @@ export function drainEvents(sessionId: string, held: HeldWait = heldWait(), opti
   let transcriptPath: string | null = null
   let count = 0
   let turnEnded = false
+  let sessionStarted = false
   for (const name of names) {
     const file = path.join(dir, name)
     let event: AgentEvent | null
@@ -739,9 +747,10 @@ export function drainEvents(sessionId: string, held: HeldWait = heldWait(), opti
     count += 1
     apply(next, event, fileTimeOf(name) ?? Date.now(), newId, result)
     if (event.name === 'Stop') turnEnded = true
+    if (event.name === 'SessionStart' && event.source !== 'compact') sessionStarted = true
     if (event.transcriptPath) transcriptPath = event.transcriptPath
   }
-  return finish(transcriptPath, count, turnEnded)
+  return finish(transcriptPath, count, turnEnded, sessionStarted)
 }
 
 /**

@@ -2,6 +2,7 @@ import { t } from '@shared/i18n'
 import type { SpawnTarget } from '../types'
 import type { SessionState } from './sessions'
 import { preferredTitle } from '@shared/lineage/label'
+import type { Attention, RowState } from '@shared/wait/attention'
 
 const SPAWN_LABEL: Record<SpawnTarget, string> = {
   claude: 'claude',
@@ -34,8 +35,27 @@ export function sessionLabel(session: SessionState): string {
   return full.length > MAX_LABEL ? `${full.slice(0, MAX_LABEL - 1)}…` : full
 }
 
-export function statusTitle(session: SessionState): string {
-  if (session.status === 'running') return t('sessions.statusRunning')
+/**
+ * The words for a running agent session's attention (`session-wait-indicator`). `unknown` has none: an unknown state
+ * cannot claim to be anything, so the title stays today's "Running".
+ */
+const ATTENTION_KEY = {
+  choice: 'sessions.attentionChoice',
+  waiting: 'sessions.attentionWaiting',
+  working: 'sessions.attentionWorking',
+  idle: 'sessions.attentionIdle',
+} as const
+
+export function attentionWords(attention: Attention): string | null {
+  return attention === 'unknown' ? null : t(ATTENTION_KEY[attention])
+}
+
+/** `attention` is the main process's projection for this session; `undefined` for a shell or a session not running. */
+export function statusTitle(session: SessionState, attention?: Attention): string {
+  if (session.status === 'running') {
+    const words = attention && session.spawnTarget === 'claude' ? attentionWords(attention) : null
+    return words ? t('sessions.statusRunningWith', { state: words }) : t('sessions.statusRunning')
+  }
   // **休眠不是結束。** 少了這一條，重建出來的 session 會被說成「已結束（代碼 0）」——
   // 而那是使用者重開 app 後看到的第一個畫面，等於在告訴他「你的 session 都死了」。
   if (session.status === 'dormant') return t('sessions.statusDormant')
@@ -44,24 +64,58 @@ export function statusTitle(session: SessionState): string {
     : t('sessions.statusExitedWithCode', { code: session.exitCode ?? 0 })
 }
 
-/**
- * 狀態燈。**本 phase 只反映 pty 存活／休眠／已結束** —— mockup 的 waiting／running 是 agent 的
- * 語意，需解析 agent 輸出才能得知，屬後續 phase。非零結束以 danger 呈現，好讓「claude 找
- * 不到」這類啟動失敗看得見。
- *
- * **休眠有自己的顏色，而且絕不能是 danger**（session-persistence：「休眠狀態 SHALL 被明確地
- * 呈現」）。原本的實作只認得 running／exited，於是每個休眠的 session 都亮紅燈 —— 重建成功的
- * session 看起來全都是死的。
- */
-export function StatusDot({ session }: { session: SessionState }): React.JSX.Element {
-  const tone =
-    session.status === 'running'
-      ? 'bg-emerald-400'
-      : session.status === 'dormant'
-        ? 'bg-ink-faint'
-        : session.exitCode === 0
-          ? 'bg-ink-faint'
-          : 'bg-danger'
+/** What the rail item dot ranks for one session (`mostUrgent`). */
+export function rowStateOf(session: SessionState, attention?: Attention): RowState {
+  if (session.status === 'running') return attention && session.spawnTarget === 'claude' ? attention : 'running'
+  if (session.status === 'dormant') return 'dormant'
+  return session.exitCode === 0 ? 'ended' : 'error'
+}
 
-  return <span aria-hidden="true" className={`h-1.5 w-1.5 shrink-0 rounded-full ${tone}`} />
+/**
+ * The look of each state (`session-wait-indicator` design D5, after the mockup's `.sdot`):
+ *
+ * - **choice / waiting** — amber, glowing, pulsing (`.sdot.wait`): the state the user scans for. The pulse stops
+ *   under reduced motion;
+ * - **working** — green with a glow (`.sdot.run`);
+ * - **running** — the plain green of an unknown state (a shell, or no events): it cannot claim to be working;
+ * - **idle** — a green ring. **Not the mockup's grey**: grey is the hibernated dot here, and "alive, resting" must not
+ *   read as "asleep";
+ * - **dormant / ended** — grey; **ended with an error** — danger, so a failed start ("claude not found") shows.
+ *   Hibernation is never danger: a restored session must not look dead.
+ */
+const TONE: Record<RowState, string> = {
+  choice: 'bg-accent shadow-[0_0_7px_rgba(245,158,11,0.7)] motion-safe:animate-pulse',
+  waiting: 'bg-accent shadow-[0_0_7px_rgba(245,158,11,0.7)] motion-safe:animate-pulse',
+  working: 'bg-green shadow-[0_0_6px_rgba(52,211,153,0.55)]',
+  running: 'bg-emerald-400',
+  unknown: 'bg-emerald-400',
+  idle: 'border border-green',
+  dormant: 'bg-ink-faint',
+  ended: 'bg-ink-faint',
+  error: 'bg-danger',
+}
+
+export function StateDot({ state }: { state: RowState }): React.JSX.Element {
+  return <span aria-hidden="true" className={`h-1.5 w-1.5 shrink-0 rounded-full ${TONE[state]}`} />
+}
+
+export function StatusDot({ session, attention }: { session: SessionState; attention?: Attention }): React.JSX.Element {
+  return <StateDot state={rowStateOf(session, attention)} />
+}
+
+/** The words for a rail item's most urgent state (its row's title). */
+export function rowStateWords(state: RowState): string {
+  switch (state) {
+    case 'error':
+      return t('rail.stateError')
+    case 'dormant':
+      return t('rail.stateHibernated')
+    case 'ended':
+      return t('sessions.statusExited')
+    case 'running':
+    case 'unknown':
+      return t('sessions.statusRunning')
+    default:
+      return attentionWords(state) ?? t('sessions.statusRunning')
+  }
 }

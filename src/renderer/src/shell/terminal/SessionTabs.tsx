@@ -5,6 +5,7 @@ import { useHandoffBrief } from './HandoffBrief'
 import type { SpawnTarget } from '../types'
 import { SessionNameDialog } from './SessionNameDialog'
 import { StatusDot, sessionLabel, sessionTitle, statusTitle } from './session-badge'
+import { useAttention } from './wait'
 import { type SessionState, useSessions } from './sessions'
 import { useDragReorder } from '../useDragReorder'
 import { useScrollIntoView } from '../useScrollIntoView'
@@ -47,6 +48,7 @@ export function SessionTabs({
   error,
 }: SessionTabsProps): React.JSX.Element {
   const { t } = useTranslation()
+  const { attentionOf } = useAttention()
 
   const spawn = useSpawnMenu(onCreate)
     const [menu, setMenu] = useState<{ x: number; y: number; session: SessionState } | null>(null)
@@ -200,7 +202,7 @@ export function SessionTabs({
                 role="tab"
                 aria-selected={selected}
                 // 截斷的是呈現，不是資料 —— 完整標題在這裡拿得到。
-                title={`${full} — ${statusTitle(session)}`}
+                title={`${full} — ${statusTitle(session, attentionOf(session.id))}`}
                 onClick={() => onFocus(session.id)}
                 // **游標必須掛在按鈕自己身上，掛在外層 wrapper 上到不了這裡。**
                 // `cursor` 雖然是可繼承的屬性，但瀏覽器的 UA 樣式給了 `button` 一條
@@ -209,7 +211,7 @@ export function SessionTabs({
                 // （實測：探針量到 `default`）。
                 className="flex cursor-pointer items-center gap-2 py-2 pr-1 pl-3 text-sm"
               >
-                <StatusDot session={session} />
+                <StatusDot session={session} attention={attentionOf(session.id)} />
                 <span className="whitespace-nowrap font-mono">{label}</span>
                 {session.status === 'exited' && (
                   <span className="text-2xs text-ink-faint">{t('sessions.exitedBadge')}</span>
