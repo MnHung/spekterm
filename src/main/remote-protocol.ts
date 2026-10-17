@@ -18,7 +18,8 @@ import type { FollowUpdate } from './transcript-follow-service'
  * terminal are absent by construction.
  *
  * Each operation reuses what the desktop does through a `RemoteHost` — the protocol layer itself owns only
- * the per-connection state: at most one watched conversation, one watched terminal, one attention watch.
+ * the per-connection state: at most one watched conversation, one watched terminal, one attention watch, one
+ * watched OpenSpec folder.
  */
 
 export interface FolderView {
@@ -109,6 +110,8 @@ export interface RemoteHost {
   openspecChange(folderId: string, slug: string): Promise<unknown>
   openspecSpecs(folderId: string): Promise<unknown>
   openspecSpec(folderId: string, topic: string): Promise<unknown>
+  /** Starts watching the folder's OpenSpec on the desktop; resolves once its file watching is in place. */
+  openspecWatch(folderId: string): Promise<void>
   watchAttention(
     after: AttentionPosition | undefined,
     listener: (event: AttentionEvent) => void,
@@ -123,6 +126,8 @@ interface ConnectionState {
   conversation: { sessionId: string; stop(): void } | null
   terminal: { sessionId: string; stop(): void } | null
   attention: { stop(): void } | null
+  /** The folder whose OpenSpec changes this connection is told of (`openspec.watch`). */
+  openspec: string | null
 }
 
 type Operation = (state: ConnectionState, p: Record<string, unknown>) => unknown | Promise<unknown>
@@ -332,6 +337,22 @@ export const OPERATIONS: Record<string, Operation> = {
   'openspec.specs': (state, p) => state.host.openspecSpecs(str(p, 'folderId')),
   'openspec.spec': (state, p) => state.host.openspecSpec(str(p, 'folderId'), str(p, 'topic')),
 
+  /*
+    One folder per connection; watching again replaces it, no folder stops it (`remote-openspec-browse` D5). The
+    folder is recorded only once the host's file watching is in place, so a refused watch leaves none. Its presence
+    in the operation list is also what tells a client the OpenSpec results have the documented shapes.
+  */
+  'openspec.watch': async (state, p) => {
+    const folderId = optionalStr(p, 'folderId')
+    if (folderId === undefined) {
+      state.openspec = null
+      return {}
+    }
+    await state.host.openspecWatch(folderId)
+    state.openspec = folderId
+    return {}
+  },
+
   'attention.watch': (state, p) => {
     const after = attentionPosition(p.after)
     // Watching again replaces the earlier watch, so no event arrives twice.
@@ -361,8 +382,10 @@ export function openRemoteSession(host: RemoteHost, connection: RemoteConnection
    * terminal watch is ended by `RemoteOutput`, which tells its own listeners.
    */
   sessionEnded(sessionId: string, how: SessionEnd): void
+  /** Whether this connection watches that folder's OpenSpec (`openspec.watch`). */
+  watchesOpenSpec(folderId: string): boolean
 } {
-  const state: ConnectionState = { connection, host, conversation: null, terminal: null, attention: null }
+  const state: ConnectionState = { connection, host, conversation: null, terminal: null, attention: null, openspec: null }
   return {
     onRequest: (frame: RequestFrame) => {
       const operation = Object.hasOwn(OPERATIONS, frame.m) ? OPERATIONS[frame.m] : undefined
@@ -398,7 +421,9 @@ export function openRemoteSession(host: RemoteHost, connection: RemoteConnection
       stopConversation(state)
       send(state, 'conversation.ended', { sessionId, reason: how })
     },
+    watchesOpenSpec: (folderId) => state.openspec === folderId,
     dispose: () => {
+      state.openspec = null
       stopConversation(state)
       stopTerminal(state)
       state.attention?.stop()

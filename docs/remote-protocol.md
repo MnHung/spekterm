@@ -42,7 +42,9 @@ it first: it is how a desktop whose address changed stays reachable without pair
   default verifier fails a certificate with no SAN for every address; an "accept everything" verifier is the
   pattern Google Play's security scanning flags. Make both compare the leaf to the pin and reject otherwise.
 - Do not send anything — above all the credential or the pairing code — before the pin is checked.
-- Frames are UTF-8 JSON text. A frame over 1 MiB closes the connection, with no error answer.
+- Frames are UTF-8 JSON text. A frame over 1 MiB closes the connection, with no error answer. The desktop keeps
+  its answers to the `openspec.*` operations within the same 1 MiB (section 5); other answers, such as a
+  `conversation.watch` history, are not bounded by it.
   permessage-deflate is offered.
 
 ## 3. Frames
@@ -82,7 +84,7 @@ Stable strings; branch on them, show `message` only as a detail.
 | `TIMEOUT` | The desktop's interface did not answer within 15 seconds. |
 | `PROMPT_GONE` | The prompt an answer names is not the one a device may answer now (section 5, `conversation.answer`). `detail.open` is the number of open requests. |
 | `NOT_ANSWERABLE` | The decision does not fit the prompt, or that answer is not offered to a device. |
-| `TOO_LARGE` | An attachment, a chunk or a session's stored attachments would exceed a limit; `detail.limit` is the limit in bytes. |
+| `TOO_LARGE` | An attachment, a chunk or a session's stored attachments would exceed a limit, or an OpenSpec answer would exceed the frame cap (section 5); `detail.limit` is the limit in bytes. |
 | `TOO_MANY` | A session already holds the most attachments not sent yet (`detail.limit`). |
 | `UNSUPPORTED_TYPE` | An uploaded file is not an image (PNG, JPEG, GIF, WebP), a PDF or UTF-8 text. |
 | `SESSION_BUSY` | Hibernating or closing a session that is not idle, without `force`. Nothing happened. `detail.reason` says why (section 5, `sessions.hibernate`). |
@@ -119,7 +121,7 @@ has not authenticated.
 
 `operations`: the operations this desktop accepts, other than `hello` and `pair`. Show a control only when its
 operation is listed: an older desktop does not have `sessions.rename`, `sessions.hibernate`, `sessions.close`,
-`attachments.put` or `conversation.answer`, and answers them `UNKNOWN_OPERATION`. Protocol version 1 grows only by new fields,
+`attachments.put`, `conversation.answer` or `openspec.watch`, and answers them `UNKNOWN_OPERATION`. Protocol version 1 grows only by new fields,
 operations, event values and error codes (section 9, obligation 7).
 
 ### `pair`
@@ -391,23 +393,91 @@ arrive as `handoffs.changed` events with the whole list.
 
 `p`: `{ "sessionId" }` → `r`: `{ body?, report?: { summary, reportedAt } }`. Error: `NOT_FOUND`.
 
+### OpenSpec
+
+Five read-only operations browse a folder's OpenSpec as the desktop's side panel shows it. No operation changes
+OpenSpec content. A folder without OpenSpec answers empty lists.
+
+**Which desktop you are talking to.** A desktop that lists `openspec.watch` in `operations` sends the results
+exactly as described here: these fields and no others, artifacts in display order, answers within 1 MiB, and
+`openspec.changed` events. An older desktop that has the four reads but not `openspec.watch` sends the same fields
+under the same names plus others of its own (ignore them, obligation 7), artifacts in the order it found them, and
+no events; the same parser reads both. Offer live refresh only when `openspec.watch` is listed, and a manual
+refresh always.
+
+**Content is the repository's text**, untrusted — see obligation 14.
+
+**Shapes.**
+
+- `Change`: `{ slug, status: "active"|"archived", description, createdDate: string|null, archivedDate: string|null,
+  timestamp: string|null, hasProposal, hasDesign, hasSpecs, hasTasks: bool, taskStats: { total, completed }|null,
+  worktree?: Worktree }`.
+  - `description` is the slug made readable (`add-thing` → `add thing`), not a sentence from the change.
+  - `createdDate` is the `created:` value of the change's own `.openspec.yaml`, or `null`: the start date, where
+    there is one.
+  - `archivedDate` is the date prefix of an archived change's slug.
+  - `timestamp` (ISO 8601 with offset) is the time of the **first** commit that touched the change's directory.
+    For an archived change that is **the commit that archived it**, not when the change began. It is `null` for a
+    change with no commit yet, and for one first committed after the desktop first read that working tree; it does
+    not change while the desktop runs. Do not show it as "last modified" or "created".
+- `Worktree`: `{ branch: string|null, isMain: bool }` — the working tree of the folder's repository a change (or a
+  spec) is read from. Present only when the repository has more than one working tree. `branch` is `null` on a
+  detached HEAD. The desktop labels only changes that are not in the main working tree.
+- `Artifact`: `{ id, title, kind, … }` by `kind`:
+  - `"markdown"`: `content`, the file's text (markdown);
+  - `"data"`: `content`, the file's text (YAML or JSON); `title` is the file name;
+  - `"tasks"`: `tasks: { total, completed, sections: [{ title, tasks: [{ text, completed: bool }] }] }`. A task's
+    `text` is markdown and may span several lines (continuation lines are folded in). The raw file is not sent;
+  - `"specs"`: `specs: [{ topic, content }]`, one delta spec per capability the change touches.
+  Accept a `kind` you do not know (obligation 7): show its `title`.
+- **Left out** — when an answer would exceed 1 MiB, the desktop leaves out content, the largest piece first, until it
+  fits: an artifact's `content` or `tasks`, a delta's `content`, or a spec's `content` is then absent and
+  `omitted: { bytes }` stands in its place (`bytes`: its size as serialized JSON). Everything else is as it would
+  have been. Show such a piece as too large for the phone, with its size. If the answer cannot fit even then, it is
+  `TOO_LARGE`.
+
 ### `openspec.changes`
 
-`p`: `{ "folderId" }` → `r`: the folder's changes, as the side panel lists them (`{ active, archived, … }`).
+`p`: `{ "folderId" }` → `r`: `{ "active": [Change], "archived": [Change] }` — the changes the side panel lists,
+including those in other working trees of the folder's repository, each slug once. Each list is sorted by one key,
+`timestamp` or else the slug's date, newest first, compared as text; changes with neither (an active change not yet
+committed) come last. A list over 1 MiB is `TOO_LARGE`. Errors: `NOT_FOUND` (no such folder).
 
 ### `openspec.change`
 
-`p`: `{ "folderId", "slug" }` → `r`: the change with its artifacts and their content. A slug that is not in
-the folder's scan is `NOT_FOUND`.
+`p`: `{ "folderId", "slug" }` → `r`: `{ slug, status, createdDate, archivedDate, worktree?, artifacts: [Artifact] }`,
+artifacts in the order the side panel shows them. A change is addressed by folder and slug alone, wherever it lives.
+An unknown folder, or a slug that is not in the folder's scan, is `NOT_FOUND`. A file that cannot be read is
+`INTERNAL`.
 
 ### `openspec.specs`
 
-`p`: `{ "folderId" }` → `r`: the folder's specs.
+`p`: `{ "folderId" }` → `r`: `[{ topic, relatedChangeCount }]`, the folder's main specs, sorted by topic.
+`relatedChangeCount` is the length of the spec's `history`. A list over 1 MiB is `TOO_LARGE`. Errors: `NOT_FOUND`
+(no such folder).
 
 ### `openspec.spec`
 
-`p`: `{ "folderId", "topic" }` → `r`: the spec with its content. Read-only: no operation changes OpenSpec
-content.
+`p`: `{ "folderId", "topic" }` → `r`: `{ topic, content, history: [{ slug, status, description, date, timestamp }],
+origin?: Worktree }`. `history` lists the changes that touched the spec; each `slug` can be read with
+`openspec.change`. `date` is the slug's date prefix, `timestamp` as in `Change`. A spec is always read from the main
+working tree; `origin` says so when the repository has more than one (a worktree may hold a newer copy). An unknown
+folder or topic is `NOT_FOUND`.
+
+### `openspec.watch`
+
+`p`: `{ "folderId"? }` → `r`: `{}`. Watches one folder's OpenSpec: from then on, when it changes on disk — in any
+working tree of its repository, such as an agent writing a `tasks.md` — this connection receives the event
+`openspec.changed` with `d`: `{ "folderId" }`. It carries no content: read again what you show.
+
+- One folder per connection. Watching another replaces the watch; `folderId` absent or `null` stops it; any other
+  non-string is `BAD_PARAMS`. An unknown folder is `NOT_FOUND`, and the previous watch stays. The watch ends with
+  the connection; watch again after reconnecting.
+- The answer comes once the desktop has started watching every working tree of the folder. **Watch, then read**: a
+  change between a read and a later watch is not announced.
+- At most one event per folder per second; every change is followed by one within about a second. Read again on
+  every event: a working tree created later is watched from the next read.
+- A folder removed from the workspace sends no further event.
 
 ### `attention.watch`
 
@@ -499,3 +569,8 @@ open (on Android, a foreground service), and reconnect with backoff when the net
 13. **Offer Close and Keep for a session marked `closeOffered`**, wherever you show that session: Close as
     `sessions.close`, Keep as `sessions.keep` (shown only when `sessions.keep` is in `operations`). Choosing Close
     there is the confirmation obligation 12 asks for; a `SESSION_BUSY` answer still goes through obligation 12.
+14. **Treat OpenSpec text as untrusted** — artifact, delta and spec `content`, task `text` and section `title` are the
+    repository's text. Render markdown with raw HTML shown as text, never interpreted. A relative link or image
+    reference resolves to nothing (the desktop shows a relative link as text). Open an `http(s)` link only when the
+    user taps it, outside the app. Do not load remote images automatically. Show a `data` artifact as plain
+    monospace text.

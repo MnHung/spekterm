@@ -10,6 +10,12 @@
 
 export const SUPPORTED_PROTOCOLS = [1] as const
 
+/**
+ * The frame cap: the most a client may send in one frame, and the most an OpenSpec answer holds
+ * (`remote-openspec.ts`). Here rather than in `remote-server.ts` so a pure module can use it without loading `ws`.
+ */
+export const FRAME_MAX_BYTES = 1024 * 1024
+
 export const ERROR_CODES = [
   'BAD_FRAME',
   'BAD_PARAMS',

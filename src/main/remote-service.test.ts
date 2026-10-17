@@ -21,7 +21,7 @@ async function freePort(): Promise<number> {
   return port
 }
 
-async function rig(options: { interfaceAddresses?: () => string[]; reconcileMs?: number } = {}) {
+async function rig(options: { interfaceAddresses?: () => string[]; reconcileMs?: number; openspecThrottleMs?: number } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'remote-service-'))
   const secrets = new SecretStore(path.join(dir, 'secrets.json'))
   const store = new RemoteStore(path.join(dir, 'remote.json'), secrets)
@@ -39,7 +39,11 @@ async function rig(options: { interfaceAddresses?: () => string[]; reconcileMs?:
     store,
     output,
     attention,
-    host: { sessionList: () => ({ window: false, folders: [], sessions: [] }), setWatched: () => undefined } as unknown as RemoteHost,
+    host: {
+      sessionList: () => ({ window: false, folders: [], sessions: [] }),
+      setWatched: () => undefined,
+      openspecWatch: async () => undefined,
+    } as unknown as RemoteHost,
     serverInfo: () => ({ name: 't', version: '0' }),
     ...options,
   })
@@ -183,6 +187,70 @@ test('changing the additional address is announced at once', async () => {
     assert.deepEqual(event?.d, { addresses: ['192.0.2.10', 'desk.example.ts.net'] })
     paired.client.close()
     await paired.client.closed
+  } finally {
+    await r.done()
+  }
+})
+
+test('openspec.changed: to the connections watching that folder, at most once per interval, always after the last change', async () => {
+  const interval = 200
+  const r = await rig({ openspecThrottleMs: interval })
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+  try {
+    await r.service.setEnabled(true)
+    const a = (await pairedClient(r)).paired.client
+    const b = (await pairedClient(r)).paired.client
+    const idle = (await pairedClient(r)).paired.client
+    assert.equal((await a.call('openspec.watch', { folderId: 'F' })).ok, true)
+    assert.equal((await b.call('openspec.watch', { folderId: 'G' })).ok, true)
+    const ofFolder = (client: typeof a, folderId: string) =>
+      client.eventsOf('openspec.changed').filter((event: { d: { folderId: string } }) => event.d.folderId === folderId)
+
+    // A burst shorter than the interval: exactly one event, after the last change.
+    r.service.openspecChanged('F')
+    await sleep(50)
+    r.service.openspecChanged('F')
+    const lastOfBurst = Date.now()
+    r.service.openspecChanged('G')
+    await sleep(interval * 2)
+    assert.equal(ofFolder(a, 'F').length, 1, 'one event for a sub-interval burst')
+    assert.ok(ofFolder(a, 'F')[0].receivedAt >= lastOfBurst, 'the event follows the last change')
+    assert.equal(ofFolder(b, 'G').length, 1, 'folders are throttled independently')
+    assert.deepEqual([ofFolder(a, 'G').length, ofFolder(b, 'F').length], [0, 0], 'only the watching connection is told')
+    assert.equal(idle.eventsOf('openspec.changed').length, 0, 'a connection watching nothing is told nothing')
+
+    // A stream longer than the interval: one event per interval, and one after the last change.
+    const before = ofFolder(a, 'F').length
+    const started = Date.now()
+    while (Date.now() - started < interval * 3.5) {
+      r.service.openspecChanged('F')
+      await sleep(40)
+    }
+    const lastOfStream = Date.now()
+    await sleep(interval * 2)
+    const stream = ofFolder(a, 'F').slice(before)
+    assert.ok(stream.length >= 3 && stream.length <= 5, `one per interval: ${stream.length}`)
+    for (let i = 1; i < stream.length; i += 1) {
+      assert.ok(stream[i].receivedAt - stream[i - 1].receivedAt >= interval - 30, 'no two events within an interval')
+    }
+    assert.ok(stream.at(-1).receivedAt >= lastOfStream, 'the last change is announced')
+
+    // Moving the watch from F to G: nothing more for F.
+    await a.call('openspec.watch', { folderId: 'G' })
+    const forF = ofFolder(a, 'F').length
+    r.service.openspecChanged('F')
+    await sleep(interval * 2)
+    assert.equal(ofFolder(a, 'F').length, forF, 'a moved watch hears nothing of the old folder')
+
+    // A folder released while its timer runs: no event.
+    const forG = ofFolder(b, 'G').length
+    r.service.openspecChanged('G')
+    r.service.openspecReleased('G')
+    await sleep(interval * 2)
+    assert.equal(ofFolder(b, 'G').length, forG, 'a removed folder is not announced')
+
+    for (const client of [a, b, idle]) client.close()
+    await Promise.all([a.closed, b.closed, idle.closed])
   } finally {
     await r.done()
   }

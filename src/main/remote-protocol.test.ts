@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { AttentionLog } from './remote-attention'
 import { createRemoteHost, type HostDeps } from './remote-host'
+import { RemoteError } from './remote-frames'
 import { OPERATIONS, openRemoteSession, operationNames, type RemoteHost } from './remote-protocol'
 import type { RemoteConnection } from './remote-server'
 
@@ -88,6 +89,36 @@ test('watching the attention stream again replaces the earlier watch', async () 
   await call(session, conn, 'attention.watch')
   attention.onWait('s', { state: 'ready', turnEnded: true, choicesRaised: [] })
   assert.equal(conn.frames.filter((frame) => frame.k === 'attention').length, 1)
+})
+
+test('a connection watches one folder’s OpenSpec: replaced, stopped, never recorded when refused', async () => {
+  const asked: string[] = []
+  const host = {
+    openspecWatch: async (folderId: string) => {
+      asked.push(folderId)
+      if (folderId === 'gone') throw new RemoteError('NOT_FOUND', 'unknown folder: gone')
+    },
+    setWatched: () => undefined,
+  } as Partial<RemoteHost>
+  const conn = connection()
+  const session = openRemoteSession(host as RemoteHost, conn)
+  assert.equal((await call(session, conn, 'openspec.watch', { folderId: 'f1' })).ok, true)
+  assert.equal(session.watchesOpenSpec('f1'), true)
+  await call(session, conn, 'openspec.watch', { folderId: 'f2' })
+  assert.deepEqual([session.watchesOpenSpec('f1'), session.watchesOpenSpec('f2')], [false, true], 'watching again replaces')
+  assert.equal((await call(session, conn, 'openspec.watch', { folderId: 'gone' })).e?.code, 'NOT_FOUND')
+  assert.equal(session.watchesOpenSpec('gone'), false, 'a refused watch is not recorded')
+  assert.equal((await call(session, conn, 'openspec.watch', { folderId: 3 })).e?.code, 'BAD_PARAMS')
+  await call(session, conn, 'openspec.watch', { folderId: null })
+  assert.equal(session.watchesOpenSpec('f2'), false, 'null stops watching')
+  await call(session, conn, 'openspec.watch', { folderId: 'f1' })
+  await call(session, conn, 'openspec.watch')
+  assert.equal(session.watchesOpenSpec('f1'), false, 'no folder stops watching')
+  assert.deepEqual(asked, ['f1', 'f2', 'gone', 'f1'], 'stopping asks the host nothing')
+  await call(session, conn, 'openspec.watch', { folderId: 'f1' })
+  session.dispose()
+  assert.equal(session.watchesOpenSpec('f1'), false, 'the watch ends with the connection')
+  assert.ok(operationNames().includes('openspec.watch'), 'listed in the authentication answer’s operations')
 })
 
 test('the allow-list has no way to resize a terminal, write a file, or touch settings and credentials', () => {

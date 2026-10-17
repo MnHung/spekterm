@@ -18,6 +18,7 @@ import type { AttentionLog } from './remote-attention'
 import type { AttachmentStore } from './remote-attachments'
 import { runQueued, sendReply } from './remote-conversation'
 import { RemoteError, type ErrorCode } from './remote-frames'
+import { remoteChange, remoteChanges, remoteSpec, remoteSpecs } from './remote-openspec'
 import type { RemoteOutput } from './remote-output'
 import type { FolderView, HostAction, RemoteHost, SessionList, SessionView } from './remote-protocol'
 import type { SessionStore } from './session-store'
@@ -92,12 +93,19 @@ function folderViews(folders: FolderLookup): FolderView[] {
   }))
 }
 
+/**
+ * The service's lookup errors become `NOT_FOUND` with their message (it names only the identifier the device sent).
+ * A read failure's message is a file system error's text, absolute path included, so it stays in the log and the
+ * device gets a fixed one (`remote-openspec-browse` D2).
+ */
 async function openspecCall<T>(run: () => Promise<T>): Promise<T> {
   try {
     return await run()
   } catch (error) {
     if (error instanceof OpenSpecServiceError) {
-      throw new RemoteError(error.code === 'READ_FAILED' ? 'INTERNAL' : 'NOT_FOUND', error.message)
+      if (error.code !== 'READ_FAILED') throw new RemoteError('NOT_FOUND', error.message)
+      console.error(`[remote] OpenSpec read failed: ${error.message}`)
+      throw new RemoteError('INTERNAL', 'the OpenSpec content could not be read')
     }
     throw error
   }
@@ -313,10 +321,17 @@ export function createRemoteHost(deps: HostDeps): RemoteHost {
       dismissIntake(deps.intake.store, adapter, id)
     },
 
-    openspecChanges: (folderId) => openspecCall(() => deps.openspec().getChanges(folderId)),
-    openspecChange: (folderId, slug) => openspecCall(() => deps.openspec().getChange(folderId, slug)),
-    openspecSpecs: (folderId) => openspecCall(() => deps.openspec().getSpecs(folderId)),
-    openspecSpec: (folderId, topic) => openspecCall(() => deps.openspec().getSpec(folderId, topic)),
+    // Mapped to the protocol's own shapes (`remote-openspec.ts`); never the service's views as they are.
+    openspecChanges: (folderId) => openspecCall(async () => remoteChanges(await deps.openspec().getChanges(folderId))),
+    openspecChange: (folderId, slug) =>
+      openspecCall(async () => remoteChange(await deps.openspec().getChange(folderId, slug))),
+    openspecSpecs: (folderId) => openspecCall(async () => remoteSpecs(await deps.openspec().getSpecs(folderId))),
+    openspecSpec: (folderId, topic) => openspecCall(async () => remoteSpec(await deps.openspec().getSpec(folderId, topic))),
+    /*
+      A scan is what starts the service's file watching for the folder, and the watchers of its other working
+      trees exist only once the scan resolved — so the answer waits for it (`remote-openspec-browse` D5).
+    */
+    openspecWatch: (folderId) => openspecCall(async () => void (await deps.openspec().getOverview(folderId))),
 
     watchAttention: (after, listener) => deps.attention.watch(after, listener),
 

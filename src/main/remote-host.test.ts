@@ -86,6 +86,61 @@ test('OpenSpec reads go through the side panel’s service and its lookup errors
   assert.deepEqual(asked, ['f1/../../etc'], 'the identifier went to the lookup, not to the file system')
 })
 
+test('an OpenSpec answer is the protocol’s shape, never the service’s view as it is', async () => {
+  const openspec = {
+    getSpecs: async () => [{ topic: 'auth', relPath: 'openspec/specs/auth/spec.md', relatedChangeCount: 1, futureField: '/home/me' }],
+  }
+  const h = host({ openspec: () => openspec as never }).host
+  assert.deepEqual(await h.openspecSpecs('f1'), [{ topic: 'auth', relatedChangeCount: 1 }])
+})
+
+test('a read failure answers INTERNAL with a fixed message: the file system error’s path stays on the desktop', async () => {
+  const { OpenSpecServiceError } = await import('./openspec-service')
+  const failure = new OpenSpecServiceError('READ_FAILED', "Error: EACCES: permission denied, open '/home/me/repo/openspec/changes/x/design.md'")
+  const openspec = {
+    getChange: async () => {
+      throw failure
+    },
+    getOverview: async () => {
+      throw failure
+    },
+  }
+  const h = host({ openspec: () => openspec as never }).host
+  const logged = console.error
+  console.error = () => undefined
+  try {
+    for (const call of [() => h.openspecChange('f1', 'x'), () => h.openspecWatch('f1')]) {
+      await assert.rejects(call(), (error: Error & { code: string }) => {
+        assert.equal(error.code, 'INTERNAL')
+        assert.equal(error.message.includes('/home/me'), false, error.message)
+        return true
+      })
+    }
+  } finally {
+    console.error = logged
+  }
+})
+
+test('watching a folder’s OpenSpec answers once the scan is done; an unknown folder is NOT_FOUND', async () => {
+  const { OpenSpecServiceError } = await import('./openspec-service')
+  let finish: () => void = () => undefined
+  const openspec = {
+    getOverview: (folderId: string) => {
+      if (folderId !== 'f1') return Promise.reject(new OpenSpecServiceError('UNKNOWN_FOLDER', `unknown folder: ${folderId}`))
+      return new Promise<void>((resolve) => (finish = resolve))
+    },
+  }
+  const h = host({ openspec: () => openspec as never }).host
+  await assert.rejects(h.openspecWatch('nope'), { code: 'NOT_FOUND' })
+  let answered = false
+  const watch = h.openspecWatch('f1').then(() => (answered = true))
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(answered, false, 'the answer waits for the scan that creates the worktree watchers')
+  finish()
+  await watch
+  assert.equal(answered, true)
+})
+
 test('waking a session that has a process answers at once, without asking the interface', async () => {
   let asked = 0
   const h = host({ request: () => ((asked += 1), Promise.resolve({ ok: true, sessionId: 'x' })) }).host

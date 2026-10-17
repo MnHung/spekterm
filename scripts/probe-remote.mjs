@@ -17,12 +17,12 @@
  * - the window having focus when the virtual display gives it none — `runAttention` checks first and records
  *   the gap; the unit test with the focus source injected carries the rule.
  */
-import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { execFileSync, spawn } from 'node:child_process'
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { connect as netConnect, createServer as createNetServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
-import { check, connectToApp, pollFor, pressKey } from './lib/cdp.mjs'
+import { check, connectToApp, pollFor, pressKey, retryAction } from './lib/cdp.mjs'
 import { copy, label } from './lib/copy.mjs'
 import { electronExtraArgs } from './lib/display.mjs'
 import { awaitMounted } from './lib/mounted.mjs'
@@ -1122,16 +1122,141 @@ async function runReaccept(_mode, _config, context) {
   await app.close()
 }
 
-/** remote-protocol: OpenSpec is readable and only readable. */
+/**
+ * A git repository F whose OpenSpec change lives in a linked worktree **outside** the folder (`remote-openspec-browse`
+ * D2/D3), a plain folder G with one change (a single working tree), and an empty E. Its own fixture: `makeRepos()`
+ * serves every other section.
+ *
+ * The change's files get mtimes in the reverse of display order (tasks newest): core orders artifacts by mtime and
+ * falls back to the narrative order on ties, so files written in one go would come out in display order with no
+ * sorting at all — the order assertion would be green for the wrong reason.
+ */
+function makeOpenSpecRepos() {
+  const f = mkTemp('spekterm-remote-os-f-')
+  const worktree = mkTemp('spekterm-remote-os-wt-')
+  const g = mkTemp('spekterm-remote-os-g-')
+  const e = mkTemp('spekterm-remote-os-e-')
+  const git = (...args) => execFileSync('git', ['-c', 'user.name=probe', '-c', 'user.email=probe@example.com', ...args], { cwd: f, stdio: 'pipe' })
+  git('init', '-q', '-b', 'main')
+  mkdirSync(join(f, 'openspec', 'specs', 'thing'), { recursive: true })
+  writeFileSync(join(f, 'openspec', 'specs', 'thing', 'spec.md'), '# thing\n\n### Requirement: A thing\n\nIt SHALL be.\n')
+  // An archived change that touched the spec, so the spec has a history entry to check.
+  const archived = join(f, 'openspec', 'changes', 'archive', '2026-10-01-make-thing')
+  mkdirSync(join(archived, 'specs', 'thing'), { recursive: true })
+  writeFileSync(join(archived, 'proposal.md'), '# Make thing\n')
+  writeFileSync(join(archived, 'specs', 'thing', 'spec.md'), '## ADDED Requirements\n')
+  git('add', '-A')
+  git('commit', '-qm', 'specs')
+  git('worktree', 'add', '-q', '-b', 'feat', worktree)
+  const change = join(worktree, 'openspec', 'changes', 'add-thing')
+  mkdirSync(join(change, 'specs', 'thing'), { recursive: true })
+  writeFileSync(join(change, '.openspec.yaml'), 'schema: spec-driven\ncreated: 2026-10-17\n')
+  writeFileSync(join(change, 'proposal.md'), '# Add thing\n\nREMOTE-PROPOSAL-MARKER\n')
+  writeFileSync(join(change, 'design.md'), '# Design\n')
+  writeFileSync(join(change, 'specs', 'thing', 'spec.md'), '## ADDED Requirements\n')
+  writeFileSync(join(change, 'tasks.md'), '## 1. Build (`src/main/thing.ts`)\n\n- [x] 1.1 Done\n- [ ] 1.2 Open\n')
+  const now = Date.now() / 1000
+  ;['proposal.md', 'design.md', 'specs/thing/spec.md', 'tasks.md'].forEach((file, i) => utimesSync(join(change, file), now - 400 + i * 100, now - 400 + i * 100))
+  mkdirSync(join(g, 'openspec', 'changes', 'solo'), { recursive: true })
+  writeFileSync(join(g, 'openspec', 'changes', 'solo', 'proposal.md'), '# Solo\n')
+  return { f, g, e, worktree, tasks: join(change, 'tasks.md'), names: { f: basename(f), g: basename(g), e: basename(e) } }
+}
+
+/** Every string in a result except repository-authored text: `content`, task `text`, a task section's `title`. */
+function metadataStrings(value, out = []) {
+  if (typeof value === 'string') out.push(value)
+  else if (Array.isArray(value)) value.forEach((item) => metadataStrings(item, out))
+  else if (value && typeof value === 'object') {
+    const section = Array.isArray(value.tasks) && 'title' in value
+    for (const [key, item] of Object.entries(value)) {
+      if (key === 'content' || key === 'text' || (section && key === 'title')) continue
+      metadataStrings(item, out)
+    }
+  }
+  return out
+}
+
+const sortedKeys = (o) => Object.keys(o ?? {}).sort().join(',')
+
+/**
+ * remote-protocol: OpenSpec is readable and only readable, in the documented shapes, and a watch announces changes.
+ *
+ * Control groups, run by hand (`remote-openspec-browse` 5.2), each red at its own check:
+ * - the host passing the service's views through: the key sets (and the label, tasks and order checks with them);
+ *   the path check stays green — the service already strips paths, so that check guards a regression there;
+ * - no `sortArtifacts`: the order check alone (`tasks,specs,design,proposal`, core's mtime order);
+ * - the change written into the folder instead of a worktree: the aggregation prerequisite;
+ * - the host's change callback left a no-op: the event check, after its 20 s retry budget.
+ */
 async function runOpenSpec(_mode, _config, context) {
-  const repos = makeRepos()
+  const repos = makeOpenSpecRepos()
   const profile = seedProfile(repos, { remote: { enabled: true, port: LISTEN_A } })
-  const { app } = await start(context, profile)
+  const { app, stub } = await start(context, profile)
   const { client } = await phone(app)
+
+  const changes = await call(client, 'openspec.changes', { folderId: 'f' })
+  const listed = changes.r?.active?.find((c) => c.slug === 'add-thing')
+  // Core silently stops aggregating when there is one working tree, and then every check below is green for nothing.
+  check(results, 'prerequisite: the worktree change is aggregated (listed as not in the main working tree)', listed?.worktree?.isMain === false, JSON.stringify(changes.r ?? changes.e).slice(0, 300))
   const change = await call(client, 'openspec.change', { folderId: 'f', slug: 'add-thing' })
-  check(results, 'reading an active change returns its artifacts with their content', JSON.stringify(change.r ?? '').includes('REMOTE-PROPOSAL-MARKER'), JSON.stringify(change.e ?? '').slice(0, 200))
+  const specs = await call(client, 'openspec.specs', { folderId: 'f' })
+  const spec = await call(client, 'openspec.spec', { folderId: 'f', topic: 'thing' })
+  const artifacts = change.r?.artifacts ?? []
+  const byId = Object.fromEntries(artifacts.map((a) => [a.id, a]))
+
+  const keys = [
+    sortedKeys(changes.r),
+    sortedKeys(listed),
+    sortedKeys(change.r),
+    ...artifacts.map((a) => `${a.kind}:${sortedKeys(a)}`),
+    sortedKeys(specs.r?.[0]),
+    sortedKeys(spec.r),
+    sortedKeys(spec.r?.history?.[0]),
+  ]
+  check(results, 'the four OpenSpec results carry exactly the documented keys', JSON.stringify(keys) === JSON.stringify([
+    'active,archived',
+    'archivedDate,createdDate,description,hasDesign,hasProposal,hasSpecs,hasTasks,slug,status,taskStats,timestamp,worktree',
+    'archivedDate,artifacts,createdDate,slug,status,worktree',
+    ...artifacts.map((a) => `${a.kind}:${{ markdown: 'content,id,kind,title', data: 'content,id,kind,title', tasks: 'id,kind,tasks,title', specs: 'id,kind,specs,title' }[a.kind]}`),
+    'relatedChangeCount,topic',
+    'content,history,origin,topic',
+    'date,description,slug,status,timestamp',
+  ]), JSON.stringify(keys))
+  check(results, 'a change in another working tree is labeled with its branch and read by its slug', JSON.stringify(listed?.worktree) === '{"branch":"feat","isMain":false}' && JSON.stringify(change.r?.worktree) === '{"branch":"feat","isMain":false}' && byId.design?.content === '# Design\n', JSON.stringify({ listed: listed?.worktree, read: change.r?.worktree, design: byId.design }))
+  // Core's mtime order would put tasks first; both orders the side panel can show (the schema's, or the narrative
+  // fallback when the OpenSpec CLI is not found) start with the proposal and end with the tasks.
+  const order = artifacts.map((a) => a.id)
+  check(results, "a change's artifacts arrive in the side panel's order, not core's mtime order", order[0] === 'proposal' && order.at(-1) === 'tasks' && order.length === 4, order.join(','))
+  check(results, 'reading an active change returns its artifacts with their content', byId.proposal?.content?.includes('REMOTE-PROPOSAL-MARKER') === true, JSON.stringify(change.e ?? byId.proposal ?? '').slice(0, 200))
+  const tasks = byId.tasks?.tasks
+  check(results, 'a tasks artifact arrives as its parsed task list', !('content' in (byId.tasks ?? {})) && tasks?.sections?.[0]?.tasks?.map((t) => `${t.text}:${t.completed}`).join('|') === '1.1 Done:true|1.2 Open:false', JSON.stringify(byId.tasks))
+
+  const solo = await call(client, 'openspec.changes', { folderId: 'g' })
+  check(results, 'a repository with one working tree labels nothing', solo.r?.active?.length === 1 && !('worktree' in solo.r.active[0]), JSON.stringify(solo.r ?? solo.e))
+
+  const leaks = [repos.f, repos.worktree, stub.home, process.env.HOME].filter(Boolean)
+  const strings = metadataStrings([changes.r, change.r, specs.r, spec.r, solo.r])
+  const leaked = strings.filter((text) => leaks.some((path) => text.includes(path)))
+  check(results, 'no path reaches a device from a repository with a worktree outside the folder', strings.length > 20 && leaked.length === 0, `strings=${strings.length} leaked=${JSON.stringify(leaked)}`)
+
   const escape = await call(client, 'openspec.change', { folderId: 'f', slug: '../../../etc' })
   check(results, 'a path-shaped identifier is not found', escape.e?.code === 'NOT_FOUND', JSON.stringify(escape.e))
+
+  // The watchers become ready a moment after they are created, so the write is repeated until it is seen.
+  const watched = await call(client, 'openspec.watch', { folderId: 'f' })
+  check(results, 'prerequisite: the folder is watched', watched.ok === true, JSON.stringify(watched.e ?? ''))
+  let writes = 0
+  const announced = await retryAction({
+    act: () => appendFileSync(repos.tasks, `- [ ] 1.${3 + writes++} Added from the probe\n`),
+    read: () => client.eventsOf('openspec.changed').filter((event) => event.d?.folderId === 'f').length,
+    settled: (count) => count > 0,
+    attemptWindowMs: 3_000,
+    timeoutMs: 20_000,
+    label: 'openspec.changed after a tasks.md write in the worktree',
+  })
+  const reread = await call(client, 'openspec.change', { folderId: 'f', slug: 'add-thing' })
+  const newTask = reread.r?.artifacts?.find((a) => a.id === 'tasks')?.tasks?.sections?.[0]?.tasks?.some((t) => t.text.startsWith('1.3 Added from the probe'))
+  check(results, 'writing a task file in a worktree announces the watched folder, and a re-read shows it', announced > 0 && newTask === true, `events=${announced} writes=${writes} newTask=${newTask}`)
   await app.close()
 }
 

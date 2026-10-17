@@ -640,8 +640,10 @@ void app.whenReady().then(async () => {
       output: remoteTerminalOutput,
       intake: intakeService,
       routing: routingStore,
-      // Its own instance, so a phone's reads never touch the side panel's watches; read-only.
-      openspec: () => (remoteOpenSpec ??= new OpenSpecService(store, () => undefined)),
+      // Its own instance, so a phone's reads never touch the side panel's watches; read-only. Its changes reach the
+      // devices watching that folder (`openspec.watch`, `remote-openspec-browse` D5).
+      openspec: () =>
+        (remoteOpenSpec ??= new OpenSpecService(store, (folderId) => remoteService.openspecChanged(folderId))),
       attention: remoteAttention,
       request: requestRenderer,
       setRemoteWatched,
@@ -676,6 +678,18 @@ void app.whenReady().then(async () => {
   onPtyChange(() => remoteService.listChanged('sessions'))
   onSessionEnded((sessionId, how) => remoteService.sessionEnded(sessionId, how))
   store.subscribe(() => remoteService.listChanged('sessions'))
+  // A folder that leaves the workspace stops being watched for devices too, and a pending `openspec.changed` for it
+  // is dropped. The store tells no difference (it fires on every save), so the previous ids are kept here.
+  let remoteFolderIds = new Set(store.list().map((folder) => folder.id))
+  store.subscribe(() => {
+    const ids = new Set(store.list().map((folder) => folder.id))
+    for (const id of remoteFolderIds) {
+      if (ids.has(id)) continue
+      remoteService.openspecReleased(id)
+      if (remoteOpenSpec) void remoteOpenSpec.releaseFolder(id)
+    }
+    remoteFolderIds = ids
+  })
   app.on('will-quit', () => {
     void remoteService.stop()
   })

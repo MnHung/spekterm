@@ -45,6 +45,8 @@ const MODULE_ALLOW = new Set([
   'node-pty',
   '@spekjs/core',
   '@spekjs/core/graph-node-id',
+  // The side panel's artifact order, applied to OpenSpec answers for devices (`remote-openspec.ts`): a pure sort.
+  '@spekjs/core/artifact-order',
   '@shared/hibernation/settings',
   '@shared/i18n',
   '@shared/i18n/languages',

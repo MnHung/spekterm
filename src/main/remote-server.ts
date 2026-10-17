@@ -4,6 +4,7 @@ import {
   CLOSE,
   type RequestFrame,
   errorFrame,
+  FRAME_MAX_BYTES,
   negotiate,
   parseRequest,
   resultFrame,
@@ -80,10 +81,10 @@ interface Connection {
 }
 
 /**
- * One megabyte; a larger frame closes the connection. An attachment chunk is sized against it
+ * One megabyte (`FRAME_MAX_BYTES`); a larger frame closes the connection. An attachment chunk is sized against it
  * (`remote-attachments.ts` `LIMITS.chunk`: 512 KiB, 699,052 characters of base64); nothing else comes close.
  */
-const MAX_PAYLOAD = 1024 * 1024
+const MAX_PAYLOAD = FRAME_MAX_BYTES
 
 /** `::ffff:10.0.0.5` → `10.0.0.5`, so one IPv4 address is one throttle key on a dual-stack socket. */
 function normalizeAddress(address: string | undefined): string {

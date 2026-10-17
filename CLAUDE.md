@@ -119,6 +119,10 @@ OpenSpec 結構的側欄，讓使用者不必另外開 IDE 就能一邊駕駛 ag
     main process from the pty; the renderer's status lags a hibernation by a moment.
   - **A device's operations are one allow-list** (`OPERATIONS` in `src/main/remote-protocol.ts`); the protocol
     document must list exactly them (`scripts/remote-protocol-doc.test.mjs`).
+  - **OpenSpec answers are built field by field** (`remote-openspec.ts`, `remote-openspec-browse`), never the
+    side panel's views passed through: those let core's new fields flow on purpose, and a field reaches a device
+    only once that module and section 5 of the protocol document name it. Kept names stay the views' names, so a
+    client parses an older desktop's pass-through answers too; `openspec.watch` in `operations` tells them apart.
   - **A device answers a prompt with keys, never text or Enter** (`remote-answer.ts`), re-checked before every
     key: only while exactly one permission request is open, nothing was typed since it appeared, and it was not
     answered yet. Every open request is tracked (`agent-events.ts`): a background subagent's prompt keeps the

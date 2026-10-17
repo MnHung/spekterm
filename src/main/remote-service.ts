@@ -48,12 +48,20 @@ export interface RemoteServiceDeps {
   /** For the tests: the interface addresses (default `reachableAddresses()`) and the reconcile interval. */
   interfaceAddresses?: () => string[]
   reconcileMs?: number
+  /** For the tests: the `openspec.changed` throttle interval (default one second). */
+  openspecThrottleMs?: number
 }
 
 /** How often the session list is recomputed while a device is connected, to catch changes nothing signals. */
 const LIST_RECONCILE_MS = 5_000
 /** Signals arrive in bursts (a persist, a pty change, a wait drain); one list per burst. */
 const LIST_DEBOUNCE_MS = 150
+/**
+ * At most one `openspec.changed` per folder per interval (`remote-openspec-browse` D5). The OpenSpec service's own
+ * 150 ms debounce starts on a burst's first event, so an agent that keeps writing calls back several times a second,
+ * and each event can make a phone re-read a 200 KB change.
+ */
+const OPENSPEC_THROTTLE_MS = 1_000
 
 type ListKind = 'sessions' | 'inbox' | 'handoffs'
 
@@ -97,6 +105,8 @@ export class RemoteService {
   #lastSessionList = ''
   /** The address list connected devices were last told, as JSON; set when the first device connects. */
   #lastAddresses = ''
+  /** A running `openspec.changed` timer per folder. */
+  readonly #openspecTimers = new Map<string, NodeJS.Timeout>()
 
   constructor(deps: RemoteServiceDeps) {
     this.#deps = deps
@@ -209,6 +219,8 @@ export class RemoteService {
 
   async stop(): Promise<void> {
     this.#stopReconcile()
+    for (const timer of this.#openspecTimers.values()) clearTimeout(timer)
+    this.#openspecTimers.clear()
     await this.server.stop()
   }
 
@@ -250,6 +262,38 @@ export class RemoteService {
       for (const which of kinds) this.#sendList(which)
     }, LIST_DEBOUNCE_MS)
     this.#listTimer.unref()
+  }
+
+  /**
+   * A folder's OpenSpec changed on disk. The connections watching it are told with `openspec.changed`, once the
+   * interval has passed: the first change after a quiet period starts the timer, later ones are absorbed, so every
+   * change is followed by an event within the interval and no folder gets more than one per interval. A folder no
+   * connection watches starts no timer.
+   */
+  openspecChanged(folderId: string): void {
+    if (this.#openspecTimers.has(folderId) || !this.#openspecWatched(folderId)) return
+    const timer = setTimeout(() => {
+      this.#openspecTimers.delete(folderId)
+      const frame = eventFrame('openspec.changed', { folderId })
+      for (const { connection, handle } of this.#sessions.values()) {
+        if (handle.watchesOpenSpec(folderId)) connection.send(frame)
+      }
+    }, this.#deps.openspecThrottleMs ?? OPENSPEC_THROTTLE_MS)
+    timer.unref()
+    this.#openspecTimers.set(folderId, timer)
+  }
+
+  /** The folder left the workspace: a pending `openspec.changed` for it is not sent. */
+  openspecReleased(folderId: string): void {
+    const timer = this.#openspecTimers.get(folderId)
+    if (!timer) return
+    clearTimeout(timer)
+    this.#openspecTimers.delete(folderId)
+  }
+
+  #openspecWatched(folderId: string): boolean {
+    for (const { handle } of this.#sessions.values()) if (handle.watchesOpenSpec(folderId)) return true
+    return false
   }
 
   /** A session's process ended: every connection's conversation watch on it ends with how. */
