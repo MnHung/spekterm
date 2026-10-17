@@ -1,15 +1,15 @@
 {
-  "en/graph.png": "26b1304954af138fa73fd03197cc4e6ff2e44946ddb275e198b1149ae580ed81",
-  "en/handoff.png": "96e7e976fedefc7e37a94a4f723018ecbaeb48384ad48353bb805732f3a21e2e",
-  "en/hero.png": "008797b8d53997e7e3d6d9271b89924abc1fe4ee6fde674e4d20048374414ce7",
-  "en/inbox.png": "2763298c02add756fc9522488db2f160c45efe94cac9834e65fac61ab6b5cbaa",
-  "en/terminal.png": "7c0905c5f5a8061fd6a5506f7289ea44825a975c629d4d0dfea219d3e5e3fabd",
+  "en/graph.png": "9fc482b15b6932cb27e4c62489398c8c734b7012a8a8aaf1b52765229a6146da",
+  "en/handoff.png": "66f8b980c13ac3b4211d1bb8cc397cd848d2c93eae886ad898f7cbce2ef4cff1",
+  "en/hero.png": "2e7230819663565b98c4fd30e25d7c2178a38dcdc6d082354f7205bc0c303a43",
+  "en/inbox.png": "c6561f1dda8a87cbaaa4696bfecc995ffd2326134354a3f87c2a093770c9618c",
+  "en/terminal.png": "38b5297194613d38f8cf5c4312e5481500af585390986616d739adff712c9117",
   "neutral/spek-change.png": "e52f60f5a94ad115e0e015bbe514f3054d6094163e8fd86cde7347240a3ff1b4",
   "neutral/spek-dashboard.png": "f3ca7e3fff055030cd47e72b28a289c7f2dc8b10fc92c02483e6bd43d766c3db",
   "neutral/spek-timeline.png": "121a6e342591a47a9f1539824642ddcadd1675d94bbe07d3da642ad3c397ab24",
-  "zh-TW/graph.png": "f78687f33cbf7ae79894c2fea7ecfc2009b0391ae0889d6819cf7efe1250801d",
-  "zh-TW/handoff.png": "ec5e53fe789dfbd84ae4d4db0e7a788362a17bbb3c083ac26fbe6b0f801e9892",
-  "zh-TW/hero.png": "afb33bc53fd76c7b4a65cecebc2114e6d5ae4cb6339b9fb94d7e0560515f4fae",
-  "zh-TW/inbox.png": "c1c451fab61e5b5248135d7113126af3859bc8854e15fa442cfabd187195ae7a",
-  "zh-TW/terminal.png": "04daafe47e1c08a6ef6e6d9b9c69d4e358d001cd5fa5db273eda71018c1f850e"
+  "zh-TW/graph.png": "71dd82b8d7ed5bd66c78aed3ce24f8b05a9a86c2a3fba8cb42fc2260c0b75317",
+  "zh-TW/handoff.png": "58b07fc7136155c8884c4569a4903e0635d778d08afe5e9d3424a12b1afcca70",
+  "zh-TW/hero.png": "93006921c0a9a30bfc13aea00c138cca7ce00ba68ab2cd600093109de9930f40",
+  "zh-TW/inbox.png": "f556fd801aac0e95d5dff6239ce4f054a47fc465656426f3adfa5a213058cd82",
+  "zh-TW/terminal.png": "8ac53681d87262d710541cfe00401199092afdfef2ce498242c5c96178cb3e3d"
 }

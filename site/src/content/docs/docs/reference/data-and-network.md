@@ -10,8 +10,8 @@ itself, and the programs it starts that make connections of their own.
 
 ## What spekterm itself connects to
 
-- **Slack** — only after you save Slack credentials in the inbox, and only to Slack's API (or the endpoint
-  you set there; the dialog warns that your credentials are sent to it). Without credentials, the Slack
+- **Slack** — only after you save Slack credentials in **Settings → Integrations**, and only to Slack's API (or
+  the endpoint you set there; Settings warns that your credentials are sent to it). Without credentials, the Slack
   part of spekterm does nothing. See [Inbox and Slack](/docs/using/inbox-and-slack/).
 - **Remote images in rendered markdown** — markdown that spekterm renders (files you open, OpenSpec
   artifacts in the side panel, the conversation view) may contain `https:` images, and they are loaded

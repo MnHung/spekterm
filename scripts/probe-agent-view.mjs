@@ -40,6 +40,7 @@ import { join } from 'node:path'
 import { check, connectToApp, pollFor, pressKey } from './lib/cdp.mjs'
 import { copy, label, prefixOf } from './lib/copy.mjs'
 import { makeStubAgent } from './lib/stub-agent.mjs'
+import { awaitApplied, clickSelector, closeSettings, inSettings, openSettings } from './lib/settings.mjs'
 import { awaitMounted } from './lib/mounted.mjs'
 import { electronExtraArgs } from './lib/display.mjs'
 import { runSections } from './lib/sections.mjs'
@@ -768,6 +769,52 @@ async function runParallelSessions(_mode, _config, context) {
     !firstAfter.hasComposer && firstAfter.toggleLabel === copy('conversation.showConversation'),
     `輸入框＝${firstAfter.hasComposer}，切換入口＝${firstAfter.toggleLabel}`,
   )
+
+  /*
+    **Settings offers the same view choice** (agent-conversation-view, "Settings also offers the view choice").
+
+    Both directions again: the tab bar puts every session in the conversation view, Settings must show that
+    (a radio fixed on its default, terminal, would pass the second check alone), and choosing Terminal in
+    Settings must reach both sessions, which is only visible by focusing each in turn.
+  */
+  await app.client.evaluate(TOGGLE_VIEW)
+  await pollFor({
+    read: () => app.client.evaluate(VIEW_STATE),
+    settled: (state) => state.hasComposer,
+    timeoutMs: 15_000,
+    label: 'the tab bar toggle puts the sessions in the conversation view',
+  })
+  const VIEW_RADIO = inSettings('input[name="settings-agent-view"]')
+  const CHECKED_VIEW = `document.querySelector(${JSON.stringify(`${VIEW_RADIO}:checked`)})?.value ?? null`
+  await openSettings(app.client, 'agents')
+  const shownView = await awaitApplied(app.client, CHECKED_VIEW, (value) => value !== null, 'the view radio is shown')
+  check(results, 'Settings shows the current view (conversation, as the tab bar set it)',
+    shownView === 'conversation', `checked=${shownView}`)
+
+  await clickSelector(app.client, `${VIEW_RADIO}[value="terminal"]`, 'the Terminal view option')
+  const chosen = await awaitApplied(app.client, CHECKED_VIEW, (value) => value === 'terminal', 'Settings shows Terminal chosen')
+  await closeSettings(app.client)
+  const viewOf = async (index) => {
+    await pollFor({
+      read: () => app.client.evaluate(focusTabExpression(index)),
+      settled: (ok) => ok === true,
+      timeoutMs: 10_000,
+      label: `focus session ${index + 1}`,
+    })
+    return pollFor({
+      read: () => app.client.evaluate(VIEW_STATE),
+      settled: (state) => state.hasToggle && !state.hasComposer,
+      timeoutMs: 15_000,
+      label: `session ${index + 1} shows the terminal view`,
+    }).catch(() => app.client.evaluate(VIEW_STATE))
+  }
+  const firstView = await viewOf(0)
+  const secondView = await viewOf(1)
+  check(results, 'A choice in Settings changes every agent session (both show the terminal view)',
+    chosen === 'terminal' && !firstView.hasComposer && !secondView.hasComposer &&
+      firstView.toggleLabel === copy('conversation.showConversation') &&
+      secondView.toggleLabel === copy('conversation.showConversation'),
+    `radio=${chosen} first: composer=${firstView.hasComposer} toggle=${firstView.toggleLabel}; second: composer=${secondView.hasComposer} toggle=${secondView.toggleLabel}`)
 
   /*
     **把全域偏好還原為對話 view —— 下一段依賴它。**

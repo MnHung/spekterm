@@ -1,6 +1,7 @@
 import type { SecretStore } from './secret-store'
 import type { SlackStatus } from './slack-service'
 import {
+  InvalidEndpointError,
   type ProjectedSlackSettings,
   type SlackSettingsStore,
   projectSlackSettings,
@@ -71,4 +72,28 @@ export function slackState(input: {
 /** renderer 送來的種類是否在白名單上。 */
 export function isTokenKind(value: unknown): value is SlackTokenKind {
   return typeof value === 'string' && (SLACK_TOKEN_KINDS as readonly string[]).includes(value)
+}
+
+/**
+ * The answer to a Slack settings write. IPC keeps only an error's message, so a failure the renderer must tell
+ * apart travels as a code (`settings-sections`): a refused endpoint, or a write that did not reach the disk.
+ */
+export type SlackWriteResult =
+  | { ok: true; state: SlackState }
+  | { ok: false; code: 'INVALID_ENDPOINT' | 'WRITE_FAILED' }
+
+/**
+ * Runs a write and answers it. Pure apart from what it is handed, so `node:test` can hold it (`ipc/slack.ts`
+ * imports electron). The error's own text goes to the console only: it is English and can carry the user-data
+ * path, and what the renderer shows comes from the dictionary.
+ */
+export function slackWrite(run: () => void, state: () => SlackState): SlackWriteResult {
+  try {
+    run()
+  } catch (error) {
+    if (error instanceof InvalidEndpointError) return { ok: false, code: 'INVALID_ENDPOINT' }
+    console.error(`[slack] settings could not be written: ${String(error)}`)
+    return { ok: false, code: 'WRITE_FAILED' }
+  }
+  return { ok: true, state: state() }
 }

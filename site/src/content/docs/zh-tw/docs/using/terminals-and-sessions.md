@@ -33,7 +33,7 @@ spekterm 不包裝、也不模仿它們 —— 你打的字送給程式，程式
 spekterm 的快捷鍵刻意挑選，不佔用你的 shell 或 Claude Code 需要的按鍵。完整清單與每一顆鍵的取捨，
 見[快捷鍵](/zh-tw/docs/reference/keyboard-shortcuts/)。
 
-終端的外觀 —— 字型、大小、行高、GPU 繪製 —— 在 **設定** 裡；見[設定](/zh-tw/docs/reference/settings/)。
+終端的外觀 —— 字型、大小、行高、GPU 繪製 —— 在 **設定 → 終端** 裡；見[設定](/zh-tw/docs/reference/settings/)。
 
 ## 圓點代表什麼
 
@@ -90,7 +90,7 @@ build、dev server，或 agent 還在寫的回覆都會遺失；spekterm 關著�
 原地休眠 —— 跟重啟之後的狀態完全一樣，喚醒的方式也相同。
 
 - **手動：**`Ctrl+Shift+H`，或分頁、rail 那一列的選單裡的 **休眠**。
-- **自動：**閒置 24 小時的 session 會被休眠。到 **設定 → 讓閒置的 session 休眠** 改時間或關閉。
+- **自動：**閒置 24 小時的 session 會被休眠。到 **設定 → Agent 與 session → 讓閒置的 session 休眠** 改時間或關閉。
   畫面上的 session 絕不會被自動休眠，正在工作的 agent、正在跑工作的 shell 也不會。在 macOS 上，閒置的
   shell 永遠不會被自動休眠；手動休眠照常可用。
 
@@ -108,7 +108,7 @@ session。狀態列會顯示 focused session 位在哪個 worktree（`wt <名稱
 ## 狀態列
 
 視窗底部的狀態列顯示選中的 repo、focused session 的工作目錄與分支、開了幾個 session，以及錨定的
-change 的 task 進度。在設定裡打開 **在狀態列顯示 agent 狀態**，`claude` 還會在那裡回報它的模型、
+change 的 task 進度。在 **設定 → Agent 與 session** 打開 **在狀態列顯示 agent 狀態**，`claude` 還會在那裡回報它的模型、
 context 用量與花費。這個設定套用於改動之後才開的 session，你自己的 Claude Code status line 照常運作。
 
 在 macOS 上，狀態列不顯示 focused session 的工作目錄與它的 git 狀態（分支、未提交的變更、worktree）。

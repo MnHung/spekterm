@@ -91,6 +91,17 @@ OpenSpec 結構的側欄，讓使用者不必另外開 IDE 就能一邊駕駛 ag
   with Close / Keep, the content readable underneath. **The main process owns the offer** and a paired phone sees
   and answers it (`remote-close-offer`): any new way to answer it must reach `SessionControl`, not only the card. "In a turn" is **not** the wait state's `ready` (see
   `docs/lessons/handoff.md`, "Session commands").
+- **Settings** (`settings-sections`) — one dialog with sections (General, Terminal, Agents & sessions,
+  Integrations, Remote access, About) and **one save model: a change applies when it is made** (a choice at
+  once, a typed value on Enter or blur, Esc restores). The only exceptions are a Slack token and the remote port,
+  which wait for their own button or Enter. Slack's connection and the remote access controls live there; the
+  routing rules stay in the inbox. Two rules that fail silently if forgotten:
+  - **`PreferencesProvider` writes through a queue whose entries read the last applied preferences when they
+    run** (`preferences-queue.ts`). The font family, size and line height are one write; arguments bound when
+    a change is made let a quick second change undo the first.
+  - **The preference, Slack settings and secret stores write the file first and assign after.** Assigning first
+    kept a failed value in memory, where the next successful write put it on disk. The remote store does not do
+    this yet (issue #88).
 - **鍵盤** —— 見下文「快捷鍵」。
 - **Website** (`project-website`) — `spekterm.com` is built from `site/` (Astro + Starlight, its own
   package, nothing of it reaches the app): **the website of both spekterm (`/`) and spek (`/spek/`)**,

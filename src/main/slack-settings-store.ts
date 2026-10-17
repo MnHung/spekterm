@@ -205,6 +205,14 @@ function quarantine(filePath: string): string | null {
   }
 }
 
+/** An endpoint the user entered that is not an acceptable `https:` address (see `sanitizeApiBaseUrl`). */
+export class InvalidEndpointError extends Error {
+  constructor() {
+    super('The Slack API endpoint must be an https address')
+    this.name = 'InvalidEndpointError'
+  }
+}
+
 export class SlackSettingsStore {
   #settings: SlackSettings = {}
 
@@ -268,8 +276,7 @@ export class SlackSettingsStore {
     const value = days === null ? undefined : clampLookbackDays(days)
     if (value === undefined) delete next.lookbackDays
     else next.lookbackDays = value
-    this.#settings = next
-    this.#save()
+    this.#commit(next)
     return this.get()
   }
 
@@ -282,10 +289,13 @@ export class SlackSettingsStore {
   setApiBaseUrl(url: string | null): SlackSettings {
     const next = { ...this.#settings }
     const value = url === null ? undefined : sanitizeApiBaseUrl(url)
+    // **An edit that fails the check is refused, not turned into the default.** Turning it into the default
+    // erased the user's custom endpoint over a typo and said nothing. A stored value read back by `load()`
+    // still means the default when it fails the check: that is damaged data, not an edit.
+    if (url !== null && value === undefined) throw new InvalidEndpointError()
     if (value === undefined) delete next.apiBaseUrl
     else next.apiBaseUrl = value
-    this.#settings = next
-    this.#save()
+    this.#commit(next)
     return this.get()
   }
 
@@ -301,14 +311,12 @@ export class SlackSettingsStore {
     else next.teamId = team
     if (self === undefined) delete next.selfUserId
     else next.selfUserId = self
-    this.#settings = next
-    this.#save()
+    this.#commit(next)
   }
 
-  #save(): void {
-    writeSlackSettingsFileAtomic(this.filePath, {
-      version: SLACK_SETTINGS_VERSION,
-      slack: this.#settings,
-    })
+  /** Writes `next`, **then** takes it: a write that throws leaves the settings as they were. */
+  #commit(next: SlackSettings): void {
+    writeSlackSettingsFileAtomic(this.filePath, { version: SLACK_SETTINGS_VERSION, slack: next })
+    this.#settings = next
   }
 }

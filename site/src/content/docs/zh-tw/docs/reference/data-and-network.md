@@ -10,8 +10,8 @@ spekterm 沒有帳號、沒有遙測（telemetry）、也不檢查更新。這�
 
 ## spekterm 自己會連到哪裡
 
-- **Slack** —— 只在你於收件匣存下 Slack 憑證之後，而且只連到 Slack 的 API（或你在那裡設定的端點；
-  對話框會提醒你的憑證會被送到那裡）。沒有憑證時，spekterm 的 Slack 部分什麼都不做。
+- **Slack** —— 只在你於 **設定 → 整合** 存下 Slack 憑證之後，而且只連到 Slack 的 API（或你在那裡設定的
+  端點；設定會提醒你的憑證會被送到那裡）。沒有憑證時，spekterm 的 Slack 部分什麼都不做。
   見 [收件匣與 Slack](/zh-tw/docs/using/inbox-and-slack/)。
 - **算繪出來的 markdown 裡的遠端圖片（image）** —— spekterm 算繪的 markdown（你開的檔案、側欄裡的
   OpenSpec artifact、對話檢視）可能含有 `https:` 圖片，它們會從所指的位置載入。純 `http:` 的圖片不會載入。

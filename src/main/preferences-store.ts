@@ -473,8 +473,7 @@ export class PreferencesStore {
     if (sanitized === undefined) delete next.language
     else next.language = sanitized
 
-    this.uiPreferences = next
-    this.save()
+    this.commit({ ui: next })
     return this.ui()
   }
 
@@ -518,8 +517,7 @@ export class PreferencesStore {
       assignField(next, key, this.preferences[key])
     }
 
-    this.preferences = next
-    this.save()
+    this.commit({ terminal: next })
     return this.get()
   }
 
@@ -534,8 +532,7 @@ export class PreferencesStore {
     if (enabled === null) delete next.gpuAcceleration
     else next.gpuAcceleration = enabled
 
-    this.preferences = next
-    this.save()
+    this.commit({ terminal: next })
     return this.get()
   }
 
@@ -545,8 +542,7 @@ export class PreferencesStore {
     if (enabled === null) delete next.agentStatus
     else next.agentStatus = enabled
 
-    this.preferences = next
-    this.save()
+    this.commit({ terminal: next })
     return this.get()
   }
 
@@ -557,8 +553,7 @@ export class PreferencesStore {
     if (sanitized === undefined) delete next.agentView
     else next.agentView = sanitized
 
-    this.preferences = next
-    this.save()
+    this.commit({ terminal: next })
     return this.get()
   }
 
@@ -572,9 +567,22 @@ export class PreferencesStore {
     if (sanitized === undefined) delete next.autoHibernateSeconds
     else next.autoHibernateSeconds = sanitized
 
-    this.preferences = next
-    this.save()
+    this.commit({ terminal: next })
     return this.get()
+  }
+
+  /**
+   * Writes the next state, **then** takes it. A write that throws leaves the state as it was: assigning first
+   * kept a value that never reached the disk in memory, where `get()` reported it and the next successful
+   * write of any field stored it (`terminal-preferences`, "A change in Settings applies when it is made").
+   */
+  private commit(next: { terminal?: TerminalPreferences; ui?: UiPreferences }): void {
+    const terminal = next.terminal ?? this.preferences
+    const ui = next.ui ?? this.uiPreferences
+    writePreferencesFileAtomic(this.filePath, { version: PREFERENCES_VERSION, terminal, ui })
+    this.existedOnLoad = true
+    this.preferences = terminal
+    this.uiPreferences = ui
   }
 
   private save(): void {

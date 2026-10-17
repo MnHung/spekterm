@@ -14,7 +14,8 @@ import { useIntake } from './intake-state'
 import { preselectFolder, type Preselection } from './preselect-folder'
 import { showTitleSeparately } from './title-redundancy'
 import { RulesEditor } from './RulesEditor'
-import { SlackSettings } from './SlackSettings'
+import { slackNeedsAttention, statusCopy } from '../settings/slack-status'
+import type { SlackState } from '../types'
 
 /**
  * 收件匣的全視窗 overlay。
@@ -54,15 +55,24 @@ function itemKey(item: IntakeView): string {
   return `${item.adapter} ${item.id}`
 }
 
-type Tab = 'inbox' | 'rules' | 'slack'
+type Tab = 'inbox' | 'rules'
 
 export interface IntakeOverlayProps {
   onClose: () => void
   /** 開啟它的那個元素 —— 關閉時把焦點還回去。 */
   opener: HTMLElement | null
+  /** The tab to open on: Settings' Integrations hint opens the routing rules. */
+  initialTab?: Tab
+  /** Closes the inbox and opens Settings on Integrations (the Slack line). */
+  onOpenSlackSettings: () => void
 }
 
-export function IntakeOverlay({ onClose, opener }: IntakeOverlayProps): React.JSX.Element {
+export function IntakeOverlay({
+  onClose,
+  opener,
+  initialTab = 'inbox',
+  onOpenSlackSettings,
+}: IntakeOverlayProps): React.JSX.Element {
   const { t } = useTranslation()
   const sessions = useSessions()
   // **folder 的名字住在 renderer。** 主行程的投影刻意只給識別碼（送路徑會破壞邊界語彙），
@@ -85,7 +95,7 @@ export function IntakeOverlay({ onClose, opener }: IntakeOverlayProps): React.JS
   // （見 `intake-state.tsx` 的檔頭）。`reload` 仍然保留 —— 主行程那幾條路徑都有推送，
   // 但顯式的重新拉取是第二條防線。
   const { snapshot, refresh: reload } = useIntake()
-  const [tab, setTab] = useState<Tab>('inbox')
+  const [tab, setTab] = useState<Tab>(initialTab)
   const [failure, setFailure] = useState<string | null>(null)
   const closeRef = useRef<HTMLButtonElement>(null)
 
@@ -200,21 +210,6 @@ export function IntakeOverlay({ onClose, opener }: IntakeOverlayProps): React.JS
           >
             {t('intake.rules.label')}
           </button>
-          {/*
-            Slack 連線設定的家。**刻意不放在終端偏好對話框裡** —— 那個對話框的內容由
-            `terminal-preferences` 以列舉的方式規定，往其中加入本能力的區段將構成對該能力的修改
-            （`intake-routing` 已就規則的編輯入口立下同一條約束）。
-            兩份既有規格都沒有列舉這個 overlay 的分頁，因此加在這裡不構成對它們的修改。
-          */}
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === 'slack'}
-            onClick={() => setTab('slack')}
-            className={tabClass(tab === 'slack')}
-          >
-            {t('slack.label')}
-          </button>
         </div>
         <span className="flex-1" />
         <span className="text-2xs text-ink-faint">
@@ -310,9 +305,9 @@ export function IntakeOverlay({ onClose, opener }: IntakeOverlayProps): React.JS
           </div>
         ) : null}
 
-        {tab === 'slack' ? (
-          <SlackSettings />
-        ) : tab === 'rules' ? (
+        <SlackLine onOpen={onOpenSlackSettings} />
+
+        {tab === 'rules' ? (
           <RulesEditor />
         ) : items.length === 0 && opened.length === 0 ? (
           <p className="text-2xs text-ink-faint">{t('intake.empty')}</p>
@@ -540,5 +535,35 @@ function IntakeCard({
         </button>
       </div>
     </li>
+  )
+}
+
+/**
+ * One line about Slack, only while it is set up and not working (`slack-intake-source`, "The inbox says when Slack
+ * is not working"). From the outside every failure of the connection looks like nobody mentioning the user: an
+ * empty inbox. The user looks here, not at Settings, so the difference must be visible here.
+ */
+function SlackLine({ onOpen }: { onOpen: () => void }): React.JSX.Element | null {
+  const { t } = useTranslation()
+  const [state, setState] = useState<SlackState | null>(null)
+  const reload = useCallback(() => {
+    void window.workspace.slack.get().then(setState)
+  }, [])
+  useEffect(reload, [reload])
+  useEffect(() => window.workspace.slack.onChanged(reload), [reload])
+
+  if (state === null || !slackNeedsAttention(state)) return null
+  const status = statusCopy(state)
+  return (
+    <div role="status" className="mb-3 flex items-center gap-3 rounded border border-hairline bg-shell px-3 py-2">
+      <p className="flex-1 text-2xs text-ink">{t('slack.inboxLine', { status: t(status.key, status.options) })}</p>
+      <button
+        type="button"
+        onClick={onOpen}
+        className="rounded px-2 py-0.5 text-2xs text-ink-dim hover:bg-hairline/40 focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+      >
+        {t('slack.openSettings')}
+      </button>
+    </div>
   )
 }

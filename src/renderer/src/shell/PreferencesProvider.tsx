@@ -1,23 +1,20 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { DEFAULT_LANGUAGE, i18n, type Language, setLanguage } from '@shared/i18n'
 import { effectiveHibernateSeconds } from '@shared/hibernation/settings'
+import { createPreferencesQueue } from './preferences-queue'
 import type { TerminalPreferences } from './types'
 
 export interface PreferencesApi {
   /** 當前終端偏好。載入完成前為空物件（＝全用預設）。 */
   terminal: TerminalPreferences
   /**
-   * 設定終端字型（family + size + lineHeight 一起）。`null` ＝清為預設。
+   * Changes part of the terminal font. A field left out keeps its applied value; `null` clears it to the default.
    *
-   * **回傳 Promise，而呼叫端要 await 它** —— 設定對話框一次送出會同時改字型與 GPU，兩者是
-   * 不同的 IPC。若兩邊都 fire-and-forget，**誰後 resolve，本地 state 就是誰的**：使用者關掉
-   * GPU 又順手改了字級，字型那條若後到，state 裡的 GPU 就被它帶回舊值了（磁碟是對的，畫面不是）。
+   * The three fields are one write in the main process, so the ones left out are read **when the write runs**,
+   * from what the previous write applied (`preferences-queue.ts`). Every update below goes through that queue
+   * and rejects when the write fails, leaving the state as it was.
    */
-  updateTerminalFont: (
-    fontFamily: string | null,
-    fontSize: number | null,
-    lineHeight: number | null,
-  ) => Promise<void>
+  updateTerminalFont: (change: FontChange) => Promise<void>
   /** 開／關 GPU 加速。`null` ＝回到預設（＝啟用）。同上，呼叫端要 await。 */
   updateGpuAcceleration: (enabled: boolean | null) => Promise<void>
   /**
@@ -42,7 +39,7 @@ export interface PreferencesApi {
    * 同上，呼叫端要 await。**此前這是 renderer 的本地 state 更新（同步、不可能失敗）**，
    * 現在是一次 IPC 往返 ＋ 主行程的同步寫檔：多了一種失效方式，被拒絕時畫面靜默地不動。
    */
-  updateAgentView: (view: 'terminal' | 'conversation') => Promise<void>
+  updateAgentView: (view: 'terminal' | 'conversation' | null) => Promise<void>
   /**
    * 切換 UI 語言。**它是一次 IPC 往返，且主行程會先套用到它自己的 i18n。**
    *
@@ -66,6 +63,12 @@ export interface PreferencesApi {
   autoHibernateSeconds: number
 }
 
+export interface FontChange {
+  fontFamily?: string | null
+  fontSize?: number | null
+  lineHeight?: number | null
+}
+
 const PreferencesContext = createContext<PreferencesApi | null>(null)
 
 /**
@@ -77,9 +80,12 @@ const PreferencesContext = createContext<PreferencesApi | null>(null)
  */
 export function PreferencesProvider({ children }: { children: React.ReactNode }): React.JSX.Element {
   const [terminal, setTerminal] = useState<TerminalPreferences>({})
+  const queueRef = useRef(createPreferencesQueue<TerminalPreferences>({}, setTerminal))
+  const enqueue = queueRef.current.enqueue
 
   useEffect(() => {
     void window.workspace.settings.get().then((next) => {
+      queueRef.current.reset(next)
       setTerminal(next)
       // **renderer 以基準語言初始化，偏好抵達後才切換** —— 因此非英文的使用者會看到一瞬的
       // 英文。這與「先以預設字型起、偏好到達再套用」是同一條先例（見本檔開頭）。
@@ -105,51 +111,50 @@ export function PreferencesProvider({ children }: { children: React.ReactNode })
 
   // 主行程回傳套用後的偏好（已清理／夾制）—— 直接以它更新本地 state，renderer 與磁碟一致。
   const updateTerminalFont = useCallback(
-    (fontFamily: string | null, fontSize: number | null, lineHeight: number | null) =>
-      window.workspace.settings.setTerminalFont(fontFamily, fontSize, lineHeight).then(setTerminal),
-    [],
+    (change: FontChange) =>
+      enqueue((applied) =>
+        window.workspace.settings.setTerminalFont(
+          'fontFamily' in change ? (change.fontFamily ?? null) : (applied.fontFamily ?? null),
+          'fontSize' in change ? (change.fontSize ?? null) : (applied.fontSize ?? null),
+          'lineHeight' in change ? (change.lineHeight ?? null) : (applied.lineHeight ?? null),
+        ),
+      ).then(() => undefined),
+    [enqueue],
   )
 
   const updateGpuAcceleration = useCallback(
     (enabled: boolean | null) =>
-      window.workspace.settings.setGpuAcceleration(enabled).then(setTerminal),
-    [],
+      enqueue(() => window.workspace.settings.setGpuAcceleration(enabled)).then(() => undefined),
+    [enqueue],
   )
 
   const updateAgentStatus = useCallback(
     (enabled: boolean | null) =>
-      window.workspace.settings.setAgentStatus(enabled).then(setTerminal),
-    [],
+      enqueue(() => window.workspace.settings.setAgentStatus(enabled)).then(() => undefined),
+    [enqueue],
   )
 
   const updateAgentView = useCallback(
-    (view: 'terminal' | 'conversation') =>
-      window.workspace.settings
-        .setAgentView(view)
-        .then(setTerminal)
-        // 被拒絕時畫面會靜默地不動 —— 至少留下紀錄，不要連線索都沒有。
-        .catch((error: unknown) => console.error(`[preferences] setAgentView failed: ${String(error)}`)),
-    [],
+    (view: 'terminal' | 'conversation' | null) =>
+      enqueue(() => window.workspace.settings.setAgentView(view)).then(() => undefined),
+    [enqueue],
   )
 
-    const updateAutoHibernate = useCallback(
-    (seconds: number | null) => window.workspace.settings.setAutoHibernate(seconds).then(setTerminal),
-    [],
+  const updateAutoHibernate = useCallback(
+    (seconds: number | null) =>
+      enqueue(() => window.workspace.settings.setAutoHibernate(seconds)).then(() => undefined),
+    [enqueue],
   )
 
   const updateLanguage = useCallback(
     (language: Language) =>
-      window.workspace.settings
-        .setLanguage(language)
-        .then(async (next) => {
-          setTerminal(next)
-          // 主行程已經套用到它自己的 i18n 了 —— 這一步只讓 renderer 跟上。
-          await setLanguage(next.language ?? DEFAULT_LANGUAGE)
-        })
-        .catch((error: unknown) =>
-          console.error(`[preferences] setLanguage failed: ${String(error)}`),
-        ),
-    [],
+      enqueue(async () => {
+        const next = await window.workspace.settings.setLanguage(language)
+        // 主行程已經套用到它自己的 i18n 了 —— 這一步只讓 renderer 跟上。
+        await setLanguage(next.language ?? DEFAULT_LANGUAGE)
+        return next
+      }).then(() => undefined),
+    [enqueue],
   )
 
   const api = useMemo<PreferencesApi>(

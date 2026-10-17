@@ -14,7 +14,8 @@ Shell sessions have only the terminal view.
 ## Switching views
 
 Use **Show conversation view** and **Show terminal view** on the session. The choice applies to **all**
-agent sessions at once and is remembered across restarts, so new sessions open in the view you used last.
+agent sessions at once and is remembered across restarts, so new sessions open in the view you used last. The
+same choice is in **Settings → Agents & sessions → Agent sessions show**.
 
 Switching never restarts anything. Both views show the same running `claude` process; the terminal keeps
 running underneath while the conversation is on screen.

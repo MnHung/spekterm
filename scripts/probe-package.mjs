@@ -61,6 +61,7 @@ import { electronExtraArgs } from './lib/display.mjs'
 import { copy } from './lib/copy.mjs'
 import { MOUNTED_WITHOUT_VISIBILITY as MOUNTED, awaitMounted, describeMounted } from './lib/mounted.mjs'
 import { PROBE_PORTS } from './lib/ports.mjs'
+import { openSettings } from './lib/settings.mjs'
 import { seedLanguage } from './lib/probe-language.mjs'
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -183,10 +184,6 @@ const GLOBAL_NEW_SESSION_RECT = RECT_OF(
 )
 
 const TERMINAL_RECT = RECT_OF(`section[aria-label="${copy('stage.terminal')}"]`)
-
-const SETTINGS_RECT = RECT_OF(
-  `nav[aria-label="${copy('activityBar.label')}"] button[aria-label="${copy('activityBar.settings')}"]`,
-)
 
 /**
  * 設定介面「關於」段呈現的建置身分（`build-identity`）。
@@ -504,8 +501,8 @@ try {
    * 而這一段是需要開對話框的 UI 互動。一次 throw 會連帶帶走上面 pty 與 CSP 那兩條既有斷言。
    */
   try {
-    const settingsAt = await pollUntil(client, SETTINGS_RECT, (value) => value !== null, 6000)
-    if (settingsAt) await realClick(client, settingsAt)
+    // The build identity is in Settings' About section (`settings-sections`).
+    await openSettings(client, 'about')
     const identity = await pollUntil(client, BUILD_IDENTITY, (value) => value !== null, 6000)
 
     check(results, '設定介面呈現建置身分（版本／建置時刻／commit）',

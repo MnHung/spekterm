@@ -2,11 +2,11 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterEach, beforeEach, describe, it } from 'node:test'
+import { afterEach, beforeEach, describe, it, mock } from 'node:test'
 import { SecretStore } from './secret-store'
-import { SLACK_TOKEN_KINDS, isTokenKind, secretName, slackState } from './slack-state'
+import { SLACK_TOKEN_KINDS, type SlackState, isTokenKind, secretName, slackState, slackWrite } from './slack-state'
 import type { SlackStatus } from './slack-service'
-import { DEFAULT_API_BASE_URL, DEFAULT_LOOKBACK_DAYS, SlackSettingsStore } from './slack-settings-store'
+import { DEFAULT_API_BASE_URL, DEFAULT_LOOKBACK_DAYS, InvalidEndpointError, SlackSettingsStore } from './slack-settings-store'
 
 /** 一份不失效、什麼都沒交付的狀態 —— 本檔案驗的是投影，不是狀態本身。 */
 const idleStatus = (): SlackStatus => ({
@@ -113,5 +113,39 @@ describe('憑證種類的白名單', () => {
       secrets.set(secretName(kind), USER_SENTINEL)
       assert.equal(secrets.has(secretName(kind)), true, `${kind} 的鍵被機密模組拒絕了`)
     }
+  })
+})
+
+describe('slackWrite (settings-sections)', () => {
+  const STATE = { configured: false } as unknown as SlackState
+
+  it('answers the state after a write that succeeds', () => {
+    assert.deepEqual(slackWrite(() => {}, () => STATE), { ok: true, state: STATE })
+  })
+
+  it('tells a refused endpoint apart from a failed write', () => {
+    assert.deepEqual(
+      slackWrite(() => {
+        throw new InvalidEndpointError()
+      }, () => STATE),
+      { ok: false, code: 'INVALID_ENDPOINT' },
+    )
+    const quiet = mock.method(console, 'error', () => {})
+    assert.deepEqual(
+      slackWrite(() => {
+        throw Object.assign(new Error('EISDIR: /home/me/.config/Spekterm/slack.json.tmp'), { code: 'EISDIR' })
+      }, () => STATE),
+      { ok: false, code: 'WRITE_FAILED' },
+    )
+    quiet.mock.restore()
+  })
+
+  it('a failed write sends no text to the renderer, only the code', () => {
+    const quiet = mock.method(console, 'error', () => {})
+    const result = slackWrite(() => {
+      throw new Error('/home/me/.config/Spekterm/slack.json.tmp')
+    }, () => STATE)
+    quiet.mock.restore()
+    assert.equal(JSON.stringify(result).includes('/home/me'), false)
   })
 })

@@ -3,8 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { InsightsOverlay } from './insights/InsightsOverlay'
 import { IntakeOverlay } from './intake/IntakeOverlay'
 import { useIntake } from './intake/intake-state'
-import { TerminalFontDialog } from './settings/TerminalFontDialog'
-import { RemoteAccessDialog } from './remote/RemoteAccessDialog'
+import { SettingsDialog, type SettingsSection } from './settings/SettingsDialog'
 import { useRemoteState } from './remote/useRemoteState'
 
 const ICON_PROPS = {
@@ -107,13 +106,17 @@ const ITEMS: ActivityItem[] = [
 export function ActivityBar(): React.JSX.Element {
   const { t } = useTranslation()
   const { pendingCount } = useIntake()
-  const [settingsOpen, setSettingsOpen] = useState(false)
-  const [remoteOpen, setRemoteOpen] = useState(false)
+  // Settings, open on a section or on the last one shown (`initialSection` undefined).
+  const [settings, setSettings] = useState<{ section?: SettingsSection } | null>(null)
+  // The section shown last in this run: Settings reopens there, and a new run starts on General
+  // (`terminal-preferences`). Not stored.
+  const [lastSection, setLastSection] = useState<SettingsSection>('general')
   const remote = useRemoteState()
   const remoteConnected = remote?.devices.some((device) => device.connected) ?? false
   // 開啟 overlay 的那個按鈕 —— 關閉時焦點要還給它，否則落回 `<body>`，下一次按鍵什麼都不發生。
   const [insightsOpener, setInsightsOpener] = useState<HTMLElement | null>(null)
   const [intakeOpener, setIntakeOpener] = useState<HTMLElement | null>(null)
+  const [intakeTab, setIntakeTab] = useState<'inbox' | 'rules'>('inbox')
   const handoffsRef = useRef<HTMLButtonElement>(null)
 
   /**
@@ -132,6 +135,9 @@ export function ActivityBar(): React.JSX.Element {
    */
   useEffect(() => {
     return window.workspace.intake.onOpenInbox(() => {
+      // **Opening the inbox closes Settings, by any route** (`terminal-preferences`): a notification can arrive
+      // while Settings is open, and two modal layers would then compete for focus and for Esc.
+      setSettings(null)
       setIntakeOpener((current) => current ?? handoffsRef.current)
     })
   }, [])
@@ -142,14 +148,21 @@ export function ActivityBar(): React.JSX.Element {
   // they are open. Marking every enabled entry left no way to tell where one is.
   const isCurrent = (id: string): boolean =>
     id === 'sessions' ||
-    (id === 'settings' && settingsOpen) ||
+    (id === 'settings' && settings !== null) ||
     (id === 'handoffs' && intakeOpener !== null) ||
     (id === 'insights' && insightsOpener !== null)
 
   const activate = (id: string, element: HTMLElement): void => {
-    if (id === 'settings') setSettingsOpen(true)
-    if (id === 'insights') setInsightsOpener(element)
-    if (id === 'handoffs') setIntakeOpener(element)
+    if (id === 'settings') setSettings({})
+    if (id === 'insights') {
+      setSettings(null)
+      setInsightsOpener(element)
+    }
+    if (id === 'handoffs') {
+      setSettings(null)
+      setIntakeTab('inbox')
+      setIntakeOpener(element)
+    }
   }
 
   return (
@@ -174,7 +187,7 @@ export function ActivityBar(): React.JSX.Element {
                 type="button"
                 aria-label={t('remote.indicator')}
                 title={t('remote.indicator')}
-                onClick={() => setRemoteOpen(true)}
+                onClick={() => setSettings({ section: 'remote' })}
                 className="flex h-9 w-9 items-center justify-center rounded-md text-accent"
               >
                 <svg {...ICON_PROPS}>
@@ -209,18 +222,31 @@ export function ActivityBar(): React.JSX.Element {
       })}
 
 
-      {settingsOpen && (
-        <TerminalFontDialog
-          onClose={() => setSettingsOpen(false)}
-          onOpenRemote={() => {
-            setSettingsOpen(false)
-            setRemoteOpen(true)
+      {settings && (
+        <SettingsDialog
+          initialSection={settings.section ?? lastSection}
+          onSectionShown={setLastSection}
+          onClose={() => setSettings(null)}
+          onOpenRoutingRules={() => {
+            setSettings(null)
+            setIntakeTab('rules')
+            setIntakeOpener(handoffsRef.current)
           }}
         />
       )}
-      {remoteOpen && <RemoteAccessDialog initial={remote} onClose={() => setRemoteOpen(false)} />}
       {insightsOpener && <InsightsOverlay opener={insightsOpener} onClose={closeInsights} />}
-      {intakeOpener && <IntakeOverlay opener={intakeOpener} onClose={closeIntake} />}
+      {intakeOpener && (
+        <IntakeOverlay
+          opener={intakeOpener}
+          initialTab={intakeTab}
+          onClose={closeIntake}
+          onOpenSlackSettings={() => {
+            // **The inbox closes first** (`terminal-preferences`): it sits above Settings and would keep the focus.
+            closeIntake()
+            setSettings({ section: 'integrations' })
+          }}
+        />
+      )}
     </nav>
   )
 }

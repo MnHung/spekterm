@@ -32,6 +32,7 @@ import { awaitMounted } from './lib/mounted.mjs'
 import { PROBE_PORTS, STUB_PORTS } from './lib/ports.mjs'
 import { runSections } from './lib/sections.mjs'
 import { seedLanguage } from './lib/probe-language.mjs'
+import { SETTINGS_DIALOG, clickSelector, openSettings, showSection } from './lib/settings.mjs'
 import {
   STUB_CHANNEL_NAME,
   seedSlackSettings,
@@ -54,20 +55,28 @@ function mkTemp(prefix) {
   return dir
 }
 
-/** 一個帶單一 folder 的 profile，且 routing 的 fallback 指向它（否則每一則都解析不出 folder）。 */
-function seedProfile() {
+/**
+ * 一個帶單一 folder 的 profile，且 routing 的 fallback 指向它（否則每一則都解析不出 folder）。
+ * `fallback: false` leaves the fallback unset: Settings' Integrations hint shows only then.
+ */
+function seedProfile({ fallback = true } = {}) {
   const profile = mkTemp('spekterm-slack-profile-')
   const repo = mkTemp('spekterm-slack-repo-')
   const folderId = '11111111-1111-4111-8111-111111111111'
   writeFileSync(
     join(profile, 'workspace.json'),
-    `${JSON.stringify({ version: 1, folders: [{ id: folderId, path: repo, name: 'slack-repo' }] }, null, 2)}\n`,
+    // `addedAt` is required (`workspace-store.ts`): without it the file is judged corrupt and set aside, and the
+    // app starts with no folder at all — which this probe did, unseen, until a check needed the folder.
+    `${JSON.stringify({ version: 1, folders: [{ id: folderId, path: repo, addedAt: new Date().toISOString() }] }, null, 2)}\n`,
     'utf8',
   )
   mkdirSync(join(profile, 'intake-inbox'), { recursive: true })
   writeFileSync(
     join(profile, 'intake-routing.json'),
-    `${JSON.stringify({ version: 1, routing: { rules: [], fallbackFolderId: folderId } }, null, 2)}\n`,
+    // The routing file's own shape (`intake-routing.ts`): rules and fallback at the top level. This probe once
+    // nested them under `routing`, which the store ignores, so no fallback was ever set; nothing showed it while
+    // the routing hint was static text.
+    `${JSON.stringify({ version: 1, rules: [], fallbackFolderId: fallback ? folderId : null }, null, 2)}\n`,
     'utf8',
   )
   return { profile, repo, folderId }
@@ -104,39 +113,39 @@ async function launch({ profile, env, port = PORT }) {
   }
 }
 
-const SLACK_PANEL = `document.querySelector(${JSON.stringify(label('slack.title'))})`
+const SLACK_PANEL = `document.querySelector(${JSON.stringify(`${SETTINGS_DIALOG} ${label('slack.title')}`)})`
+const INBOX = `[role="dialog"]${label('intake.label')}`
+const inboxOpen = (app) => app.client.evaluate(`Boolean(document.querySelector(${JSON.stringify(INBOX)}))`)
 
-/** 開啟收件匣 overlay，再切到 Slack 分頁。 */
+/**
+ * Opens Settings on its Integrations section, where the Slack connection is edited (`settings-sections`). It used
+ * to be the inbox's third tab. The inbox sits above Settings, so it is closed first.
+ */
 async function openSlackTab(app) {
-  await app.client.evaluate(
-    `(() => { document.querySelector(${JSON.stringify(label('activityBar.handoffs'))})?.click(); return true })()`,
-  )
-  await pollFor({
-    read: () => app.client.evaluate(`!!document.querySelector('[role="dialog"]')`),
-    settled: Boolean,
-    timeoutMs: 15_000,
-    label: '收件匣 overlay 開啟',
-  })
-  await app.client.evaluate(
-    `(() => {
-      const tabs = [...document.querySelectorAll('[role="tab"]')]
-      tabs.find((tab) => (tab.textContent ?? '').trim() === ${JSON.stringify(copy('slack.label'))})?.click()
-      return true
-    })()`,
-  )
+  if (await inboxOpen(app)) {
+    await app.client.evaluate(`document.querySelector(${JSON.stringify(`${INBOX} button${label('intake.close')}`)})?.click()`)
+    await pollFor({ read: async () => !(await inboxOpen(app)), settled: Boolean, timeoutMs: 10_000, label: '收件匣關閉' })
+  }
+  await openSettings(app.client, 'integrations')
   await pollFor({
     read: () => app.client.evaluate(`!!${SLACK_PANEL}`),
     settled: Boolean,
     timeoutMs: 15_000,
-    label: 'Slack 分頁呈現',
+    label: 'Settings › Integrations 呈現',
   })
 }
 
-/** 切回收件匣分頁。 */
+/** Opens the inbox on its Inbox tab; the activity bar entry closes Settings first. */
 async function openInboxTab(app) {
+  if (!(await inboxOpen(app))) {
+    await app.client.evaluate(
+      `(() => { document.querySelector(${JSON.stringify(label('activityBar.handoffs'))})?.click(); return true })()`,
+    )
+    await pollFor({ read: () => inboxOpen(app), settled: Boolean, timeoutMs: 15_000, label: '收件匣 overlay 開啟' })
+  }
   await app.client.evaluate(
     `(() => {
-      const tabs = [...document.querySelectorAll('[role="tab"]')]
+      const tabs = [...document.querySelectorAll(${JSON.stringify(`${INBOX} [role="tab"]`)})]
       tabs.find((tab) => (tab.textContent ?? '').trim() === ${JSON.stringify(copy('intake.title'))})?.click()
       return true
     })()`,
@@ -368,6 +377,216 @@ async function runAuthFailure(_mode, context) {
       '沒有同時呈現閒置的說法',
     )
     check(results, '失效的呈現帶出現次數（不是逐次各發一則）', /seen (once|\d+ times)/.test(text), text.slice(0, 200))
+
+    // The inbox says it too (`slack-intake-source`, "The inbox says when Slack is not working"): an empty inbox
+    // must not look like nobody mentioning the user.
+    await openInboxTab(app)
+    const OPEN_SLACK = `${INBOX} button`
+    const line = await pollFor({
+      read: () => app.client.evaluate(`document.querySelector(${JSON.stringify(INBOX)})?.textContent ?? ''`),
+      settled: (value) => value.includes(copy('slack.openSettings')),
+      timeoutMs: 10_000,
+      label: 'the Slack line in the inbox',
+    }).catch(() => '')
+    check(
+      results,
+      'a broken connection is stated in the inbox',
+      line.includes(copy('slack.openSettings')) && /no longer valid/.test(line),
+      line.slice(0, 200),
+    )
+    await app.client.evaluate(`[...document.querySelectorAll(${JSON.stringify(OPEN_SLACK)})].find((b) => b.textContent.trim() === ${JSON.stringify(copy('slack.openSettings'))})?.click()`)
+    const routed = await pollFor({
+      read: () =>
+        app.client.evaluate(`({
+          inbox: Boolean(document.querySelector(${JSON.stringify(INBOX)})),
+          integrations: document.querySelector('#settings-tab-integrations')?.getAttribute('aria-selected') === 'true',
+        })`),
+      settled: (value) => !value.inbox && value.integrations,
+      timeoutMs: 10_000,
+      label: 'Settings on Integrations, the inbox closed',
+    }).catch(() => null)
+    check(
+      results,
+      "the inbox's Slack line opens Settings on Integrations and closes the inbox",
+      routed !== null && !routed.inbox && routed.integrations,
+      JSON.stringify(routed),
+    )
+  })
+}
+
+/**
+ * Settings' Integrations section (`settings-sections`): the save rules of each field, the routing hint, and what
+ * the inbox no longer holds. One run, in order: a profile with no Slack token and no routing fallback.
+ */
+async function runSettingsFields(_mode, context) {
+  const { profile, folderId } = seedProfile({ fallback: false })
+  const stub = await startStubSlack({ port: STUB_PORT, state: { messages: [] } })
+  seedSlackSettings(profile, { baseUrl: stub.baseUrl })
+  context.stub = stub
+
+  const state = (app) =>
+    app.client
+      .evaluate(`window.workspace.slack.get().then((s) => JSON.stringify(s))`, { awaitPromise: true })
+      .then((json) => JSON.parse(String(json)))
+  const field = (key) => `${SETTINGS_DIALOG} input${label(key)}`
+  /** Focus a field with a real click, select its text, and type `text` one character at a time. */
+  const typeInto = async (app, key, text) => {
+    await clickSelector(app.client, field(key), copy(key))
+    await app.client.evaluate(`document.querySelector(${JSON.stringify(field(key))})?.select()`)
+    for (const char of text) await app.client.send('Input.insertText', { text: char })
+  }
+  const press = async (app, key, code, keyCode) => {
+    for (const type of ['keyDown', 'keyUp']) {
+      await app.client.send('Input.dispatchKeyEvent', {
+        type,
+        key,
+        code,
+        windowsVirtualKeyCode: keyCode,
+        nativeVirtualKeyCode: keyCode,
+        ...(type === 'keyDown' && key === 'Enter' ? { text: '\r' } : {}),
+      })
+    }
+  }
+  const blur = (app, key) => app.client.evaluate(`document.querySelector(${JSON.stringify(field(key))})?.blur()`)
+  const inboxSlackLine = (app) =>
+    app.client.evaluate(
+      `[...document.querySelectorAll(${JSON.stringify(`${INBOX} button`)})].some((b) => b.textContent.trim() === ${JSON.stringify(copy('slack.openSettings'))})`,
+    )
+
+  await withApp(context, { profile, stub }, async (app) => {
+    // ── Never set up: the inbox says nothing about Slack.
+    await openInboxTab(app)
+    await pollFor({ read: () => app.client.evaluate(`Boolean(document.querySelector(${JSON.stringify(INBOX)}))`), settled: Boolean, timeoutMs: 10_000, label: 'the inbox' })
+    const tabs = await app.client.evaluate(`[...document.querySelectorAll(${JSON.stringify(`${INBOX} [role="tab"]`)})].map((t) => t.textContent.trim())`)
+    check(results, 'the inbox has no Slack tab', tabs.length > 0 && !tabs.includes(copy('slack.label')), JSON.stringify(tabs))
+    check(results, 'with Slack never set up, the inbox does not mention Slack', !(await inboxSlackLine(app)), '')
+
+    // ── The routing hint, while no fallback is set.
+    await openSlackTab(app)
+    const hinted = await pollFor({ read: () => app.client.evaluate(`(${SLACK_PANEL}?.textContent ?? '')`), settled: (t) => /routing fallback/i.test(t), timeoutMs: 10_000, label: 'the routing hint' }).catch(() => '')
+    check(results, 'the routing hint shows while no fallback is set', /routing fallback/i.test(hinted), hinted.slice(-200))
+
+    // ── A token is stored only through Save or Enter, never on blur.
+    await typeInto(app, 'slack.userToken', 'xoxp-typed-token')
+    await blur(app, 'slack.userToken')
+    await new Promise((resolve) => setTimeout(resolve, 600))
+    const afterBlur = await state(app)
+    check(results, 'a token is not stored when the field is left', afterBlur.configured.userToken === false, JSON.stringify(afterBlur.configured))
+    await clickSelector(app.client, field('slack.userToken'), copy('slack.userToken'))
+    await press(app, 'Enter', 'Enter', 13)
+    const afterEnter = await pollFor({ read: () => state(app), settled: (v) => v.configured.userToken === true, timeoutMs: 10_000, label: 'the token stored' }).catch(() => afterBlur)
+    check(results, 'a token is stored on Enter', afterEnter.configured.userToken === true, JSON.stringify(afterEnter.configured))
+
+    // ── The look-back applies once: nothing while typing, the two-digit value on Enter.
+    await typeInto(app, 'slack.lookback', '14')
+    await new Promise((resolve) => setTimeout(resolve, 600))
+    const whileTyping = (await state(app)).effective.lookbackDays
+    await press(app, 'Enter', 'Enter', 13)
+    const applied = await pollFor({ read: async () => (await state(app)).effective.lookbackDays, settled: (v) => v === 14, timeoutMs: 10_000, label: 'look-back 14' }).catch(() => null)
+    check(
+      results,
+      'the look-back window applies once: nothing is stored while typing, and Enter stores the two-digit value',
+      whileTyping === 7 && applied === 14,
+      `while typing=${whileTyping} after Enter=${applied}`,
+    )
+
+    // ── An invalid endpoint is refused; the custom one stays.
+    await typeInto(app, 'slack.endpoint', 'http://downgrade.example.test/api')
+    await press(app, 'Enter', 'Enter', 13)
+    const refused = await pollFor({
+      read: () => app.client.evaluate(`(${SLACK_PANEL}?.textContent ?? '')`),
+      settled: (t) => t.includes(copy('slack.endpointRefused')),
+      timeoutMs: 10_000,
+      label: 'the refusal',
+    }).catch(() => '')
+    const afterRefusal = await state(app)
+    check(
+      results,
+      'an invalid endpoint is refused and the stored one stays',
+      refused.includes(copy('slack.endpointRefused')) && afterRefusal.effective.apiBaseUrl === stub.baseUrl,
+      `endpoint=${afterRefusal.effective.apiBaseUrl}`,
+    )
+
+    // ── An empty draft changes nothing: Esc empties it, then focus in and out.
+    await clickSelector(app.client, field('slack.endpoint'), copy('slack.endpoint'))
+    await press(app, 'Escape', 'Escape', 27)
+    const draft = await app.client.evaluate(`document.querySelector(${JSON.stringify(field('slack.endpoint'))})?.value ?? null`)
+    await blur(app, 'slack.endpoint')
+    await new Promise((resolve) => setTimeout(resolve, 600))
+    const afterEmpty = await state(app)
+    check(
+      results,
+      'an empty endpoint draft changes nothing',
+      draft === '' && afterEmpty.effective.apiBaseUrl === stub.baseUrl && afterEmpty.usesDefaultEndpoint === false,
+      `draft=${JSON.stringify(draft)} endpoint=${afterEmpty.effective.apiBaseUrl}`,
+    )
+
+    // ── Settings has no rules editor, in any section.
+    const sections = ['general', 'terminal', 'agents', 'integrations', 'remote', 'about']
+    let rulesInSettings = false
+    for (const section of sections) {
+      await showSection(app.client, section)
+      if (await app.client.evaluate(`Boolean(document.querySelector(${JSON.stringify(`${SETTINGS_DIALOG} #intake-fallback`)}))`)) rulesInSettings = true
+    }
+    check(results, 'Settings has no routing rules editor', rulesInSettings === false, '')
+    await showSection(app.client, 'integrations')
+
+    // ── The hint's control opens the inbox on its routing rules, with Settings closed.
+    // The section mounts again on being shown: wait for its hint before pressing it.
+    const HINT_BUTTON = `[...document.querySelectorAll(${JSON.stringify(`${SETTINGS_DIALOG} button`)})].find((b) => b.textContent.trim() === ${JSON.stringify(copy('slack.openRoutingRules'))})`
+    await pollFor({
+      read: () => app.client.evaluate(`Boolean(${HINT_BUTTON})`),
+      settled: Boolean,
+      timeoutMs: 10_000,
+      label: "the routing hint's control",
+    })
+    await app.client.evaluate(`${HINT_BUTTON}?.click()`)
+    const onRules = await pollFor({
+      read: () =>
+        app.client.evaluate(`({
+          settings: Boolean(document.querySelector(${JSON.stringify(SETTINGS_DIALOG)})),
+          fallback: Boolean(document.querySelector(${JSON.stringify(`${INBOX} #intake-fallback`)})),
+        })`),
+      settled: (v) => !v.settings && v.fallback,
+      timeoutMs: 10_000,
+      label: 'the inbox on routing rules',
+    }).catch(() => null)
+    check(
+      results,
+      "the routing hint's control opens the inbox on its routing rules, with Settings closed",
+      onRules !== null && !onRules.settings && onRules.fallback,
+      JSON.stringify(onRules),
+    )
+
+    // ── A working connection is not mentioned in the inbox.
+    await pollFor({ read: () => state(app), settled: (v) => v.status.lastRoundAt !== undefined, timeoutMs: 30_000, label: 'a round ran' }).catch(() => null)
+    check(results, 'with a working connection, the inbox does not mention Slack', !(await inboxSlackLine(app)), '')
+
+    // ── A fallback set in the rules makes the hint go away.
+    // The folder list loads on its own: a value set before its option exists selects nothing.
+    const OPTION = `${INBOX} #intake-fallback option[value="${folderId}"]`
+    await pollFor({
+      read: () => app.client.evaluate(`Boolean(document.querySelector(${JSON.stringify(OPTION)}))`),
+      settled: Boolean,
+      timeoutMs: 10_000,
+      label: 'the folder offered as fallback',
+    })
+    await app.client.evaluate(`(() => {
+      const select = document.querySelector(${JSON.stringify(`${INBOX} #intake-fallback`)})
+      select.value = ${JSON.stringify(folderId)}
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+    })()`)
+    const stored = await pollFor({
+      read: () => app.client.evaluate(`window.workspace.intake.rules().then((r) => r.fallbackFolderId)`, { awaitPromise: true }),
+      settled: (v) => v === folderId,
+      timeoutMs: 10_000,
+      label: 'the fallback stored',
+    })
+    check(results, 'precondition: the fallback set in the rules editor is stored', stored === folderId, String(stored))
+    await openSlackTab(app)
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    const unhinted = await app.client.evaluate(`(${SLACK_PANEL}?.textContent ?? '')`)
+    check(results, 'the routing hint goes away once a fallback is set', unhinted.length > 0 && !/routing fallback/i.test(unhinted), unhinted.slice(-200))
   })
 }
 
@@ -575,7 +794,8 @@ async function runEndpointVisible(_mode, context) {
     const text = await slackText(app)
   // **一個沉默的端點欄位比沒有這個欄位更糟** —— 憑證的目的地是一個資料欄位（使用者的裁決）。
     check(results, '端點非預設值時畫面上明確警示', /Custom endpoint in use/.test(text), text.slice(0, 300))
-    check(results, '提示要設定 routing 的 fallback', /routing fallback/i.test(text), text.slice(0, 500))
+    // With a fallback set, the routing hint stays away (`slack-intake-source`); `runSettingsFields` has the other half.
+    check(results, 'the routing hint is absent while a fallback is set', !/routing fallback/i.test(text), text.slice(0, 500))
     // 替身回一個連不上的 wss ⇒ 即時路徑不得謊報為已連線。
     check(results, '即時路徑未謊報為已連線', !/On — new mentions arrive/.test(text), text.slice(0, 300))
 
@@ -604,6 +824,7 @@ const SECTIONS = [
   { name: 'runTruncation', run: runTruncation },
   { name: 'runLookback', run: runLookback },
   { name: 'runEndpointVisible', run: runEndpointVisible },
+  { name: 'runSettingsFields', run: runSettingsFields },
 ]
 
 const outcome = await runSections({

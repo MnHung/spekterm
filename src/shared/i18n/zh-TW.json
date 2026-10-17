@@ -57,7 +57,8 @@
     "collapse": "收合",
     "save": "儲存",
     "clear": "清除",
-    "reset": "重設"
+    "reset": "重設",
+    "close": "關閉"
   },
   "stage": {
     "label": "主舞台",
@@ -326,8 +327,6 @@
     "lineHeightPlaceholder": "預設",
     "preview": "預覽",
     "previewSample": "The quick brown fox 0123456789\nil1 | oO0 {}[]() => != === <= >=\nconst λ = (x) => x ?? 0; // 1lI0O",
-    "reset": "回到預設",
-    "save": "儲存",
     "agentStatus": "在狀態列顯示 agent 狀態",
     "agentStatusHint": "請 claude 把它的模型、context 用量與花費回報給 spekterm。你自己的 status line 照常運作。只對此後建立的 session 生效。",
     "about": "關於",
@@ -343,7 +342,26 @@
     "autoHibernateOff": "關閉",
     "autoHibernateHours_other": "{{count}} 小時後",
     "autoHibernateDays_other": "{{count}} 天後",
-    "autoHibernateSeconds_other": "{{count}} 秒後"
+    "autoHibernateSeconds_other": "{{count}} 秒後",
+    "sections": {
+      "label": "設定分類",
+      "general": "一般",
+      "terminal": "終端",
+      "agents": "Agent 與 session",
+      "integrations": "整合",
+      "remote": "遠端存取",
+      "about": "關於",
+      "remoteFailed": "遠端存取無法啟動"
+    },
+    "restoreDefaults": "回復預設",
+    "restoreConfirm": "要把這個分類的設定回復成預設嗎？",
+    "restore": "回復",
+    "writeFailed": "無法儲存這項設定，維持原值。",
+    "invalidNumber": "不是數字，維持已存的值。",
+    "agentView": "Agent session 顯示",
+    "agentViewTerminal": "終端",
+    "agentViewConversation": "對話",
+    "agentViewHint": "與 agent session 分頁旁的切換鈕是同一個設定，套用於所有 agent session。"
   },
   "statusBar": {
     "label": "狀態列",
@@ -748,7 +766,12 @@
     "statusFailureScope": "你的 Slack token 有效，但缺少權限。請加上這些 User Token Scope 並重新安裝該 app：{{needed}}",
     "statusRateLimited": "Slack 要求我們放慢。你的設定沒有問題 —— 下一次檢查在 {{time}}。",
     "statusRateLimitedSoon": "Slack 要求我們放慢。你的設定沒有問題 —— 稍後會再試一次。",
-    "statusFailureScopeUnknown": "你的 Slack token 有效，但缺少權限（{{error}}）。請補上缺少的 User Token Scope 並重新安裝該 app。"
+    "statusFailureScopeUnknown": "你的 Slack token 有效，但缺少權限（{{error}}）。請補上缺少的 User Token Scope 並重新安裝該 app。",
+    "tokenHint": "Token 以「儲存」或 Enter 存下，離開欄位時不會儲存。",
+    "endpointRefused": "不是 https 位址，端點維持不變。",
+    "openRoutingRules": "開啟路由規則",
+    "inboxLine": "Slack：{{status}}",
+    "openSettings": "開啟 Slack 設定"
   },
   "languageName": "繁體中文",
   "lineage": {
@@ -805,7 +828,6 @@
     "additionalAddress": "額外位址",
     "additionalAddressHint": "手機連得到這台電腦的另一個名稱或位址，例如 Tailscale 名稱，或 port forward 用的 DDNS 名稱。",
     "additionalAddressInvalid": "請輸入主機名稱或 IP 位址。",
-    "saveAddress": "儲存位址",
     "addresses": "位址",
     "fingerprint": "憑證指紋",
     "pair": "配對裝置",
@@ -829,14 +851,16 @@
       "key-mismatch": "遠端存取已重設，因為它的私鑰與憑證不再相符。請重新配對你的裝置。"
     },
     "dismissNotice": "知道了",
-    "close": "關閉",
     "indicator": "遠端存取：有裝置連線中",
     "section": {
       "label": "遠端存取",
       "off": "關閉",
       "on": "開啟 · 已配對裝置：{{devices}} · 已連線：{{connected}}",
-      "failed": "未在運作：{{cause}}",
-      "open": "開啟遠端存取"
-    }
+      "failed": "未在運作：{{cause}}"
+    },
+    "portHint": "按「使用這個 port」或 Enter 才套用。變更 port 會中斷已連線的裝置。",
+    "portNotApplied": "尚未套用。按「使用這個 port」或 Enter；變更 port 會中斷已連線的裝置。",
+    "revokeConfirm": "撤銷後需要重新配對。",
+    "revokeConfirmButton": "確認撤銷 {{name}}"
   }
 }

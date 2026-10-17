@@ -11,7 +11,7 @@ it is connected.
 
 ## 1. Pairing link
 
-The desktop's remote access dialog shows a QR code and the same link as text:
+The remote access section of the desktop's Settings shows a QR code and the same link as text:
 
 ```
 spekterm://pair?v=1&a=<addresses>&p=<port>&fp=<fingerprint>&c=<code>&n=<name>

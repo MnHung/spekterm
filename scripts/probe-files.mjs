@@ -34,6 +34,7 @@ import { electronExtraArgs } from './lib/display.mjs'
 import { quitAndWait } from './lib/quit.mjs'
 import { PROBE_PORTS } from './lib/ports.mjs'
 import { seedLanguage } from './lib/probe-language.mjs'
+import { showSection } from './lib/settings.mjs'
 
 const BUILD_PORT = PROBE_PORTS.files.build
 const DEV_PORT = PROBE_PORTS.files.dev
@@ -1216,6 +1217,8 @@ async function probeBuild(fixture, profile) {
      */
     const switchLanguageTo = async (language) => {
       await app.client.evaluate(`document.querySelector('[aria-label="${copy('activityBar.settings')}"]')?.click()`)
+      // The language is in the General section; Settings reopens on the last section shown, so ask for it.
+      await showSection(app.client, 'general')
       await pollUntil(app.client,
         `document.querySelector('[aria-label="${copy('settings.language')}"]') !== null`, (v) => v === true, 8000)
       await app.client.evaluate(`(() => {
@@ -1426,6 +1429,8 @@ async function probeDev(fixture, profile) {
     // build-identity：〈開發模式的身分可與打包產物區分〉—— 見 BUILD_IDENTITY 的註解。
     const settingsAt = await coordsOf(app.client, SETTINGS_EL)
     if (settingsAt) await realMouse(app.client, settingsAt.x, settingsAt.y, 'left')
+    // The build identity is the About section of Settings (`settings-sections`).
+    await showSection(app.client, 'about')
     const identity = await pollUntil(app.client, BUILD_IDENTITY, (value) => value !== null, 4000)
     check(results, '開發模式的建置身分標示為開發，且不冒充建置時刻',
       identity?.development === true && identity.hasBuiltAt === false,

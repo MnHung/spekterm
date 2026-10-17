@@ -518,7 +518,12 @@ export function MainStage({ selection, folders }: MainStageProps): React.JSX.Ele
           onRename={sessions.rename}
           onReorder={(fromIndex, toIndex) => sessions.reorder(itemKey, fromIndex, toIndex)}
           view={preferences.agentView}
-          onSetView={(view) => void preferences.updateAgentView(view)}
+          onSetView={(view) => {
+            // A refused write leaves the view as it was; the console keeps the cause.
+            preferences.updateAgentView(view).catch((error: unknown) => {
+              console.error(`[preferences] setAgentView failed: ${String(error)}`)
+            })
+          }}
           error={sessionError}
         />
       )}

@@ -37,13 +37,24 @@ import {
 } from './lib/cdp.mjs'
 import { menuEvidence } from './lib/menu-evidence.mjs'
 import { SHELL_PATH, ptyPids, ptySessionPids } from './lib/pty-pids.mjs'
-import { copy, prefixOf } from './lib/copy.mjs'
+import { copy, label as ariaLabel, prefixOf } from './lib/copy.mjs'
 import { RENDER_PATH_PRELUDE } from './lib/render-path.mjs'
 import { sectionConsole } from './lib/instrument.mjs'
 import { MOUNTED, awaitMounted, describeMounted } from './lib/mounted.mjs'
 import { electronExtraArgs } from './lib/display.mjs'
 import { quitAndWait } from './lib/quit.mjs'
 import { runSections } from './lib/sections.mjs'
+import {
+  SETTINGS_DIALOG as SETTINGS_DIALOG_SELECTOR,
+  awaitApplied,
+  clickSelector,
+  closeSettings,
+  inSettings,
+  openSettings,
+  pressEscape,
+  setField,
+  showSection,
+} from './lib/settings.mjs'
 import { PROBE_PORTS } from './lib/ports.mjs'
 import { seedLanguage } from './lib/probe-language.mjs'
 
@@ -806,87 +817,44 @@ async function typeLine(client, text) {
 }
 
 /**
- * 經**設定對話框**設定終端字型大小 —— 走的是使用者真正的路徑。
- *
- * **不可改用 `window.workspace.settings.setTerminalFont(...)` 直接打 IPC**：那會繞過
- * `PreferencesProvider`，store 更新了但 renderer 的狀態沒有 —— 字型 effect 不會重跑，終端不會變
- * （實測踩過，一度誤判為產品 bug）。偏好沒有推送通道，因為產品的唯一寫入者就是這個對話框。
- *
- * `size` 傳空字串＝清除偏好（回到字級尺度的預設）。以 Enter 送出（對話框的輸入框綁了它）。
- */
-/**
- * 走**使用者的路徑**開／關 GPU 加速（開 Settings → 點勾選框 → 存）。
+ * 走**使用者的路徑**開／關 GPU 加速（開 Settings → 點勾選框；a choice applies at once）。
  *
  * **不可改用 `window.workspace.settings.setGpuAcceleration(...)`** —— 那會繞過
  * `PreferencesProvider`：主行程的 store 更新了，但 renderer 的 state 沒有，於是驅動 renderer 的
  * effect 不會重跑、終端當然不變（既有教訓，`/opsx:verify` 抓過一次，當時一度誤判為產品 bug）。
  */
 async function setGpuViaSettings(client, enabled) {
-  const settingsAt = await client.evaluate(`(() => {
-    const b = document.querySelector('nav[aria-label="${copy('activityBar.label')}"] button[aria-label="${copy('activityBar.settings')}"]')
-    if (!b) return null
-    const r = b.getBoundingClientRect()
-    return { x: r.x, y: r.y, width: r.width, height: r.height }
-  })()`)
-  await realClick(client, settingsAt)
-  await pollUntil(
+  // Settings applies a choice when it is made (`settings-sections`): click the box only when it has to change,
+  // wait for the applied state to come back, then close.
+  await openSettings(client, 'terminal')
+  const box = inSettings(`input${ariaLabel('settings.gpuAcceleration')}`)
+  const checked = await client.evaluate(`document.querySelector(${JSON.stringify(box)})?.checked ?? null`)
+  if (checked === null) throw new Error('設定對話框裡找不到 GPU 加速的勾選框')
+  if (checked !== enabled) await clickSelector(client, box, 'the GPU acceleration box')
+  await awaitApplied(
     client,
-    `Boolean(document.querySelector('[role="dialog"][aria-label="${copy('settings.title')}"]'))`,
-    (value) => value === true,
-    4000,
+    'window.workspace.settings.get().then((p) => p.gpuAcceleration !== false)',
+    (value) => value === enabled,
+    `GPU acceleration applied as ${enabled}`,
   )
-
-  // 勾選框走**真點擊** —— React 的 onChange 對 checkbox 是掛在 click 上的。先讀出當前狀態，
-  // 只有需要改變時才點（點兩次等於沒點）。
-  const box = await client.evaluate(`(() => {
-        const cb = document.querySelector('[role="dialog"] input[aria-label="${copy('settings.gpuAcceleration')}"]')
-    if (!cb) return null
-    // The Settings card scrolls when taller than the window: measure the box where it can be clicked.
-    cb.scrollIntoView({ block: 'nearest' })
-    const r = cb.getBoundingClientRect()
-    return { checked: cb.checked, x: r.x, y: r.y, width: r.width, height: r.height }
-  })()`)
-  if (!box) throw new Error('設定對話框裡找不到 GPU 加速的勾選框')
-  if (box.checked !== enabled) await realClick(client, box)
-
-  const saveAt = await client.evaluate(`(() => {
-    const b = [...document.querySelectorAll('[role="dialog"] button')]
-            .find((x) => x.innerText.includes(${JSON.stringify(copy('settings.save'))}))
-    if (!b) return null
-    b.scrollIntoView({ block: 'nearest' })
-    const r = b.getBoundingClientRect()
-    return { x: r.x, y: r.y, width: r.width, height: r.height }
-  })()`)
-  if (!saveAt) throw new Error('設定對話框裡找不到儲存按鈕')
-  await realClick(client, saveAt)
-  await pollUntil(client, `document.querySelector('[role="dialog"]') === null`, (v) => v === true, 4000)
+  await closeSettings(client)
 }
 
+/**
+ * 經**設定對話框**設定終端字型大小 —— 走的是使用者真正的路徑：輸入後按 Enter 即套用（no Save).
+ * `size` 傳空字串＝清除偏好（回到字級尺度的預設）。
+ */
 async function setFontSizeViaSettings(client, size) {
-  const rect = await client.evaluate(`(() => {
-    const b = document.querySelector('nav[aria-label="${copy('activityBar.label')}"] button[aria-label="${copy('activityBar.settings')}"]')
-    if (!b) return null
-    const r = b.getBoundingClientRect()
-    return { x: r.x, y: r.y, width: r.width, height: r.height }
-  })()`)
-  await realClick(client, rect)
-  await pollUntil(
+  await openSettings(client, 'terminal')
+  await setField(client, 'settings.fontSize', size)
+  const expected = size === '' ? null : Number(size)
+  await awaitApplied(
     client,
-    `Boolean(document.querySelector('[role="dialog"][aria-label="${copy('settings.title')}"]'))`,
-    (value) => value === true,
-    4000,
+    'window.workspace.settings.get().then((p) => p.fontSize ?? null)',
+    (value) => value === expected,
+    `font size applied as ${expected}`,
   )
-
-  // React 受控元件：直接設 `value` 不會觸發 onChange —— 要走原生 setter 再派發 input 事件。
-  await client.evaluate(`(() => {
-    const i = document.querySelector('[role="dialog"] input[aria-label="${copy('settings.fontSize')}"]')
-    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
-    setter.call(i, ${JSON.stringify(String(size))})
-    i.dispatchEvent(new Event('input', { bubbles: true }))
-    i.focus()
-  })()`)
-  await pressEnter(client)
-  await pollUntil(client, `document.querySelector('[role="dialog"]') === null`, (v) => v === true, 4000)
+  await closeSettings(client)
 }
 
 /**
@@ -4728,31 +4696,23 @@ async function runAutoHibernateShell(label, { port, rendererUrl }) {
       `alive past the original deadline=${pastOriginal}, hibernated after the new one=${laterGone === false}`,
     )
 
-    // ── Turned off in Settings (no restart): an idle undisplayed shell stays running.
-    const settingsAt = await app.client.evaluate(`(() => {
-      const b = document.querySelector('nav[aria-label="${copy('activityBar.label')}"] button[aria-label="${copy('activityBar.settings')}"]')
-      if (!b) return null
-      const r = b.getBoundingClientRect()
-      return { x: r.x, y: r.y, width: r.width, height: r.height }
-    })()`)
-    await realClick(app.client, settingsAt)
-    await pollUntil(app.client, `Boolean(document.querySelector('[role="dialog"][aria-label="${copy('settings.title')}"]'))`, (value) => value === true, 4000)
-    const shownValue = await app.client.evaluate(`document.querySelector('[role="dialog"] select[aria-label="${copy('settings.autoHibernate')}"]')?.selectedOptions[0]?.textContent ?? null`)
+    // ── Turned off in Settings (no restart): an idle undisplayed shell stays running. A choice applies when
+    // it is made (`settings-sections`); there is no Save.
+    await openSettings(app.client, 'agents')
+    const hibernateSelect = inSettings(`select${ariaLabel('settings.autoHibernate')}`)
+    const shownValue = await app.client.evaluate(`document.querySelector(${JSON.stringify(hibernateSelect)})?.selectedOptions[0]?.textContent ?? null`)
     await app.client.evaluate(`(() => {
-      const select = document.querySelector('[role="dialog"] select[aria-label="${copy('settings.autoHibernate')}"]')
+      const select = document.querySelector(${JSON.stringify(hibernateSelect)})
       select.value = '0'
       select.dispatchEvent(new Event('change', { bubbles: true }))
     })()`)
-    const saveAt = await app.client.evaluate(`(() => {
-            const b = [...document.querySelectorAll('[role="dialog"] button')].find((candidate) => candidate.textContent === ${JSON.stringify(copy('settings.save'))})
-      if (!b) return null
-      // The card scrolls when it is taller than the window; measure the button where it can be clicked.
-      b.scrollIntoView({ block: 'nearest' })
-      const r = b.getBoundingClientRect()
-      return { x: r.x, y: r.y, width: r.width, height: r.height }
-    })()`)
-    await realClick(app.client, saveAt)
-    await pollUntil(app.client, `document.querySelector('[role="dialog"]') === null`, (value) => value === true, 4000)
+    await awaitApplied(
+      app.client,
+      'window.workspace.settings.get().then((p) => p.autoHibernateSeconds ?? null)',
+      (value) => value === 0,
+      'automatic hibernation applied as off',
+    )
+    await closeSettings(app.client)
     check(results, `${label}：Settings shows a stored threshold outside the choices as itself`, shownValue === copy('settings.autoHibernateSeconds_other', { count: THRESHOLD_S }), `shown=${JSON.stringify(shownValue)}`)
 
     const offPid = await open(7, null)
@@ -5058,6 +5018,260 @@ async function runCloseConfirm(label, { port, rendererUrl }) {
   }
 }
 
+/**
+ * Settings applies each change when it is made (`terminal-preferences`, "A change in Settings applies when it is
+ * made" and "Each section restores its own defaults after a confirmation"; `settings-sections`).
+ *
+ * Every assertion reads **both** what the user sees (the field, the preview, the alert) and what is stored (the
+ * main process's answer, or `preferences.json`): a field that only looks applied and a write that the field never
+ * shows are the two failures this section exists for.
+ */
+async function runSettingsApply(label, { port, rendererUrl }) {
+  console.log(`\n── ${label}（Settings applies each change when it is made）──`)
+
+  const { repo } = makeFixture()
+  const profile = seedProfile([['f1', repo]])
+  const stub = makeStubClaude()
+  const prefsFile = join(profile, 'preferences.json')
+  const onDisk = () => (existsSync(prefsFile) ? JSON.parse(readFileSync(prefsFile, 'utf8')) : null)
+  const stored = (field) => `window.workspace.settings.get().then((p) => p[${JSON.stringify(field)}] ?? null)`
+  const DIALOG_OPEN = `Boolean(document.querySelector(${JSON.stringify(SETTINGS_DIALOG_SELECTOR)}))`
+  const SIZE = inSettings(`input${ariaLabel('settings.fontSize')}`)
+  const FAMILY = inSettings(`select${ariaLabel('settings.fontFamily')}`)
+  const GPU = inSettings(`input${ariaLabel('settings.gpuAcceleration')}`)
+  const PREVIEW = inSettings(`pre${ariaLabel('settings.preview')}`)
+  const ALERTS = `[...document.querySelectorAll(${JSON.stringify(inSettings('[role="alert"]'))})].map((el) => el.textContent)`
+  const valueOf = (selector) => `document.querySelector(${JSON.stringify(selector)})?.value ?? null`
+
+  /**
+   * After the main process has applied a write, the renderer takes it a task later (the provider's state, then a
+   * render). A field edited in between is replaced by the arriving value, so the next edit waits two frames.
+   */
+  const settleRender = () =>
+    app.client.evaluate('new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))')
+
+  /** Waits for the preview to show a typed size, which proves the typed text has rendered. */
+  const awaitTyped = (size) =>
+    pollUntil(app.client, `document.querySelector(${JSON.stringify(PREVIEW)})?.style.fontSize ?? null`, (value) => value === size, 5_000)
+
+  /** A real click on the button in Settings whose text is `text` (the restore controls carry no label of their own). */
+  const clickButtonText = async (text) => {
+    const rect = await pollUntil(
+      app.client,
+      `(() => {
+        const b = [...document.querySelectorAll(${JSON.stringify(inSettings('button'))})].find((x) => x.textContent === ${JSON.stringify(text)})
+        if (!b) return null
+        b.scrollIntoView({ block: 'nearest' })
+        const r = b.getBoundingClientRect()
+        return { x: r.x, y: r.y, width: r.width, height: r.height }
+      })()`,
+      (value) => value !== null,
+      5_000,
+    )
+    if (!rect) throw new Error(`Settings has no button "${text}"`)
+    await realClick(app.client, rect)
+  }
+
+  let app = null
+  try {
+    app = await launch({ port, profileDir: profile, rendererUrl, stub })
+    await openSettings(app.client, 'terminal')
+
+    // ── A choice applies at once, with Settings still open.
+    await clickSelector(app.client, GPU, 'the GPU acceleration box')
+    const gpuStored = await awaitApplied(app.client, stored('gpuAcceleration'), (value) => value === false, 'GPU off applied')
+    const openAfterChoice = await app.client.evaluate(DIALOG_OPEN)
+    check(results, `${label}: a choice applies at once, with Settings still open`,
+      gpuStored === false && openAfterChoice === true,
+      `stored gpuAcceleration=${gpuStored} settingsOpen=${openAfterChoice}`)
+
+    // ── A typed value does not apply while it is being typed; the preview follows it.
+    await setField(app.client, 'settings.fontSize', '21', { commit: 'none' })
+    const whileTyping = {
+      stored: await app.client.evaluate(stored('fontSize')),
+      preview: await app.client.evaluate(`document.querySelector(${JSON.stringify(PREVIEW)})?.style.fontSize ?? null`),
+    }
+    check(results, `${label}: a typed value does not apply while it is being typed`,
+      whileTyping.stored === null && whileTyping.preview === '21px',
+      JSON.stringify(whileTyping))
+
+    // ── …and applies when focus leaves the field.
+    await app.client.evaluate(`document.querySelector(${JSON.stringify(SIZE)})?.blur()`)
+    const afterBlur = await awaitApplied(app.client, stored('fontSize'), (value) => value === 21, 'size 21 applied on blur')
+    await settleRender()
+    check(results, `${label}: a typed value applies when the field is left`,
+      afterBlur === 21, `stored fontSize=${afterBlur}`)
+
+    // ── Esc in a field with an unapplied edit restores the stored value and leaves Settings open.
+    await setField(app.client, 'settings.fontSize', '9', { commit: 'none' })
+    // The key must reach a field whose typed text has rendered (the preview reads it): a key sent within the
+    // same task as the typing would meet the previous render's handler.
+    await awaitTyped('9px')
+    await pressEscape(app.client)
+    const afterEscape = {
+      field: await app.client.evaluate(valueOf(SIZE)),
+      stored: await app.client.evaluate(stored('fontSize')),
+      open: await app.client.evaluate(DIALOG_OPEN),
+    }
+    check(results, `${label}: Esc restores a field that has not applied, and Settings stays open`,
+      afterEscape.field === '21' && afterEscape.stored === 21 && afterEscape.open === true,
+      JSON.stringify(afterEscape))
+
+    // ── Text the number field cannot parse is rejected (a real `badInput`, typed through the input pipeline).
+    await app.client.evaluate(`(() => {
+      const input = document.querySelector(${JSON.stringify(SIZE)})
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
+      setter.call(input, '')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      input.focus()
+    })()`)
+    await app.client.send('Input.insertText', { text: '1e' })
+    const badInput = await app.client.evaluate(`document.querySelector(${JSON.stringify(SIZE)})?.validity.badInput ?? null`)
+    await app.client.evaluate(`document.querySelector(${JSON.stringify(SIZE)})?.blur()`)
+    const rejected = await pollUntil(
+      app.client,
+      `(async () => ({ field: ${valueOf(SIZE)}, stored: await ${stored('fontSize')}, alerts: ${ALERTS} }))()`,
+      (value) => value.field === '21' && value.alerts.includes(copy('settings.invalidNumber')),
+      5_000,
+    )
+    check(results, `${label}: unparseable text in a number field is rejected`,
+      badInput === true && rejected.field === '21' && rejected.stored === 21 &&
+        rejected.alerts.includes(copy('settings.invalidNumber')),
+      `badInput=${badInput} ${JSON.stringify(rejected)}`)
+
+    // ── A clamped value is shown as applied.
+    await setField(app.client, 'settings.fontSize', '99')
+    const clamped = await pollUntil(
+      app.client,
+      `(async () => ({ field: ${valueOf(SIZE)}, stored: await ${stored('fontSize')} }))()`,
+      (value) => value.stored === 32 && value.field === '32',
+      5_000,
+    )
+    await settleRender()
+    check(results, `${label}: a clamped value is shown as applied`,
+      clamped.stored === 32 && clamped.field === '32', JSON.stringify(clamped))
+
+    // The families the machine offers. Without two of them the family assertions below cannot be made.
+    const families = await pollUntil(
+      app.client,
+      `[...(document.querySelector(${JSON.stringify(FAMILY)})?.options ?? [])].map((o) => o.value).filter(Boolean)`,
+      (list) => list.length >= 2,
+      5_000,
+    )
+    check(results, `${label}: precondition: the machine lists at least two monospace families`,
+      families.length >= 2, JSON.stringify(families.slice(0, 5)))
+    const [familyA, familyB] = families
+
+    // ── Choosing a family does not apply a typed size.
+    await setField(app.client, 'settings.fontSize', '11', { commit: 'none' })
+    await awaitTyped('11px')
+    await app.client.evaluate(`(() => {
+      const select = document.querySelector(${JSON.stringify(FAMILY)})
+      select.value = ${JSON.stringify(familyA)}
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+    })()`)
+    const familyApplied = await awaitApplied(app.client, stored('fontFamily'), (value) => value === familyA, 'family A applied')
+    await settleRender()
+    const sizeAfterFamily = await app.client.evaluate(stored('fontSize'))
+    check(results, `${label}: choosing a family does not apply a typed size`,
+      familyApplied === familyA && sizeAfterFamily === 32,
+      `stored family=${JSON.stringify(familyApplied)} size=${sizeAfterFamily} (typed 11, not applied)`)
+    // Drop the unapplied edit, so no later blur applies it.
+    await app.client.evaluate(`document.querySelector(${JSON.stringify(SIZE)})?.focus()`)
+    await pressEscape(app.client)
+
+    // ── Two quick font changes both persist: the size field's blur and the family's change in one evaluate, so the
+    // family write is queued before the size write has returned. Bound arguments would send the old size again.
+    await app.client.evaluate(`(() => {
+      const input = document.querySelector(${JSON.stringify(SIZE)})
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
+      input.focus()
+      setter.call(input, '19')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      input.blur()
+      const select = document.querySelector(${JSON.stringify(FAMILY)})
+      select.value = ${JSON.stringify(familyB)}
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+    })()`)
+    const both = await pollUntil(
+      app.client,
+      `(async () => ({ size: await ${stored('fontSize')}, family: await ${stored('fontFamily')}, field: ${valueOf(SIZE)}, select: ${valueOf(FAMILY)} }))()`,
+      // The renderer shows a write a task after the main process applied it: wait for the screen as well.
+      (value) => value.size === 19 && value.family === familyB && value.field === '19' && value.select === familyB,
+      5_000,
+    )
+    const diskBoth = onDisk()?.terminal ?? {}
+    check(results, `${label}: two quick font changes both persist, on screen and on disk`,
+      both.size === 19 && both.family === familyB && both.field === '19' && both.select === familyB &&
+        diskBoth.fontSize === 19 && diskBoth.fontFamily === familyB,
+      `shown ${JSON.stringify(both)} disk ${JSON.stringify({ fontSize: diskBoth.fontSize, fontFamily: diskBoth.fontFamily })}`)
+
+    // ── A failed write is shown and leaves nothing behind. A directory where the atomic write puts its temporary
+    // file makes the write throw (EISDIR) with no test branch in the product.
+    const blocker = `${prefsFile}.tmp`
+    mkdirSync(blocker)
+    await clickSelector(app.client, GPU, 'the GPU acceleration box')
+    const failed = await pollUntil(
+      app.client,
+      `(async () => ({ alerts: ${ALERTS}, checked: document.querySelector(${JSON.stringify(GPU)})?.checked ?? null, stored: await ${stored('gpuAcceleration')}, open: ${DIALOG_OPEN} }))()`,
+      (value) => value.alerts.includes(copy('settings.writeFailed')),
+      5_000,
+    )
+    rmSync(blocker, { recursive: true, force: true })
+    await setField(app.client, 'settings.fontSize', '17')
+    await awaitApplied(app.client, stored('fontSize'), (value) => value === 17, 'size 17 applied after the failure')
+    const diskAfter = onDisk()?.terminal ?? {}
+    check(results, `${label}: a failed write is shown and leaves nothing behind`,
+      failed.alerts.includes(copy('settings.writeFailed')) && failed.checked === false && failed.stored === false &&
+        failed.open === true && diskAfter.gpuAcceleration === false && diskAfter.fontSize === 17,
+      `while failing ${JSON.stringify(failed)}; disk after the next write ${JSON.stringify({ gpuAcceleration: diskAfter.gpuAcceleration, fontSize: diskAfter.fontSize })}`)
+
+    // ── Restore per section. Agent status off first, in the other section, so restoring Terminal can be seen to
+    // leave it alone.
+    await showSection(app.client, 'agents')
+    await clickSelector(app.client, inSettings(`input${ariaLabel('settings.agentStatus')}`), 'the agent status box')
+    await awaitApplied(app.client, stored('agentStatus'), (value) => value === false, 'agent status off applied')
+    await showSection(app.client, 'terminal')
+
+    // Declining changes nothing.
+    await clickButtonText(copy('settings.restoreDefaults'))
+    await clickButtonText(copy('common.cancel'))
+    const declined = { size: await app.client.evaluate(stored('fontSize')), family: await app.client.evaluate(stored('fontFamily')) }
+    check(results, `${label}: declining a restore changes nothing`,
+      declined.size === 17 && declined.family === familyB, JSON.stringify(declined))
+
+    // Esc while it asks cancels the question and leaves Settings open.
+    await clickButtonText(copy('settings.restoreDefaults'))
+    await pollUntil(app.client, `[...document.querySelectorAll(${JSON.stringify(inSettings('p'))})].some((p) => p.textContent === ${JSON.stringify(copy('settings.restoreConfirm'))})`, Boolean, 5_000)
+    await pressEscape(app.client)
+    const afterConfirmEscape = await app.client.evaluate(`({
+      asking: [...document.querySelectorAll(${JSON.stringify(inSettings('p'))})].some((p) => p.textContent === ${JSON.stringify(copy('settings.restoreConfirm'))}),
+      open: ${DIALOG_OPEN},
+    })`)
+    check(results, `${label}: Esc cancels a restore confirmation and Settings stays open`,
+      afterConfirmEscape.asking === false && afterConfirmEscape.open === true, JSON.stringify(afterConfirmEscape))
+
+    // Confirmed: Terminal returns to its defaults; agent status and the language do not move.
+    await clickButtonText(copy('settings.restoreDefaults'))
+    await clickButtonText(copy('settings.restore'))
+    const restored = await pollUntil(
+      app.client,
+      `(async () => { const p = await window.workspace.settings.get(); return { size: p.fontSize ?? null, family: p.fontFamily ?? null, gpu: p.gpuAcceleration ?? null, agentStatus: p.agentStatus ?? null } })()`,
+      (value) => value.size === null && value.family === null && value.gpu === null,
+      5_000,
+    )
+    const diskRestored = onDisk()
+    check(results, `${label}: restoring Terminal leaves the other sections and the language as they were`,
+      restored.size === null && restored.family === null && restored.gpu === null && restored.agentStatus === false &&
+        diskRestored?.ui?.language === 'en',
+      `${JSON.stringify(restored)} ui=${JSON.stringify(diskRestored?.ui)}`)
+
+    await closeSettings(app.client)
+  } finally {
+    if (app) await app.destroy()
+  }
+}
+
 /** 五次冷啟動的兩段給更長的時限；dev 模式的冷啟動是 30 秒級（unbundled ESM + Monaco）。 */
 const LONG = 14 * 60 * 1000
 
@@ -5079,6 +5293,7 @@ const SECTIONS = [
   { name: 'runWorktree', run: runWorktree, onTimeout: killStrays },
   { name: 'runGlobalSession', run: runGlobalSession, onTimeout: killStrays },
   { name: 'runCloseConfirm', run: runCloseConfirm, timeoutMs: LONG, onTimeout: killStrays },
+  { name: 'runSettingsApply', run: runSettingsApply, onTimeout: killStrays },
 ]
 
 const outcome = await runSections({

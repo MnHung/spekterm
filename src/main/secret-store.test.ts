@@ -215,3 +215,16 @@ describe('parseSecrets：結構嚴格、個別項目寬容', () => {
     assert.equal(kept.length, 1, '原檔應改名保留')
   })
 })
+
+describe('a failed write leaves the secrets as they were (settings-sections)', () => {
+  it('set and clear throw, and the previous value is still the one in use', () => {
+    const store = new SecretStore(secretsPath)
+    store.load()
+    store.set('slack.userToken', 'xoxp-old')
+    fs.mkdirSync(`${secretsPath}.tmp`)
+    assert.throws(() => store.set('slack.userToken', 'xoxp-half'))
+    assert.equal(store.get('slack.userToken')?.reveal(), 'xoxp-old')
+    assert.throws(() => store.clear('slack.userToken'))
+    assert.equal(store.get('slack.userToken')?.reveal(), 'xoxp-old')
+  })
+})

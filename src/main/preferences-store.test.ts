@@ -633,3 +633,39 @@ describe('automatic hibernation (session-hibernation)', () => {
     assert.equal(projectPreferences(store.get(), store.ui()).autoHibernateSeconds, 3600)
   })
 })
+
+describe('a failed write leaves nothing behind (settings-sections)', () => {
+  /** A directory where the atomic write puts its temporary file: `writeFileSync` throws EISDIR. */
+  const blockWrites = (): void => fs.mkdirSync(`${configPath}.tmp`)
+  const unblockWrites = (): void => fs.rmSync(`${configPath}.tmp`, { recursive: true, force: true })
+
+  it('the setter throws and get() still reports the previous value', () => {
+    const store = new PreferencesStore(configPath)
+    store.load()
+    store.setGpuAcceleration(true)
+    blockWrites()
+    assert.throws(() => store.setGpuAcceleration(false))
+    assert.equal(store.get().gpuAcceleration, true)
+  })
+
+  it('a later successful write of another field does not carry the failed value to disk', () => {
+    const store = new PreferencesStore(configPath)
+    store.load()
+    blockWrites()
+    assert.throws(() => store.setTerminalFont(null, 20, null))
+    unblockWrites()
+    store.setAgentStatus(false)
+    const terminal = readConfig().terminal as Record<string, unknown>
+    assert.equal(terminal.agentStatus, false)
+    assert.equal('fontSize' in terminal, false, JSON.stringify(terminal))
+  })
+
+  it('a failed language write keeps the language', () => {
+    const store = new PreferencesStore(configPath)
+    store.load()
+    store.setLanguage('zh-TW')
+    blockWrites()
+    assert.throws(() => store.setLanguage('en'))
+    assert.equal(store.ui().language, 'zh-TW')
+  })
+})

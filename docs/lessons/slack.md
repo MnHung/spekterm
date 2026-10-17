@@ -114,7 +114,7 @@ users:read                                                    # 把 <@U123> 換�
 
 這是一條**無條件**的文件要求（`secret-scope` 明文），而不是「若有需要」：使用者自己的 shell
 環境不在應用程式的控制範圍內，所以唯一能做的就是把這件事說清楚。**憑證請只透過
-Handoffs → Slack 分頁設定** —— 那條路會落在 `<userData>/secrets.json`（僅擁有者可讀寫），
+Settings → Integrations 設定**（was the inbox's Slack tab until `settings-sections`） —— 那條路會落在 `<userData>/secrets.json`（僅擁有者可讀寫），
 而它不進任何子行程的環境。
 
 三件實測的細節：

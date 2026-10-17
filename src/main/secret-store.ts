@@ -244,8 +244,7 @@ export class SecretStore {
     const next = { ...this.#secrets }
     if (value === '') delete next[name]
     else next[name] = value
-    this.#secrets = next
-    this.#save()
+    this.#commit(next)
   }
 
   /** 清除一份機密。 */
@@ -253,14 +252,15 @@ export class SecretStore {
     if (this.#secrets[name] === undefined) return
     const next = { ...this.#secrets }
     delete next[name]
-    this.#secrets = next
-    this.#save()
+    this.#commit(next)
   }
 
-  #save(): void {
-    writeSecretsFileAtomic(this.filePath, {
-      version: SECRETS_VERSION,
-      secrets: this.#secrets,
-    })
+  /**
+   * Writes `next`, **then** takes it. A write that throws leaves the secrets as they were: assigning first kept
+   * a token that never reached the disk in memory, where it was used until the next start (`settings-sections`).
+   */
+  #commit(next: Record<string, string>): void {
+    writeSecretsFileAtomic(this.filePath, { version: SECRETS_VERSION, secrets: next })
+    this.#secrets = next
   }
 }

@@ -66,11 +66,13 @@ its folder, but what you are looking at and where you are typing stay as they we
 
 ## Turning it on and pairing
 
-1. Open **Settings** and, under **Remote access**, open the remote access dialog.
+1. Open **Settings** and choose the **Remote access** section.
 2. Turn on **Allow paired devices to connect**. spekterm now listens on the port shown (47615 unless you change
-   it) on every network interface.
+   it) on every network interface. A new port applies with **Use port** or **Enter**, not when you leave the field,
+   because changing it disconnects connected devices.
 3. Choose **Pair a device** and scan the QR code with the spekterm app on your phone. The code works once, for
-   five minutes, and only while that view is open. The same link is shown as text if you cannot scan it.
+   five minutes, and only while that view is open; leaving the section or closing Settings ends it. The same link
+   is shown as text if you cannot scan it.
 
 The phone stores its own credential; spekterm keeps only a hash of it. The phone checks spekterm's certificate
 against the fingerprint in the code, so another computer cannot pose as yours.
@@ -103,11 +105,13 @@ about the session you are looking at on your computer right now.
 
 ## Who is connected, revoking, and resetting
 
-- While a phone is connected, a phone icon appears in the activity bar; it opens the dialog.
-- The dialog lists your paired devices with when each was last seen. **Revoke** disconnects a device at once and
-  refuses it from then on.
+- While a phone is connected, a phone icon appears in the activity bar; it opens Settings on **Remote access**.
+- The section lists your paired devices with when each was last seen. **Revoke** asks first, then disconnects the
+  device at once and refuses it from then on; the device has to pair again.
 - **Reset remote access** creates a new certificate and revokes every device; each must pair again. If its
-  private key is ever lost, spekterm resets by itself and says so in the dialog.
+  private key is ever lost, spekterm resets by itself and says so in the section.
+- If remote access cannot start (for example, the port is in use), the section says why, and Settings marks
+  **Remote access** in its list.
 
 ## On networks you do not trust
 

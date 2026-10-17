@@ -52,7 +52,7 @@ opening somewhere else.
 
 ## Connecting Slack
 
-The **Slack** tab connects your Slack account. spekterm then finds messages that mention **you** — the
+The Slack connection is set up in **Settings → Integrations**. It connects your Slack account; spekterm then finds messages that mention **you** — the
 person the token belongs to — and turns each one into an inbox item, with the thread up to that message
 as context. A very long thread is shortened, and the item says so.
 
@@ -66,13 +66,17 @@ users:read
 
 The `*:history` scopes let spekterm read messages; the `*:read` scopes let it list the conversations you
 are in; `users:read` turns user IDs into names. After changing scopes, reinstall the app and copy the
-token again. Paste it under **User token** and save. Your identity is read from the token — there is
-nothing else to fill in.
+token again. Paste it under **User token** and press **Save** or **Enter**; leaving the field does not save it,
+so half a pasted token is never stored. Your identity is read from the token — there is nothing else to fill in.
+
+While no **Default folder** is set, the Integrations section says that mentions will arrive with no folder to
+open in, with a button that opens the inbox's routing rules.
 
 ### When mentions arrive
 
 spekterm checks for new mentions when it starts, every five minutes, and right after you save a token.
-**Look-back window** sets how far back the startup check searches: Slack does not replay what happened
+**Look-back window** (applied with **Enter** or when you leave the field) sets how far back the startup check
+searches: Slack does not replay what happened
 while spekterm was closed, so mentions older than the window are missed. On macOS, closing the window does
 not quit spekterm: while it keeps running without a window, the inbox keeps receiving and the five-minute
 check continues.
@@ -83,15 +87,17 @@ drops, spekterm falls back to the periodic check.
 
 ### Status
 
-The tab always says what state the connection is in: not set up, working with nothing new, how many
-mentions arrived on the last check, Slack asking to slow down, or credentials that are invalid or missing
-scopes. A broken connection never looks like "nobody mentioned you".
+The Integrations section always says what state the connection is in: not set up, working with nothing new,
+how many mentions arrived on the last check, Slack asking to slow down, or credentials that are invalid or
+missing scopes. A broken connection never looks like "nobody mentioned you": while it is broken, the inbox also
+shows a one-line Slack status with a button that opens the Integrations section.
 
 ### Your tokens
 
 Tokens are stored in spekterm's data directory (`~/.config/Spekterm` on Linux,
 `~/Library/Application Support/Spekterm` on macOS) with access limited to your user. They are sent only to Slack
-(or to the endpoint you set under **API endpoint** — only change it if you know why), and never reach
+(or to the endpoint you set under **API endpoint** — only change it if you know why; an address that is not
+`https` is refused and the endpoint stays as it was), and never reach
 your terminals or your agents. See [Data and network](/docs/reference/data-and-network/).
 
 ## Rejected deliveries

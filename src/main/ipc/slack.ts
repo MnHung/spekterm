@@ -3,9 +3,11 @@ import type { SecretStore } from '../secret-store'
 import {
   type SlackState,
   type SlackTokenKind,
+  type SlackWriteResult,
   isTokenKind,
   secretName,
   slackState,
+  slackWrite,
 } from '../slack-state'
 import { DEFAULT_API_BASE_URL, DEFAULT_LOOKBACK_DAYS, type SlackSettingsStore } from '../slack-settings-store'
 import type { SlackStatus } from '../slack-service'
@@ -76,28 +78,34 @@ export function registerSlackHandlers(input: {
   })
 
   // 值的驗證在這裡（種類白名單）與 store（值的清理）。`null` ＝清除該份憑證。
-  ipcMain.handle(SLACK_CHANNELS.setToken, (_event, kind: unknown, value: unknown): SlackState => {
-    if (!isTokenKind(kind)) return state()
-    if (value === null) input.secrets.clear(secretName(kind))
-    else if (typeof value === 'string') input.secrets.set(secretName(kind), value.trim())
+  // Each write answers with a result object: a failure the renderer must show has to survive IPC (`slackWrite`).
+  ipcMain.handle(SLACK_CHANNELS.setToken, (_event, kind: unknown, value: unknown): SlackWriteResult => {
+    if (!isTokenKind(kind)) return { ok: true, state: state() }
+    const result = slackWrite(() => {
+      if (value === null) input.secrets.clear(secretName(kind))
+      else if (typeof value === 'string') input.secrets.set(secretName(kind), value.trim())
+    }, state)
     // **存下憑證即試一次。** 不 await —— 回傳值只回報「已設定」那個事實，結果經
     // `changed` 事件推送。
-    if (value !== null) input.requestRound?.()
-    return state()
+    if (result.ok && value !== null) input.requestRound?.()
+    return result
   })
 
   ipcMain.handle(
     SLACK_CHANNELS.setLookbackDays,
-    (_event, days: unknown): SlackState => {
-      input.settings.setLookbackDays(typeof days === 'number' ? days : null)
-      return state()
-    },
+    (_event, days: unknown): SlackWriteResult =>
+      slackWrite(() => {
+        input.settings.setLookbackDays(typeof days === 'number' ? days : null)
+      }, state),
   )
 
-  ipcMain.handle(SLACK_CHANNELS.setApiBaseUrl, (_event, url: unknown): SlackState => {
-    input.settings.setApiBaseUrl(typeof url === 'string' ? url : null)
-    return state()
-  })
+  ipcMain.handle(
+    SLACK_CHANNELS.setApiBaseUrl,
+    (_event, url: unknown): SlackWriteResult =>
+      slackWrite(() => {
+        input.settings.setApiBaseUrl(typeof url === 'string' ? url : null)
+      }, state),
+  )
 }
 
 export { DEFAULT_API_BASE_URL, DEFAULT_LOOKBACK_DAYS }

@@ -16,12 +16,13 @@ import { homedir, tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { check, connectToApp, dragMouse, pollFor, pollUntil, pressKey, retryAction } from './lib/cdp.mjs'
-import { copy, copyIn, patternOf, prefixOf, suffixOf } from './lib/copy.mjs'
+import { copy, copyIn, label, patternOf, prefixOf, suffixOf } from './lib/copy.mjs'
 import { awaitMounted, describeMounted, mountedExpression } from './lib/mounted.mjs'
 import { electronExtraArgs } from './lib/display.mjs'
 import { quitAndWait } from './lib/quit.mjs'
 import { PROBE_PORTS } from './lib/ports.mjs'
 import { seedLanguage } from './lib/probe-language.mjs'
+import { SETTINGS_DIALOG, awaitApplied, closeSettings, inSettings, openSettings, showSection } from './lib/settings.mjs'
 
 const DEBUG_PORT = PROBE_PORTS.workspace.main
 const results = []
@@ -677,24 +678,84 @@ try {
 
   const settingsAt = await app.client.evaluate(SETTINGS_RECT)
   if (settingsAt) await realPressRelease(app.client, settingsAt)
-  const dialog = await pollUntil(app.client, FONT_DIALOG, (v) => v !== null, 4000).catch(() => null)
+
+  // ── settings-sections: the list of sections, one shown at a time, a size that does not move
+  //
+  // Settings is a list of sections beside the one shown (`terminal-preferences`). Each section is visited
+  // once here, and the card is measured in each: a dialog sized by its content would change size between
+  // General (one select) and Remote access, and only a measurement in every section shows that.
+  const SECTION_TABS = `[...document.querySelectorAll(${JSON.stringify(inSettings(`[role="tablist"]${label('settings.sections.label')} [role="tab"]`))})].map((tab) => ({
+    text: tab.textContent.trim(),
+    selected: tab.getAttribute('aria-selected') === 'true',
+  }))`
+  const tabs = await pollUntil(app.client, SECTION_TABS, (v) => v.length > 0, 4000).catch(() => [])
+  const expectedSections = ['general', 'terminal', 'agents', 'integrations', 'remote', 'about'].map((id) =>
+    copy(`settings.sections.${id}`))
+  check(results, 'Settings lists its six sections and shows one of them',
+    JSON.stringify(tabs.map((tab) => tab.text)) === JSON.stringify(expectedSections) &&
+      tabs.filter((tab) => tab.selected).length === 1,
+    JSON.stringify(tabs))
+
+  const CARD_SIZE = `(() => {
+    const d = document.querySelector(${JSON.stringify(SETTINGS_DIALOG)})
+    if (!d) return null
+    const r = d.getBoundingClientRect()
+    return { width: Math.round(r.width), height: Math.round(r.height) }
+  })()`
+  const sizes = {}
+  const sectionFacts = {}
+  for (const id of ['general', 'terminal', 'agents', 'integrations', 'remote', 'about']) {
+    await showSection(app.client, id)
+    sizes[id] = await app.client.evaluate(CARD_SIZE)
+    sectionFacts[id] = await app.client.evaluate(FONT_DIALOG)
+  }
+  const distinctSizes = new Set(Object.values(sizes).map((size) => JSON.stringify(size)))
+  check(results, 'Switching sections keeps the dialog\'s width and height',
+    distinctSizes.size === 1 && sizes.general?.width > 0, JSON.stringify(sizes))
+
+  // The facts of each section are read where that section is shown: one section at a time is the layout.
+  const dialog = sectionFacts.terminal
   check(results, '觸發 Settings 開啟終端偏好設定介面（含 family／size／行高／GPU 加速與預覽）',
     dialog?.family === true && dialog?.size === true && dialog?.lineHeight === true &&
       dialog?.gpu === true && dialog?.preview === true,
     JSON.stringify(dialog))
 
+  // The preview comes directly after the font fields, before GPU acceleration: three unrelated settings
+  // once stood between the fields and the preview of them.
+  const FIELD_ORDER = `(() => {
+    const d = document.querySelector(${JSON.stringify(SETTINGS_DIALOG)})
+    if (!d) return null
+    const named = [
+      ['family', 'select[aria-label="${copy('settings.fontFamily')}"]'],
+      ['size', 'input[aria-label="${copy('settings.fontSize')}"]'],
+      ['lineHeight', 'input[aria-label="${copy('settings.lineHeight')}"]'],
+      ['preview', 'pre[aria-label="${copy('settings.preview')}"]'],
+      ['gpu', 'input[aria-label="${copy('settings.gpuAcceleration')}"]'],
+    ].map(([name, selector]) => [name, d.querySelector(selector)])
+    if (named.some(([, element]) => !element)) return named.filter(([, element]) => !element).map(([name]) => 'missing ' + name)
+    return named
+      .sort(([, a], [, b]) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1))
+      .map(([name]) => name)
+  })()`
+  await showSection(app.client, 'terminal')
+  const order = await app.client.evaluate(FIELD_ORDER)
+  check(results, 'The preview follows the font fields directly (family, size, line height, preview, then GPU)',
+    JSON.stringify(order) === JSON.stringify(['family', 'size', 'lineHeight', 'preview', 'gpu']),
+    JSON.stringify(order))
+
   check(results, '設定介面涵蓋終端偏好以外的區段（唯讀的建置身分），且標題不侷限於終端',
-    dialog?.about === true && !/terminal/i.test(dialog?.title ?? ''),
-    `about=${dialog?.about} title="${dialog?.title}"`)
+    sectionFacts.about?.about === true && !/terminal/i.test(sectionFacts.about?.title ?? ''),
+    `about=${sectionFacts.about?.about} title="${sectionFacts.about?.title}"`)
 
   // **三句 AND 各驗一次。** 那條 scenario 寫的是「呈現該開關 AND 其預設為啟用 AND 介面說明它
   // 只影響其後的 session」—— 只驗第一句的話，另兩句被違反時不會有任何東西變紅。
+  const agents = sectionFacts.agents
   check(results, '設定對話框提供 agent 狀態橋接的開關',
-    dialog?.agentStatus === true, `agentStatus=${dialog?.agentStatus}`)
+    agents?.agentStatus === true, `agentStatus=${agents?.agentStatus}`)
   check(results, '該開關的預設為啟用',
-    dialog?.agentStatusChecked === true, `checked=${dialog?.agentStatusChecked}`)
+    agents?.agentStatusChecked === true, `checked=${agents?.agentStatusChecked}`)
   check(results, '介面說明它只影響其後建立或重建的 session',
-    dialog?.agentStatusHint === true, `hint=${dialog?.agentStatusHint}`)
+    agents?.agentStatusHint === true, `hint=${agents?.agentStatusHint}`)
 
   check(results, '預覽的範例文字不含框線字元（那些字元在終端不經字型）',
     dialog?.previewHasBoxDrawing === false,
@@ -711,7 +772,7 @@ try {
     const values = [...s.options].map((o) => o.value)
     return { count: values.length, firstValue: values[0], sample: values.slice(1, 4) }
   })()`
-  // **必須輪詢**：字型清單是一次非同步 IPC（主行程還要 spawn `fc-list`），對話框出現的那一刻它
+  // **必須輪詢**：字型清單是一次非同步 IPC（主行程還要 spawn `fc-list`），區段出現的那一刻它
   // 還沒回來 —— 只 evaluate 一次會讀到「只有系統預設」而誤判為空（實測踩過）。
   const options = await pollUntil(app.client, FONT_OPTIONS, (v) => v?.count >= 2, 6000).catch(
     () => null,
@@ -726,31 +787,49 @@ try {
   //
   // **只驗「預覽存在」是不夠的**（verify 稽核抓到）：spec 說的是「隨選取即時更新」。選一個真實的
   // 字型，斷言預覽 computed 的 `font-family` 真的變成它 —— 那才是使用者「套用前就看得到」的依據。
+  //
+  // A chosen family now applies at once (`settings-sections`), so it is put back to the system default
+  // afterwards: the later sections of this probe read the stored preferences.
   const PREVIEW_FONT = `(() => {
     const p = document.querySelector('[role="dialog"] [aria-label="${copy('settings.preview')}"]')
     return p ? getComputedStyle(p).fontFamily : null
   })()`
+  const chooseFamily = (value) => app.client.evaluate(`(() => {
+    const s = document.querySelector('[role="dialog"] select[aria-label="${copy('settings.fontFamily')}"]')
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set
+    setter.call(s, ${JSON.stringify(value)})
+    s.dispatchEvent(new Event('change', { bubbles: true }))
+  })()`)
   const previewBefore = await app.client.evaluate(PREVIEW_FONT)
   const picked = options?.sample?.[0]
-  if (picked) {
-    // 以真實的 change 事件驅動 —— 直接設 value 不會觸發 React 的 onChange。
-    await app.client.evaluate(`(() => {
-      const s = document.querySelector('[role="dialog"] select[aria-label="${copy('settings.fontFamily')}"]')
-      const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set
-      setter.call(s, ${JSON.stringify(picked)})
-      s.dispatchEvent(new Event('change', { bubbles: true }))
-    })()`)
-    await sleep(300)
-  }
-  const previewAfter = await app.client.evaluate(PREVIEW_FONT)
+  if (picked) await chooseFamily(picked)
+  const previewAfter = picked
+    ? await pollUntil(app.client, PREVIEW_FONT, (v) => String(v).includes(picked), 3000).catch(() =>
+      app.client.evaluate(PREVIEW_FONT))
+    : null
   check(results, '預覽隨選取即時更新（以選定的字型呈現）',
     Boolean(picked) && previewAfter !== previewBefore && String(previewAfter).includes(picked),
     `選 ${picked}：${previewBefore} → ${previewAfter}`)
+  if (picked) {
+    await chooseFamily('')
+    await awaitApplied(app.client, 'window.workspace.settings.get()', (prefs) => prefs?.fontFamily === undefined,
+      'the font family is back to the system default')
+  }
 
+  // Focus inside Settings (the family select) receives Esc; the frame closes on it.
+  await app.client.evaluate(`document.querySelector('[role="dialog"] select[aria-label="${copy('settings.fontFamily')}"]')?.focus()`)
   await pressKey(app.client, 'Escape')
-  await sleep(200)
-  const dismissed = await app.client.evaluate(`document.querySelector('[role="dialog"]') === null`)
+  const dismissed = await pollUntil(app.client, `document.querySelector('[role="dialog"]') === null`, (v) => v === true, 3000)
+    .catch(() => false)
   check(results, 'Esc 關閉終端字型設定介面', dismissed === true)
+
+  // Settings reopens on the section shown last in this run (Terminal, above), not on General.
+  await realPressRelease(app.client, await app.client.evaluate(SETTINGS_RECT))
+  const reopened = await pollUntil(app.client, SECTION_TABS, (v) => v.some((tab) => tab.selected), 4000).catch(() => [])
+  check(results, 'Settings reopens on the last section shown (Terminal)',
+    reopened.find((tab) => tab.selected)?.text === copy('settings.sections.terminal'),
+    JSON.stringify(reopened.filter((tab) => tab.selected)))
+  await closeSettings(app.client)
 
   // ── workspace-layout：可拖曳項目的游標宣告其主要可供性 ─────────────────────
   //
@@ -1797,22 +1876,10 @@ try {
   console.log('\nautomatic hibernation preference')
   const HIB_SELECT = `document.querySelector('[role="dialog"] select[aria-label="${copy('settings.autoHibernate')}"]')`
   const HIB_SHOWN = `${HIB_SELECT}?.selectedOptions[0]?.textContent ?? null`
-  const DIALOG_BUTTON = (text) => `(() => {
-        const b = [...document.querySelectorAll('[role="dialog"] button')].find((candidate) => candidate.textContent === ${JSON.stringify(text)})
-    if (!b) return null
-    // The card scrolls when it is taller than the window; measure the button where it can be clicked.
-    b.scrollIntoView({ block: 'nearest' })
-    const r = b.getBoundingClientRect()
-    return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
-  })()`
+  // Automatic hibernation lives in the Agents & sessions section, and applies when chosen: no Save.
   const openHibernateSettings = async () => {
-    const at = await app.client.evaluate(SETTINGS_RECT)
-    if (at) await realPressRelease(app.client, at)
+    await openSettings(app.client, 'agents')
     await pollUntil(app.client, `Boolean(${HIB_SELECT})`, (value) => value === true, 4000)
-  }
-  const closeDialogWith = async (text) => {
-    await realPressRelease(app.client, await app.client.evaluate(DIALOG_BUTTON(text)))
-    await pollUntil(app.client, `document.querySelector('[role="dialog"]') === null`, (value) => value === true, 4000)
   }
   const hours24 = copy('settings.autoHibernateHours_other', { count: 24 })
 
@@ -1827,8 +1894,7 @@ try {
         select.dispatchEvent(new Event('change', { bubbles: true }))
   })()`)
   const shownAfterChange = await pollUntil(app.client, HIB_SHOWN, (value) => value === copy('settings.autoHibernateOff'), 3000)
-  await closeDialogWith(copy('settings.save'))
-  // Saving is a chain of IPC calls that outlives the dialog: wait for the file before closing the app.
+  // The choice applies on its own; Settings stays open. Wait for the file before closing the app.
   const readStoredHibernate = () => {
     try {
       return JSON.parse(readFileSync(join(hibProfile, 'preferences.json'), 'utf8')).terminal?.autoHibernateSeconds ?? null
@@ -1852,7 +1918,7 @@ try {
     storedOff === 0 && shownOff === copy('settings.autoHibernateOff'),
         `stored=${JSON.stringify(storedOff)} shown=${JSON.stringify(shownOff)} (after the change: ${JSON.stringify(shownAfterChange)}; file: ${(() => { try { return readFileSync(join(hibProfile, 'preferences.json'), 'utf8').replace(/\s+/g, ' ') } catch { return 'unreadable' } })()})`,
   )
-  await closeDialogWith(copy('common.cancel'))
+  await closeSettings(app.client)
   await app.close()
 
   const badHibProfile = mkTemp('spekterm-hibernate-bad-')
@@ -1870,7 +1936,7 @@ try {
     badPrefs?.autoHibernateSeconds === undefined && badPrefs?.fontSize === 15 && shownBad === hours24,
     `prefs=${JSON.stringify(badPrefs)} shown=${JSON.stringify(shownBad)}`,
   )
-  await closeDialogWith(copy('common.cancel'))
+  await closeSettings(app.client)
   await app.close()
 
 

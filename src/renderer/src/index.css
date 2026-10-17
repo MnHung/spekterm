@@ -25,6 +25,9 @@
   --color-blue: #60a5fa;
   --color-green: #34d399;
 
+  /* The backdrop behind a modal dialog (`ui/Dialog.tsx`). */
+  --color-scrim: rgba(0, 0, 0, 0.5);
+
   /*
    * 字級尺度 —— 五級，全部由 `--text-base` 這一個旋鈕平移推導。
    *

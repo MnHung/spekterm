@@ -30,6 +30,7 @@ import { PROBE_PORTS, STUB_PORTS } from './lib/ports.mjs'
 import { seedLanguage } from './lib/probe-language.mjs'
 import { helloRemote, openRemote, pairRemote, parsePairingLink } from './lib/remote-client.mjs'
 import { runSections } from './lib/sections.mjs'
+import { showSection } from './lib/settings.mjs'
 import { makeStubAgent } from './lib/stub-agent.mjs'
 
 const PORT = PROBE_PORTS.remote.main
@@ -190,19 +191,31 @@ async function typeInto(client, selector, text) {
   await client.send('Input.insertText', { text })
 }
 
-const DIALOG = `[role="dialog"]${label('remote.title')}`
 const SETTINGS_DIALOG = `[role="dialog"]${label('settings.title')}`
+/**
+ * The remote access controls: Settings' Remote access section (`settings-sections`). They used to be a dialog of
+ * their own; the name `DIALOG` stays for the scope every step below reads and clicks in.
+ */
+const DIALOG = `${SETTINGS_DIALOG} #settings-panel-remote`
+/** The marker on the Remote access entry of Settings' section list while the listener failed to start. */
+const REMOTE_FAILED_MARK = `${SETTINGS_DIALOG} #settings-tab-remote ${label('settings.sections.remoteFailed')}`
 const ACTIVITY = `nav${label('activityBar.label')}`
 
+const settingsOpen = (app) => app.client.evaluate(`Boolean(document.querySelector(${JSON.stringify(SETTINGS_DIALOG)}))`)
+
+/** Opens Settings (unless open) on its Remote access section. */
 async function openRemoteDialog(app) {
-  await clickSelector(app.client, `${ACTIVITY} button${label('activityBar.settings')}`, 'the Settings entry')
-  await clickSelector(app.client, `${SETTINGS_DIALOG} button${label('remote.section.open')}`, 'the remote access section control')
-  await pollFor({ read: () => app.client.evaluate(`Boolean(document.querySelector(${JSON.stringify(DIALOG)}))`), settled: Boolean, timeoutMs: 10_000, label: 'the dialog' })
+  if (!(await settingsOpen(app))) {
+    await clickSelector(app.client, `${ACTIVITY} button${label('activityBar.settings')}`, 'the Settings entry')
+  }
+  await showSection(app.client, 'remote')
+  await pollFor({ read: () => app.client.evaluate(`Boolean(document.querySelector(${JSON.stringify(DIALOG)}))`), settled: Boolean, timeoutMs: 10_000, label: 'the remote access section' })
 }
 
+/** Closes Settings with its close control. */
 async function closeRemoteDialog(app) {
-  await clickSelector(app.client, `${DIALOG} button${label('remote.close')}`, 'the dialog close button')
-  await pollFor({ read: () => app.client.evaluate(`!document.querySelector(${JSON.stringify(DIALOG)})`), settled: Boolean, timeoutMs: 10_000, label: 'the dialog closed' })
+  await clickSelector(app.client, `${SETTINGS_DIALOG} button${label('common.close')}`, 'the Settings close control')
+  await pollFor({ read: () => app.client.evaluate(`!document.querySelector(${JSON.stringify(SETTINGS_DIALOG)})`), settled: Boolean, timeoutMs: 10_000, label: 'Settings closed' })
 }
 
 const dialogText = (app) => app.client.evaluate(`document.querySelector(${JSON.stringify(DIALOG)})?.textContent ?? ''`)
@@ -471,6 +484,35 @@ async function runListener(_mode, _config, context) {
   const movedB = await accepts(LISTEN_B)
   const movedA = await accepts(LISTEN_A)
   check(results, 'changing the port moves the listener', movedB && !movedA, `new=${movedB} old=${movedA}`)
+
+  // The port applies through its button or Enter, never on blur (`remote-access`): a typed port that focus left
+  // stays unapplied and marked, and the listener does not move. Esc in the field restores the stored port.
+  await typeInto(app.client, `${DIALOG} input${label('remote.port')}`, String(LISTEN_A))
+  await app.client.evaluate(`document.querySelector(${JSON.stringify(`${DIALOG} input${label('remote.port')}`)})?.blur()`)
+  await sleep(500)
+  const leftText = await dialogText(app)
+  const leftB = await accepts(LISTEN_B)
+  const leftA = await accepts(LISTEN_A)
+  check(
+    results,
+    'leaving the port field does not change the port: the old port still listens and the field says it is not applied',
+    leftB && !leftA && leftText.includes(copy('remote.portNotApplied')),
+    `old=${leftB} typed=${leftA} marked=${leftText.includes(copy('remote.portNotApplied'))}`,
+  )
+  await clickSelector(app.client, `${DIALOG} input${label('remote.port')}`)
+  await pressKey(app.client, 'Escape')
+  const restored = await pollFor({
+    read: () => app.client.evaluate(`document.querySelector(${JSON.stringify(`${DIALOG} input${label('remote.port')}`)})?.value ?? null`),
+    settled: (value) => value === String(LISTEN_B),
+    timeoutMs: 5_000,
+    label: 'the stored port back in the field',
+  }).catch(() => null)
+  check(
+    results,
+    'Esc in the port field restores the stored port and leaves Settings open',
+    restored === String(LISTEN_B) && (await settingsOpen(app)),
+    `field=${restored}`,
+  )
   await closeRemoteDialog(app)
 
   const paired = await phone(app)
@@ -501,25 +543,42 @@ async function runListener(_mode, _config, context) {
     await openRemoteDialog(second.app)
     await setPortInDialog(second.app, LISTEN_A)
     const conflict = await pollFor({ read: () => dialogText(second.app), settled: (t) => t.includes(copy('remote.state.inUse', { port: LISTEN_A })), timeoutMs: 15_000, label: 'the conflict shown' })
-    await closeRemoteDialog(second.app)
-    await clickSelector(second.app.client, `${ACTIVITY} button${label('activityBar.settings')}`)
-    const line = await pollFor({
-      read: () => second.app.client.evaluate(`document.querySelector(${JSON.stringify(`${SETTINGS_DIALOG} [role="group"]${label('remote.section.label')}`)})?.textContent ?? ''`),
-      settled: (t) => t.length > 0,
+    const line = await second.app.client.evaluate(
+      `document.querySelector(${JSON.stringify(`${DIALOG} [role="group"]${label('remote.section.label')}`)})?.textContent ?? ''`,
+    )
+    // Another section shown: the failure must still be visible, on the section list.
+    await showSection(second.app.client, 'about')
+    const marked = await pollFor({
+      read: () => second.app.client.evaluate(`Boolean(document.querySelector(${JSON.stringify(REMOTE_FAILED_MARK)}))`),
+      settled: Boolean,
       timeoutMs: 10_000,
-      label: 'the Settings line',
-    })
+      label: 'the section list marks Remote access',
+    }).catch(() => false)
     check(
       results,
-      'a port in use is stated in the dialog and the Settings line does not say it is running',
-      conflict.includes(copy('remote.state.inUse', { port: LISTEN_A })) && line.includes(copy('remote.state.inUse', { port: LISTEN_A })) && !line.includes(copy('remote.section.on', { devices: 1, connected: 0 })),
-      line,
+      'a port in use is stated in the section, its summary does not say it is running, and the section list marks it',
+      conflict.includes(copy('remote.state.inUse', { port: LISTEN_A })) &&
+        line.includes(copy('remote.state.inUse', { port: LISTEN_A })) &&
+        !line.includes(copy('remote.section.on', { devices: 1, connected: 0 })) &&
+        marked === true,
+      `line=${line} marked=${marked}`,
     )
-    await clickSelector(second.app.client, `${SETTINGS_DIALOG} button${label('remote.section.open')}`)
+    await openRemoteDialog(second.app)
     await setPortInDialog(second.app, LISTEN_B)
     const recovered = await pollFor({ read: () => dialogText(second.app), settled: (t) => t.includes(copy('remote.state.listening', { port: LISTEN_B })), timeoutMs: 15_000, label: 'recovered' })
-      const recoveredAccepts = await accepts(LISTEN_B)
-    check(results, 'changing to a free port recovers', recovered.includes(copy('remote.state.listening', { port: LISTEN_B })) && recoveredAccepts, `accepts=${recoveredAccepts}`)
+    const recoveredAccepts = await accepts(LISTEN_B)
+    const unmarked = await pollFor({
+      read: () => second.app.client.evaluate(`!document.querySelector(${JSON.stringify(REMOTE_FAILED_MARK)})`),
+      settled: Boolean,
+      timeoutMs: 10_000,
+      label: 'the mark gone',
+    }).catch(() => false)
+    check(
+      results,
+      'changing to a free port recovers, and the section list no longer marks it',
+      recovered.includes(copy('remote.state.listening', { port: LISTEN_B })) && recoveredAccepts && unmarked === true,
+      `accepts=${recoveredAccepts} unmarked=${unmarked}`,
+    )
   } finally {
     await new Promise((resolve) => holder.close(resolve))
     await second.app.close()
@@ -551,6 +610,15 @@ async function runPairing(_mode, _config, context) {
   await sleep(300)
   const afterClose = await pairRemote(target, { code: closedLink.code, deviceName: 'Late' }).catch((error) => ({ response: { e: { code: String(error) } } }))
   check(results, 'closing the pairing view invalidates its code', afterClose.response.e?.code === 'PAIRING_FAILED', JSON.stringify(afterClose.response.e))
+
+  // Leaving the section ends the pairing view (`remote-access`): its code is refused after a switch to another
+  // section, with Settings still open.
+  const leftLink = await startPairing(app)
+  await showSection(app.client, 'about')
+  await sleep(300)
+  const afterLeave = await pairRemote(target, { code: leftLink.code, deviceName: 'Left' }).catch((error) => ({ response: { e: { code: String(error) } } }))
+  check(results, 'leaving the section invalidates the pairing code', afterLeave.response.e?.code === 'PAIRING_FAILED', JSON.stringify(afterLeave.response.e))
+  await openRemoteDialog(app)
 
   const secret = first.response.r?.deviceSecret ?? '(none)'
   const holders = []
@@ -597,7 +665,34 @@ async function runPairing(_mode, _config, context) {
   )
   const second = await startPairing(app)
   const other = await pairRemote(target, { code: second.code, deviceName: 'Probe Tablet' })
-  await clickSelector(app.client, `${DIALOG} button${label('remote.revoke', { name: 'Probe Pixel' })}`, 'Revoke Probe Pixel')
+  // Revoking asks first (`remote-access`). Declining keeps the device, connected; Esc cancels the question and
+  // leaves Settings open; only the confirmation revokes.
+  const REVOKE_PIXEL = `${DIALOG} button${label('remote.revoke', { name: 'Probe Pixel' })}`
+  const CONFIRM_PIXEL = `${DIALOG} button${label('remote.revokeConfirmButton', { name: 'Probe Pixel' })}`
+  await clickSelector(app.client, REVOKE_PIXEL, 'Revoke Probe Pixel')
+  await clickButtonText(app.client, DIALOG, copy('common.cancel'))
+  const declinedClose = await Promise.race([connected.client.closed, sleep(1_500).then(() => null)])
+  const declinedRetry = await helloRemote(target, credentialOf(first.response.r))
+  const stillListed = (await dialogText(app)).includes('Probe Pixel')
+  check(
+    results,
+    'declining a revoke keeps the device: still listed, still connected, and its credential still accepted',
+    declinedClose === null && declinedRetry.response.ok === true && stillListed,
+    `close=${JSON.stringify(declinedClose)} retry=${JSON.stringify(declinedRetry.response.e ?? 'ok')} listed=${stillListed}`,
+  )
+  declinedRetry.client.close()
+  await clickSelector(app.client, REVOKE_PIXEL, 'Revoke Probe Pixel')
+  await pollFor({ read: () => app.client.evaluate(`Boolean(document.querySelector(${JSON.stringify(CONFIRM_PIXEL)}))`), settled: Boolean, timeoutMs: 5_000, label: 'the revoke question' })
+  await pressKey(app.client, 'Escape')
+  const escaped = await pollFor({ read: () => app.client.evaluate(`!document.querySelector(${JSON.stringify(CONFIRM_PIXEL)})`), settled: Boolean, timeoutMs: 5_000, label: 'the question gone' }).catch(() => false)
+  check(
+    results,
+    'Esc on the revoke question cancels it and leaves Settings open',
+    escaped === true && (await settingsOpen(app)) && (await dialogText(app)).includes('Probe Pixel'),
+    `cancelled=${escaped}`,
+  )
+  await clickSelector(app.client, REVOKE_PIXEL, 'Revoke Probe Pixel')
+  await clickSelector(app.client, CONFIRM_PIXEL, 'Confirm revoking Probe Pixel')
   const revokedClose = await Promise.race([connected.client.closed, sleep(5_000).then(() => null)])
   const revokedRetry = await helloRemote(target, credentialOf(first.response.r))
   const otherRetry = await helloRemote(target, credentialOf(other.response.r))
@@ -661,12 +756,23 @@ async function runIndicator(_mode, _config, context) {
   const INDICATOR = `${ACTIVITY} button${label('remote.indicator')}`
   const SECTION = `${SETTINGS_DIALOG} [role="group"]${label('remote.section.label')}`
 
-  await clickSelector(app.client, `${ACTIVITY} button${label('activityBar.settings')}`)
+  await openRemoteDialog(app)
   const offLine = await pollFor({ read: () => app.client.evaluate(`document.querySelector(${JSON.stringify(SECTION)})?.textContent ?? ''`), settled: (t) => t.includes(copy('remote.section.off')), timeoutMs: 10_000, label: 'Settings says off' })
   check(results, 'the Settings section states that remote access is off', offLine.includes(copy('remote.section.off')), offLine)
-  await clickSelector(app.client, `${SETTINGS_DIALOG} button${label('remote.section.open')}`)
-  const opened = await pollFor({ read: () => app.client.evaluate(`Boolean(document.querySelector(${JSON.stringify(DIALOG)}))`), settled: Boolean, timeoutMs: 10_000, label: 'the dialog from Settings' })
-  check(results, 'the Settings section control opens the remote access dialog', opened === true, '')
+  // The controls are in the section itself (`terminal-preferences`): the switch is there, and Settings is the
+  // only dialog open.
+  // The summary renders before the state arrives ("Off" either way); the controls come with the state.
+  const holds = await pollFor({
+    read: () =>
+      app.client.evaluate(`({
+        switch: Boolean(document.querySelector(${JSON.stringify(`${DIALOG} input${label('remote.enable')}`)})),
+        dialogs: document.querySelectorAll('[role="dialog"]').length,
+      })`),
+    settled: (value) => value.switch,
+    timeoutMs: 10_000,
+    label: 'the switch in the section',
+  }).catch(() => ({ switch: false, dialogs: -1 }))
+  check(results, 'the remote access section holds the switch, and no other dialog is open', holds.switch && holds.dialogs === 1, JSON.stringify(holds))
   await setPortInDialog(app, LISTEN_A)
   await toggleEnabled(app)
   await pollFor({ read: () => dialogText(app), settled: (t) => t.includes(copy('remote.state.listening', { port: LISTEN_A })), timeoutMs: 15_000, label: 'listening' })
@@ -676,14 +782,19 @@ async function runIndicator(_mode, _config, context) {
   const a = await phone(app, 'Phone A')
   const shown = await pollFor({ read: () => app.client.evaluate(`Boolean(document.querySelector(${JSON.stringify(INDICATOR)}))`), settled: Boolean, timeoutMs: 10_000, label: 'the indicator' })
   check(results, 'a connected device shows the indicator', shown === true, '')
+  // Leave Settings on another section first: Settings reopens on the last one shown, so an indicator that only
+  // opened Settings would otherwise pass.
+  await clickSelector(app.client, `${ACTIVITY} button${label('activityBar.settings')}`, 'the Settings entry')
+  await showSection(app.client, 'about')
+  await closeRemoteDialog(app)
   await clickSelector(app.client, INDICATOR, 'the indicator')
-  const fromIndicator = await pollFor({ read: () => app.client.evaluate(`Boolean(document.querySelector(${JSON.stringify(DIALOG)}))`), settled: Boolean, timeoutMs: 10_000, label: 'the dialog from the indicator' })
-  check(results, 'the indicator opens the remote access dialog', fromIndicator === true, '')
+  const fromIndicator = await pollFor({ read: () => app.client.evaluate(`Boolean(document.querySelector(${JSON.stringify(DIALOG)}))`), settled: Boolean, timeoutMs: 10_000, label: 'Settings on Remote access from the indicator' }).catch(() => false)
+  check(results, 'the indicator opens Settings on its remote access section', fromIndicator === true, '')
   await closeRemoteDialog(app)
 
   const b = await phone(app, 'Phone B')
   b.client.close()
-  await clickSelector(app.client, `${ACTIVITY} button${label('activityBar.settings')}`)
+  await openRemoteDialog(app)
   const counted = copy('remote.section.on', { devices: 2, connected: 1 })
   const onLine = await pollFor({ read: () => app.client.evaluate(`document.querySelector(${JSON.stringify(SECTION)})?.textContent ?? ''`), settled: (t) => t.includes(counted), timeoutMs: 10_000, label: 'Settings counts devices' })
   check(results, 'the Settings section states on, two devices, one connected', onLine.includes(counted), onLine)

@@ -40,6 +40,7 @@ import { copy } from './lib/copy.mjs'
 import { menuEvidence } from './lib/menu-evidence.mjs'
 import { MOUNTED_WITHOUT_VISIBILITY as MOUNTED, awaitMounted } from './lib/mounted.mjs'
 import { PROBE_PORTS } from './lib/ports.mjs'
+import { openSettings } from './lib/settings.mjs'
 import { seedLanguage } from './lib/probe-language.mjs'
 import { quitPidAndWait } from './lib/quit.mjs'
 
@@ -146,9 +147,6 @@ const GLOBAL_NEW_SESSION_RECT = RECT_OF(
   `aside[aria-label="${copy('rail.label')}"] [aria-label="${copy('rail.newSessionIn', { name: copy('rail.globalName') })}"]`,
 )
 const TERMINAL_RECT = RECT_OF(`section[aria-label="${copy('stage.terminal')}"]`)
-const SETTINGS_RECT = RECT_OF(
-  `nav[aria-label="${copy('activityBar.label')}"] button[aria-label="${copy('activityBar.settings')}"]`,
-)
 const MENU_ITEM_RECT = (text) => `(() => {
   const menu = document.querySelector('[role="menu"]')
   if (!menu) return null
@@ -545,8 +543,8 @@ try {
   })
 
   await section('The build identity', async () => {
-    const settingsAt = await pollUntil(client, SETTINGS_RECT, (value) => value !== null, 6000)
-    if (settingsAt) await realClick(client, settingsAt)
+    // The build identity is in Settings' About section (`settings-sections`).
+    await openSettings(client, 'about')
     const identity = await pollUntil(client, BUILD_IDENTITY, (value) => value !== null, 6000)
     const declared = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8')).version
     const head = execFileSync('git', ['rev-parse', '--short=7', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim()

@@ -58,7 +58,8 @@
     "collapse": "Collapse",
     "save": "Save",
     "clear": "Clear",
-    "reset": "Reset"
+    "reset": "Reset",
+    "close": "Close"
   },
   "stage": {
     "label": "Main stage",
@@ -332,8 +333,6 @@
     "lineHeightPlaceholder": "Default",
     "preview": "Preview",
     "previewSample": "The quick brown fox 0123456789\nil1 | oO0 {}[]() => != === <= >=\nconst λ = (x) => x ?? 0; // 1lI0O",
-    "reset": "Reset to default",
-    "save": "Save",
     "agentStatus": "Show agent status in the status bar",
     "agentStatusHint": "Asks claude to report its model, context usage and cost to spekterm. Your own status line keeps working. Applies to sessions started after this change.",
     "about": "About",
@@ -352,7 +351,26 @@
     "autoHibernateDays_one": "After {{count}} day",
     "autoHibernateDays_other": "After {{count}} days",
     "autoHibernateSeconds_one": "After {{count}} second",
-    "autoHibernateSeconds_other": "After {{count}} seconds"
+    "autoHibernateSeconds_other": "After {{count}} seconds",
+    "sections": {
+      "label": "Settings sections",
+      "general": "General",
+      "terminal": "Terminal",
+      "agents": "Agents & sessions",
+      "integrations": "Integrations",
+      "remote": "Remote access",
+      "about": "About",
+      "remoteFailed": "Remote access failed to start"
+    },
+    "restoreDefaults": "Restore defaults",
+    "restoreConfirm": "Restore this section's settings to their defaults?",
+    "restore": "Restore",
+    "writeFailed": "Could not save this setting. It is unchanged.",
+    "invalidNumber": "Not a number. The saved value is kept.",
+    "agentView": "Agent sessions show",
+    "agentViewTerminal": "Terminal",
+    "agentViewConversation": "Conversation",
+    "agentViewHint": "The same choice as the switch beside an agent session's tabs. It applies to every agent session."
   },
   "statusBar": {
     "label": "Status bar",
@@ -766,7 +784,12 @@
     "statusFailureScope": "Your Slack token is valid but is missing permissions. Add these User Token Scopes and reinstall the app: {{needed}}",
     "statusRateLimited": "Slack asked us to slow down. Nothing is wrong with your setup — the next check is at {{time}}.",
     "statusRateLimitedSoon": "Slack asked us to slow down. Nothing is wrong with your setup — trying again shortly.",
-    "statusFailureScopeUnknown": "Your Slack token is valid but is missing permissions ({{error}}). Add the missing User Token Scopes and reinstall the app."
+    "statusFailureScopeUnknown": "Your Slack token is valid but is missing permissions ({{error}}). Add the missing User Token Scopes and reinstall the app.",
+    "tokenHint": "A token is saved with Save or Enter, never when you leave the field.",
+    "endpointRefused": "Not an https address. The endpoint is unchanged.",
+    "openRoutingRules": "Open routing rules",
+    "inboxLine": "Slack: {{status}}",
+    "openSettings": "Open Slack settings"
   },
   "languageName": "English",
   "lineage": {
@@ -829,7 +852,6 @@
     "additionalAddress": "Additional address",
     "additionalAddressHint": "Another name or address your phone can reach this computer at, such as a Tailscale name or a DDNS name for a port forward.",
     "additionalAddressInvalid": "Enter a host name or an IP address.",
-    "saveAddress": "Save address",
     "addresses": "Addresses",
     "fingerprint": "Certificate fingerprint",
     "pair": "Pair a device",
@@ -853,14 +875,16 @@
       "key-mismatch": "Remote access was reset because its private key no longer matched its certificate. Pair your devices again."
     },
     "dismissNotice": "Dismiss",
-    "close": "Close",
     "indicator": "Remote access: a device is connected",
     "section": {
       "label": "Remote access",
       "off": "Off",
       "on": "On · paired devices: {{devices}} · connected: {{connected}}",
-      "failed": "Not running: {{cause}}",
-      "open": "Open remote access"
-    }
+      "failed": "Not running: {{cause}}"
+    },
+    "portHint": "Applies with Use port or Enter. Changing the port disconnects connected devices.",
+    "portNotApplied": "Not applied yet. Press Use port or Enter; changing the port disconnects connected devices.",
+    "revokeConfirm": "It will have to pair again.",
+    "revokeConfirmButton": "Confirm revoking {{name}}"
   }
 }

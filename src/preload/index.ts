@@ -21,7 +21,7 @@ import type { RestoredSession } from '../main/ipc/terminal'
 import type { HandoffBriefView, LifecycleView } from '../main/ipc/handoff'
 import type { AttentionView } from '../main/ipc/wait'
 import type { DirEntry, FileContent } from '../main/fs-service'
-import type { SlackState, SlackTokenKind } from '../main/slack-state'
+import type { SlackState, SlackTokenKind, SlackWriteResult } from '../main/slack-state'
 import type { ProjectedPreferences } from '../main/preferences-store'
 import type { SessionStatusSnapshot } from '../main/session-status'
 import type { RendererSession } from '../main/session-store'
@@ -611,13 +611,13 @@ const workspaceApi = {
   slack: {
     get: (): Promise<SlackState> => ipcRenderer.invoke('workspace:slack:get'),
     /** `null` ＝清除該份憑證。 */
-    setToken: (kind: SlackTokenKind, value: string | null): Promise<SlackState> =>
+    setToken: (kind: SlackTokenKind, value: string | null): Promise<SlackWriteResult> =>
       ipcRenderer.invoke('workspace:slack:setToken', kind, value),
     /** `null` ＝清回預設。 */
-    setLookbackDays: (days: number | null): Promise<SlackState> =>
+    setLookbackDays: (days: number | null): Promise<SlackWriteResult> =>
       ipcRenderer.invoke('workspace:slack:setLookbackDays', days),
-    /** `null`／不合法（非 https）＝清回預設端點。 */
-    setApiBaseUrl: (url: string | null): Promise<SlackState> =>
+    /** `null` = back to the default endpoint; a value that is not an acceptable https address is refused. */
+    setApiBaseUrl: (url: string | null): Promise<SlackWriteResult> =>
       ipcRenderer.invoke('workspace:slack:setApiBaseUrl', url),
     /**
      * 狀態改變了。

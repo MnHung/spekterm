@@ -103,7 +103,7 @@ export const MUTATIONS = [
   },
   {
     name: 'endpoint-warning-removed',
-    file: 'src/renderer/src/shell/intake/SlackSettings.tsx',
+    file: 'src/renderer/src/shell/settings/sections/IntegrationsSection.tsx',
     from: `          {state.usesDefaultEndpoint ? t('slack.endpointDefault') : t('slack.endpointCustom')}`,
     to: `          {t('slack.endpointDefault')}`,
     expectRed: '端點非預設值時畫面上明確警示',
@@ -112,7 +112,7 @@ export const MUTATIONS = [
   },
   {
     name: 'status-not-pushed',
-    file: 'src/renderer/src/shell/intake/SlackSettings.tsx',
+    file: 'src/renderer/src/shell/settings/sections/IntegrationsSection.tsx',
     from: `  useEffect(() => window.workspace.slack.onChanged(reload), [reload])`,
     to: `  // mutation：不訂閱狀態改變`,
     expectRed: '憑證失效時使用者看得到，且說明重試無用',

@@ -44,6 +44,7 @@ import { PROBE_PORTS } from './lib/ports.mjs'
 import { ptyPids, ptySessionPids } from './lib/pty-pids.mjs'
 import { makeStubAgent } from './lib/stub-agent.mjs'
 import { seedLanguage } from './lib/probe-language.mjs'
+import { SETTINGS_DIALOG, openSettings } from './lib/settings.mjs'
 
 const PORT = PROBE_PORTS.intake.main
 const RESTART_PORT = PROBE_PORTS.intake.restart
@@ -1178,6 +1179,29 @@ async function runNotifyActivate(_mode, _modeConfig, context) {
     '由通知開啟並關閉之後焦點回到活動列的入口',
     (await app.client.evaluate(ACTIVE_LABEL)) === copy('activityBar.handoffs'),
     String(await app.client.evaluate(ACTIVE_LABEL)),
+  )
+
+  // A notification while Settings is open (`terminal-preferences`): opening the inbox closes Settings, so two
+  // modal layers never compete for focus and for Esc. The inbox sits above Settings; a Settings left open under it
+  // would still hold its own Esc and Tab.
+  await openSettings(app.client, 'general')
+  const settingsBefore = await app.client.evaluate(`Boolean(document.querySelector(${JSON.stringify(SETTINGS_DIALOG)}))`)
+  fireNotification(profile, 3)
+  const layers = await pollFor({
+    read: () =>
+      app.client.evaluate(`({
+        inbox: Boolean(document.querySelector('[role="dialog"]${label('intake.label')}')),
+        settings: Boolean(document.querySelector(${JSON.stringify(SETTINGS_DIALOG)})),
+      })`),
+    settled: (value) => value.inbox && !value.settings,
+    timeoutMs: 15_000,
+    label: 'the inbox open, Settings closed',
+  })
+  check(
+    results,
+    'a notification while Settings is open leaves only the inbox open',
+    settingsBefore === true && layers.inbox === true && layers.settings === false,
+    `settings before=${settingsBefore} ${JSON.stringify(layers)}`,
   )
 }
 
@@ -2525,9 +2549,18 @@ async function runProtocolLanguage(_mode, _modeConfig, context) {
     contents.slice(0, 120))
 
   // **作業系統通知由主行程發出，它不經 IPC、也不由 renderer 繪製** —— 語言若沒有抵達主行程，
-  // 畫面是中文而系統通知還是英文，**而那不會產生任何錯誤**。（這一則於 app 啟動時的回補
-  // 路徑上發出，因此此時已經在檔案裡。）
-  const sent = notifications(profile)
+  // 畫面是中文而系統通知還是英文，**而那不會產生任何錯誤**。
+  //
+  // **Wait for the notification window; do not assume it has passed.** The arrival happened at startup, but the
+  // notifier presents a batch `WINDOW_MS` after its first arrival. This read once ran right away, and it passed
+  // only because an unrelated 20-second wait for the window to mount always came first. When that wait
+  // stopped stalling, the file was still empty here.
+  const sent = await pollFor({
+    read: () => notifications(profile),
+    settled: (list) => list.length > 0,
+    timeoutMs: NOTIFY_QUIET_MS * 2,
+    label: '中文介面下的通知已呈現',
+  }).catch(() => notifications(profile))
   const titles = sent.map((n) => n.title)
   check(results, '中文介面下，作業系統通知的文案為中文',
     titles.length > 0 && titles.every((title) => title === copyIn('zh-TW', 'intake.notify.title')),

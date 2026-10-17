@@ -36,7 +36,7 @@ Tabs are named after the title the program sets. To use your own name, right-cli
 spekterm's shortcuts are chosen so they do not take keys your shell or Claude Code need. The full list,
 and why each key was chosen, is on the [Keyboard shortcuts](/docs/reference/keyboard-shortcuts/) page.
 
-The look of the terminal — font, size, line height, and GPU drawing — is under **Settings**; see
+The look of the terminal — font, size, line height, and GPU drawing — is under **Settings → Terminal**; see
 [Settings](/docs/reference/settings/).
 
 ## What the dots say
@@ -101,7 +101,7 @@ its process and leave it dormant in place — exactly the state a restart produc
 
 - **By hand:** `Ctrl+Shift+H`, or **Hibernate** in the tab's or the rail row's menu.
 - **Automatically:** a session that has been idle for 24 hours is hibernated. Change the time or turn it
-  off under **Settings → Hibernate idle sessions**. The session on screen is never hibernated
+  off under **Settings → Agents & sessions → Hibernate idle sessions**. The session on screen is never hibernated
   automatically, and neither is an agent that is working or a shell that is running a job. On macOS, idle
   shells are never hibernated automatically; hibernating them by hand works.
 
@@ -123,7 +123,7 @@ panel is limited.
 
 Along the bottom, the status bar shows the selected repository, the focused session's working directory
 and branch, how many sessions are open, and the anchored change's task progress. If you turn on **Show
-agent status in the status bar** in Settings, `claude` also reports its model, context usage, and cost
+agent status in the status bar** in **Settings → Agents & sessions**, `claude` also reports its model, context usage, and cost
 there. That setting applies to sessions started after you change it, and your own Claude Code status line
 keeps working.
 

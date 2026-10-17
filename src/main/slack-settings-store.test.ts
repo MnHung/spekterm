@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, it } from 'node:test'
 import {
   DEFAULT_API_BASE_URL,
   DEFAULT_LOOKBACK_DAYS,
+  InvalidEndpointError,
   SLACK_SETTINGS_VERSION,
   SlackSettingsStore,
   parseSlackSettings,
@@ -73,13 +74,34 @@ describe('SlackSettingsStore：預設與明確設定', () => {
     assert.equal(store.apiBaseUrl(), 'https://slack.internal.example.com/api')
   })
 
-  it('不合法的端點清為預設，而非被原樣接受', () => {
+  it('an invalid endpoint is refused, and the stored one stays (settings-sections)', () => {
+    // It used to clear to the default: a typo erased the user's custom endpoint and said nothing.
     const store = new SlackSettingsStore(settingsPath)
     store.load()
     store.setApiBaseUrl('https://ok.example.com/api')
-    store.setApiBaseUrl('http://downgrade.example.com/api')
+    assert.throws(() => store.setApiBaseUrl('http://downgrade.example.com/api'), InvalidEndpointError)
 
-    assert.equal(store.apiBaseUrl(), DEFAULT_API_BASE_URL, '降級的 scheme 不該留下任何值')
+    assert.equal(store.apiBaseUrl(), 'https://ok.example.com/api', 'the downgraded scheme leaves no value')
+    const reloaded = new SlackSettingsStore(settingsPath)
+    reloaded.load()
+    assert.equal(reloaded.apiBaseUrl(), 'https://ok.example.com/api')
+  })
+
+  it('a stored invalid endpoint still loads as the default', () => {
+    fs.writeFileSync(settingsPath, JSON.stringify({ version: SLACK_SETTINGS_VERSION, slack: { apiBaseUrl: 'http://downgrade.example.com/api' } }))
+    const store = new SlackSettingsStore(settingsPath)
+    store.load()
+    assert.equal(store.apiBaseUrl(), DEFAULT_API_BASE_URL)
+  })
+
+  it('a failed write leaves the settings as they were', () => {
+    const store = new SlackSettingsStore(settingsPath)
+    store.load()
+    store.setLookbackDays(7)
+    fs.mkdirSync(`${settingsPath}.tmp`)
+    assert.throws(() => store.setLookbackDays(14))
+    assert.throws(() => store.setApiBaseUrl('https://other.example.com/api'))
+    assert.equal(store.lookbackDays(), 7)
     assert.equal(store.usesDefaultEndpoint(), true)
   })
 

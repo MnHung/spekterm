@@ -13,7 +13,7 @@ shell session 只有終端 view。
 ## 切換 view
 
 在 session 上用 **顯示對話 view** 與 **顯示終端 view** 切換。這個選擇**一次套用到所有** agent session，
-並跨重啟保留，所以新開的 session 會用你上次用的 view。
+並跨重啟保留，所以新開的 session 會用你上次用的 view。同一個選擇也在 **設定 → Agent 與 session → Agent session 顯示**。
 
 切換不會重新啟動任何東西。兩種 view 呈現的是同一個執行中的 `claude` 行程；對話 view 在畫面上時，
 終端在底下照常執行。
