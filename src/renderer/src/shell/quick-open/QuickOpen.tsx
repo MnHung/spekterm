@@ -170,7 +170,7 @@ export function QuickOpen({
                     onOpen(relPath)
                   }}
                   className={`flex cursor-pointer items-baseline gap-2 px-4 py-1.5 text-sm ${
-                    index === active ? 'bg-hover text-ink' : 'text-ink-muted'
+                    index === active ? 'bg-hover text-ink' : 'text-ink-dim'
                   }`}
                 >
                   <span className="shrink-0">{baseNameOf(shown)}</span>

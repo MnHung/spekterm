@@ -128,7 +128,7 @@ export function SlackSettings(): React.JSX.Element {
 
   return (
     <section className="flex flex-col gap-4" aria-label={t('slack.title')}>
-      <p className="text-2xs text-ink-muted">{t('slack.description')}</p>
+      <p className="text-2xs text-ink-dim">{t('slack.description')}</p>
 
       {/* 憑證 —— 唯寫的輸入框，狀態只以「已設定／未設定」呈現。 */}
       <div className="flex flex-col gap-2">
@@ -153,7 +153,7 @@ export function SlackSettings(): React.JSX.Element {
               aria-label={t('slack.saveToken', { name: t(`slack.${kind}`) })}
               disabled={drafts[kind].trim() === ''}
               onClick={() => applyToken(kind, drafts[kind])}
-              className="shrink-0 rounded px-2 py-1 text-2xs text-ink-muted hover:bg-hairline/40 disabled:opacity-40"
+              className="shrink-0 rounded px-2 py-1 text-2xs text-ink-dim hover:bg-hairline/40 disabled:opacity-40"
             >
               {t('common.save')}
             </button>
@@ -162,7 +162,7 @@ export function SlackSettings(): React.JSX.Element {
               aria-label={t('slack.clearToken', { name: t(`slack.${kind}`) })}
               disabled={!state.configured[kind]}
               onClick={() => applyToken(kind, null)}
-              className="shrink-0 rounded px-2 py-1 text-2xs text-ink-muted hover:bg-hairline/40 disabled:opacity-40"
+              className="shrink-0 rounded px-2 py-1 text-2xs text-ink-dim hover:bg-hairline/40 disabled:opacity-40"
             >
               {t('common.clear')}
             </button>
@@ -178,7 +178,7 @@ export function SlackSettings(): React.JSX.Element {
       */}
       <div className="flex flex-col gap-1" aria-label={t('slack.status')}>
         <span className="text-2xs font-bold text-ink">{t('slack.status')}</span>
-        <span className="text-2xs text-ink-muted">{t(status.key, status.options)}</span>
+        <span className="text-2xs text-ink-dim">{t(status.key, status.options)}</span>
         {state.status.failure !== undefined ? (
           <span className="text-2xs text-ink-faint">
             {t('slack.statusFailureCount', { count: state.status.failure.count })}
@@ -199,7 +199,7 @@ export function SlackSettings(): React.JSX.Element {
       {/* 即時路徑 —— **它是加速器**，off 與 degraded 必須分得出來（前者沒開，後者壞了）。 */}
       <div className="flex flex-col gap-1" aria-label={t('slack.realtimeLabel')}>
         <span className="text-2xs font-bold text-ink">{t('slack.realtimeLabel')}</span>
-        <span className="text-2xs text-ink-muted">
+        <span className="text-2xs text-ink-dim">
           {t(REALTIME_COPY[state.status.realtime])}
         </span>
       </div>
@@ -207,7 +207,7 @@ export function SlackSettings(): React.JSX.Element {
       {/* 身分 —— 推導出來的，沒有輸入框。 */}
       <div className="flex flex-col gap-1">
         <span className="text-2xs font-bold text-ink">{t('slack.identity')}</span>
-        <span className="text-2xs text-ink-muted">{identity}</span>
+        <span className="text-2xs text-ink-dim">{identity}</span>
       </div>
 
       {/* 回看範圍。 */}
@@ -263,7 +263,7 @@ export function SlackSettings(): React.JSX.Element {
                 setEndpointDraft('')
               })
             }
-            className="shrink-0 rounded px-2 py-1 text-2xs text-ink-muted hover:bg-hairline/40 disabled:opacity-40"
+            className="shrink-0 rounded px-2 py-1 text-2xs text-ink-dim hover:bg-hairline/40 disabled:opacity-40"
           >
             {t('common.reset')}
           </button>

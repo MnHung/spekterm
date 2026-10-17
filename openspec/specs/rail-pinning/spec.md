@@ -201,7 +201,7 @@ folder 的標題列 SHALL 另提供**右鍵選單**，其中含切換置頂與�
 - **WHEN** 使用者取消一個 folder 的置頂
 - **THEN** 它成為其餘段的第一個，其餘 folder 的相對順序不變
 
-### Requirement: 置頂的指示恆常呈現，未置頂的入口只在指標懸停時呈現
+### Requirement: 置頂的指示恆常呈現，未置頂的入口只在指標懸停或焦點位於該列時呈現
 
 置頂控制項的可見性 SHALL 依它當下扮演的角色而定：
 
@@ -209,6 +209,22 @@ folder 的標題列 SHALL 另提供**右鍵選單**，其中含切換置頂與�
   對照分界的位置就看出哪些項目是置頂的，也要能知道這一列可以被取消置頂。
 - **未置頂的項目 SHALL 只在指標懸停於該列時呈現它** —— 它此時只是一個入口，與同列既有的其他
   懸停控制項同一族。
+
+The row's hover controls (an unpinned pin, new session, remove) SHALL also be shown while keyboard focus
+is inside the row, so a keyboard user never tabs onto a control that cannot be seen. Focus that a pointer
+click leaves on the row SHALL NOT show them. While they are not shown they SHALL NOT narrow the folder's
+name: invisible controls that kept their place left the name a few characters wide in a rail with room to
+spare. While they are shown they MAY cover the end of the row (the session count, the state dot).
+
+#### Scenario: Keyboard focus in the row shows its controls
+
+- **WHEN** keyboard focus moves into an unpinned folder row and the pointer is elsewhere
+- **THEN** the row shows its pin, new-session and remove controls
+
+#### Scenario: Hidden controls do not narrow the name
+
+- **WHEN** the pointer is not on an unpinned folder row and keyboard focus is not in it
+- **THEN** the space for the folder's name reaches under where its hidden controls are
 
 #### Scenario: 置頂的列在未懸停時仍呈現指示
 

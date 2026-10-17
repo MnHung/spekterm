@@ -227,7 +227,7 @@ export function SessionTabs({
                 aria-label={t('sessions.closeSession', { label })}
                 title={t('sessions.closeSession', { label: full })}
                 onClick={() => onClose(session.id)}
-                className="cursor-pointer rounded px-1 text-sm text-ink-faint opacity-0 group-hover:opacity-100 hover:text-danger"
+                className="cursor-pointer rounded px-1 text-sm text-ink-faint opacity-0 group-hover:opacity-100 group-has-[:focus-visible]:opacity-100 hover:text-danger"
               >
                 ✕
               </button>
@@ -255,14 +255,14 @@ export function SessionTabs({
       {focused?.spawnTarget === 'claude' && (
         <button
           type="button"
-          className="shrink-0 cursor-pointer rounded px-2 py-0.5 text-xs text-ink-faint transition-colors hover:bg-surface hover:text-ink focus:bg-surface focus:text-ink focus:outline-none"
+          className="shrink-0 cursor-pointer rounded px-2 py-0.5 text-xs text-ink-faint transition-colors hover:bg-hover hover:text-ink focus:outline-none focus-visible:bg-hover focus-visible:text-ink focus-visible:ring-1 focus-visible:ring-accent"
           aria-label={
             view === 'conversation' ? t('conversation.showTerminal') : t('conversation.showConversation')
           }
           aria-pressed={view === 'conversation'}
           onClick={() => onSetView(view === 'conversation' ? 'terminal' : 'conversation')}
         >
-          {view === 'conversation' ? t('sessions.tabs') : t('conversation.label')}
+          {view === 'conversation' ? t('stage.terminal') : t('conversation.label')}
         </button>
       )}
 

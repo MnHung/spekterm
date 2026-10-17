@@ -36,8 +36,11 @@ interface WorkspaceRailProps {
 // `cursor-pointer` 不是多餘的：瀏覽器的 UA 樣式給 `button` 一條 `cursor: default`，而 Tailwind v4
 // 的 preflight **不再**把它改回 `pointer`（v3 會）—— 於是按鈕會蓋掉外層那一列設的 `cursor-pointer`，
 // 滑鼠停在 ＋／✕ 上看到的是箭頭，儘管它們就在一列食指之中。
-const ICON_BUTTON_CLASS =
-  'shrink-0 cursor-pointer rounded px-1.5 py-0.5 text-sm opacity-0 group-hover:opacity-100'
+//
+// **Shown on hover and on keyboard focus, never on a click's focus.** Clicking a row focuses it; reading
+// focus-within would keep its controls up after every click. `:focus-visible` is the keyboard's focus.
+const REVEAL_CLASS = 'opacity-0 group-hover/row:opacity-100 group-has-[:focus-visible]/row:opacity-100'
+const ICON_BUTTON_CLASS = `shrink-0 cursor-pointer rounded px-1.5 py-0.5 text-sm ${REVEAL_CLASS}`
 
 function FolderIcon(): React.JSX.Element {
   return (
@@ -260,7 +263,7 @@ function SessionGroup({
                   event.stopPropagation()
                   onCloseSession(session.id)
                 }}
-                className="shrink-0 cursor-pointer rounded px-1 text-ink-faint opacity-0 group-hover/session:opacity-100 hover:text-danger"
+                className="shrink-0 cursor-pointer rounded px-1 text-ink-faint opacity-0 group-hover/session:opacity-100 group-has-[:focus-visible]/session:opacity-100 hover:text-danger"
               >
                 ✕
               </button>
@@ -477,6 +480,45 @@ function RailRow({
       ]
     : []
 
+  // Pinned (or locked) is a state and stays in the row; unpinned it is one of the hover controls.
+  const pinShown = item.pinLocked === true || item.pinned
+  const pinButton = (
+          <button
+            type="button"
+            disabled={item.pinLocked === true}
+            aria-disabled={item.pinLocked === true ? 'true' : undefined}
+            aria-label={
+              item.pinLocked === true
+                ? t('rail.globalPinned', { name: item.name })
+                : item.pinned
+                  ? t('rail.unpinFolder', { name: item.name })
+                  : t('rail.pinFolder', { name: item.name })
+            }
+            title={
+              item.pinLocked === true
+                ? t('rail.globalPinnedTooltip')
+                : item.pinned
+                  ? t('rail.unpinTooltip')
+                  : t('rail.pinTooltip')
+            }
+            onClick={(event) => {
+              event.stopPropagation()
+              onTogglePin?.()
+            }}
+            className={
+              'shrink-0 rounded px-1.5 py-0.5 ' +
+              (item.pinLocked === true
+                ? // 停用：置灰、游標不是 pointer、恆常呈現（它傳達的是狀態，不是一個入口）。
+                  'cursor-default text-ink-faint opacity-40 '
+                : item.pinned
+                  ? 'cursor-pointer text-accent hover:text-ink '
+                  : `cursor-pointer text-ink-faint ${REVEAL_CLASS} hover:text-accent `)
+            }
+          >
+            <PinIcon filled={item.pinned} />
+          </button>
+  )
+
   return (
     <li
       ref={blockRef}
@@ -530,7 +572,7 @@ function RailRow({
         title={urgent ? `${item.title} — ${t('rail.mostUrgent', { state: rowStateWords(urgent) })}` : item.title}
         className={
           // select-none：拖曳時不該把名稱與分支反白選起來。
-          'flex items-center gap-2 px-3 py-2 text-base select-none ' +
+          'group/row relative flex items-center gap-2 px-3 py-2 text-base select-none ' +
           // 靜止時是 pointer（食指）—— 這一列**點一下是有作用的**（選中這個 repo），而那是
           // 使用者在它身上最常做的事；拖曳是偶爾為之。游標宣告主要的可供性（design D8）。
           // 拖曳中的 grabbing 由 `index.css` 的 `body[data-dragging]` 全域覆蓋（它必須蓋過
@@ -554,12 +596,12 @@ function RailRow({
               event.stopPropagation()
               onToggle()
             }}
-            className="w-3 shrink-0 cursor-pointer text-2xs text-ink-faint hover:text-ink"
+            className="-my-1 w-4 shrink-0 cursor-pointer py-1 text-2xs text-ink-faint hover:text-ink"
           >
             {expanded ? '▾' : '▸'}
           </button>
         ) : (
-          <span className="w-3 shrink-0" aria-hidden="true" />
+          <span className="w-4 shrink-0" aria-hidden="true" />
         )}
 
         {item.icon}
@@ -604,40 +646,22 @@ function RailRow({
           一個入口（與 ＋／✕ 同族，hover 才出現）。因此不能直接沿用 `ICON_BUTTON_CLASS`
           —— 那個 class 帶著 `opacity-0`。
         */}
-        <button
-          type="button"
-          disabled={item.pinLocked === true}
-          aria-disabled={item.pinLocked === true ? 'true' : undefined}
-          aria-label={
-            item.pinLocked === true
-              ? t('rail.globalPinned', { name: item.name })
-              : item.pinned
-                ? t('rail.unpinFolder', { name: item.name })
-                : t('rail.pinFolder', { name: item.name })
-          }
-          title={
-            item.pinLocked === true
-              ? t('rail.globalPinnedTooltip')
-              : item.pinned
-                ? t('rail.unpinTooltip')
-                : t('rail.pinTooltip')
-          }
-          onClick={(event) => {
-            event.stopPropagation()
-            onTogglePin?.()
-          }}
-          className={
-            'shrink-0 rounded px-1.5 py-0.5 ' +
-            (item.pinLocked === true
-              ? // 停用：置灰、游標不是 pointer、恆常呈現（它傳達的是狀態，不是一個入口）。
-                'cursor-default text-ink-faint opacity-40 '
-              : item.pinned
-                ? 'cursor-pointer text-accent hover:text-ink '
-                : 'cursor-pointer text-ink-faint opacity-0 group-hover:opacity-100 hover:text-accent ')
-          }
-        >
-          <PinIcon filled={item.pinned} />
-        </button>
+        {/*
+          A pinned row keeps its pin in view, at the row's end (inside the controls below). This invisible
+          copy holds that place so the name and the count stop before it.
+        */}
+        {pinShown ? (
+          <span aria-hidden="true" className="invisible shrink-0 px-1.5 py-0.5">
+            <PinIcon filled />
+          </span>
+        ) : null}
+
+        {/*
+          The hover controls float over the row's right end instead of taking width: invisible controls that
+          kept their place left the name a few characters wide ("api-…" in a 250px rail). Their backing is
+          the row's own background, so what they cover (the count, the state dot) is hidden while they show.
+        */}
+        <span className="absolute inset-y-0 right-3 flex items-center group-hover/row:bg-inherit group-has-[:focus-visible]/row:bg-inherit">
 
         {/* 在 rail 上看得到 session，就該能在原地開一個 —— 不必先切到主舞台。 */}
         <button
@@ -673,6 +697,8 @@ function RailRow({
             ✕
           </button>
         )}
+        {pinButton}
+        </span>
       </div>
 
       {expanded && sessions.length > 0 && (

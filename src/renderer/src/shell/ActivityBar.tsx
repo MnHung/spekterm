@@ -138,6 +138,14 @@ export function ActivityBar(): React.JSX.Element {
 
   // Sessions 恆為當前 view；**Search 仍是停用的 placeholder**
   //（`workspace-layout`：尚未實作的入口為停用狀態）。Handoffs 已由 `agent-intake-inbox` 接上。
+  // The entry the user is in: Sessions is the base view; Settings, the inbox and the metrics are while
+  // they are open. Marking every enabled entry left no way to tell where one is.
+  const isCurrent = (id: string): boolean =>
+    id === 'sessions' ||
+    (id === 'settings' && settingsOpen) ||
+    (id === 'handoffs' && intakeOpener !== null) ||
+    (id === 'insights' && insightsOpener !== null)
+
   const activate = (id: string, element: HTMLElement): void => {
     if (id === 'settings') setSettingsOpen(true)
     if (id === 'insights') setInsightsOpener(element)
@@ -181,14 +189,16 @@ export function ActivityBar(): React.JSX.Element {
               disabled={!item.enabled}
               // `aria-label` 同時是探針的選擇器（自字典取字串，不硬編）—— 見「aria-label 是選擇器」。
               aria-label={label}
-              aria-current={item.enabled ? 'page' : undefined}
+              aria-current={item.enabled && isCurrent(item.id) ? 'page' : undefined}
               onClick={item.enabled ? (event) => activate(item.id, event.currentTarget) : undefined}
               title={item.enabled ? label : t('activityBar.comingSoon', { label })}
               className={
                 'relative flex h-9 w-9 items-center justify-center rounded-md transition-colors ' +
-                (item.enabled
-                  ? 'bg-accent/10 text-accent'
-                  : 'text-ink-faint opacity-40 hover:bg-transparent')
+                (!item.enabled
+                  ? 'text-ink-faint opacity-40 hover:bg-transparent'
+                  : isCurrent(item.id)
+                    ? 'bg-accent/10 text-accent'
+                    : 'cursor-pointer text-ink-dim hover:bg-hover hover:text-ink focus:outline-none focus-visible:ring-1 focus-visible:ring-accent')
               }
             >
               {item.icon}

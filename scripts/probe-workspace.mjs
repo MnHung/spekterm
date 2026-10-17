@@ -555,6 +555,11 @@ try {
   check(results, 'Sessions 可用且預設選取',
     byLabel('activityBar.sessions')?.disabled === false && byLabel('activityBar.sessions')?.current === 'page',
     JSON.stringify(byLabel('activityBar.sessions')))
+  // Only the entry the user is in is marked: an implementation that marks every enabled entry (as it once
+  // did) passes the check above.
+  check(results, 'Only Sessions is marked current while nothing is open',
+    activity.filter((item) => item.current === 'page').map((item) => item.label).join(',') === copy('activityBar.sessions'),
+    activity.map((item) => `${item.label}=${item.current}`).join(', '))
   // **尚未實作的入口自 `agent-intake-inbox` 起只剩 Search。** Settings 已實作（終端字型設定）、
   // 對話計量亦然，而 Handoffs 已由收件匣接上 —— 那不是對雛型的偏離，是兌現它（雛型枚舉的
   // 入口集合本來就有 Handoffs，它此前為停用只因為背後的能力尚未存在）。
@@ -1004,6 +1009,39 @@ try {
   check(results, '未置頂的列在未懸停時不呈現圖釘',
     (await app.client.evaluate(OPACITY_OF(PIN_BUTTON('repo-openspec')))) === '0',
     String(await app.client.evaluate(OPACITY_OF(PIN_BUTTON('repo-openspec')))))
+
+  // rail-pinning: hidden controls do not narrow the name, and keyboard focus in the row shows them. The
+  // controls were invisible before this too, yet kept their place and left the name a few characters wide:
+  // the assertion is on the name's box reaching under them, not on their opacity.
+  const ROW_LAYOUT = (name) => `(() => {
+    const pin = ${PIN_BUTTON(name)}
+    const row = pin?.closest('[role="button"]')
+    if (!row) return null
+    const nameBox = [...row.querySelectorAll('div')].find((d) => d.textContent === ${JSON.stringify(name)})
+    const controls = [...row.querySelectorAll('button')].filter((b) => !b.hasAttribute('aria-expanded'))
+    return {
+      nameRight: Math.round(nameBox?.getBoundingClientRect().right ?? -1),
+      controlsLeft: Math.round(Math.min(...controls.map((b) => b.getBoundingClientRect().left))),
+      opacities: controls.map((b) => getComputedStyle(b).opacity),
+    }
+  })()`
+  const hiddenLayout = await app.client.evaluate(ROW_LAYOUT('repo-openspec'))
+  check(results, 'Hidden row controls do not narrow the name',
+    hiddenLayout !== null && hiddenLayout.nameRight > hiddenLayout.controlsLeft &&
+      hiddenLayout.opacities.every((o) => o === '0'),
+    JSON.stringify(hiddenLayout))
+  // Keyboard focus, not a click's: focus the row, then Tab into its first control.
+  await app.client.evaluate(`${PIN_BUTTON('repo-openspec')}.closest('[role="button"]').focus()`)
+  // `lib/cdp.mjs`'s `pressKey` sends Tab with key code 0, which moves no focus; this one is the real key.
+  for (const type of ['keyDown', 'keyUp']) {
+    await app.client.send('Input.dispatchKeyEvent', { type, key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9 })
+  }
+  const focusedLayout = await pollUntil(app.client, ROW_LAYOUT('repo-openspec'),
+    (v) => v !== null && v.opacities.every((o) => o === '1'), 2000)
+  check(results, 'Keyboard focus in the row shows its controls',
+    focusedLayout !== null && focusedLayout.opacities.every((o) => o === '1'),
+    JSON.stringify(focusedLayout))
+  await app.client.evaluate('document.activeElement?.blur()')
 
   // ── 取消置頂的落點：其餘段的**首端**
   await app.client.evaluate(`${UNPIN_BUTTON('repo-plain')}.click()`)

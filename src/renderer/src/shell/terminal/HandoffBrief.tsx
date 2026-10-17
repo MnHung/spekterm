@@ -129,7 +129,7 @@ function HandoffBriefDialog({ session, onClose }: { session: SessionState; onClo
           ) : loaded.body === null ? (
             <p className="text-xs text-ink-faint">{t('handoffBrief.bodyUnavailable')}</p>
           ) : (
-            <p className="whitespace-pre-wrap break-words text-2xs text-ink-muted">{loaded.body}</p>
+            <p className="whitespace-pre-wrap break-words text-2xs text-ink-dim">{loaded.body}</p>
           )}
         </section>
 
@@ -140,7 +140,7 @@ function HandoffBriefDialog({ session, onClose }: { session: SessionState; onClo
               <p className="mt-1 text-2xs text-ink-faint">
                 {t('handoffBrief.reportedAt', { time: formatDateTime(new Date(loaded.report.reportedAt)) })}
               </p>
-              <p className="mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap break-words text-2xs text-ink-muted">
+              <p className="mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap break-words text-2xs text-ink-dim">
                 {loaded.report.summary}
               </p>
             </>

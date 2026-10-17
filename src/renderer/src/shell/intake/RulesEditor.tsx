@@ -67,7 +67,7 @@ export function RulesEditor(): React.JSX.Element {
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center gap-2">
-        <label className="text-2xs text-ink-muted" htmlFor="intake-fallback">
+        <label className="text-2xs text-ink-dim" htmlFor="intake-fallback">
           {t('intake.rules.fallback')}
         </label>
         <select
@@ -177,7 +177,7 @@ export function RulesEditor(): React.JSX.Element {
               aria-label={t('intake.rules.moveUp')}
               disabled={index === 0}
               onClick={() => move(index, index - 1)}
-              className="cursor-pointer rounded px-1 text-2xs text-ink-muted hover:bg-hairline/40 disabled:cursor-default disabled:opacity-30"
+              className="cursor-pointer rounded px-1 text-2xs text-ink-dim hover:bg-hairline/40 disabled:cursor-default disabled:opacity-30"
             >
               ↑
             </button>
@@ -186,7 +186,7 @@ export function RulesEditor(): React.JSX.Element {
               aria-label={t('intake.rules.moveDown')}
               disabled={index === config.rules.length - 1}
               onClick={() => move(index, index + 1)}
-              className="cursor-pointer rounded px-1 text-2xs text-ink-muted hover:bg-hairline/40 disabled:cursor-default disabled:opacity-30"
+              className="cursor-pointer rounded px-1 text-2xs text-ink-dim hover:bg-hairline/40 disabled:cursor-default disabled:opacity-30"
             >
               ↓
             </button>
@@ -194,7 +194,7 @@ export function RulesEditor(): React.JSX.Element {
               type="button"
               aria-label={t('intake.rules.remove')}
               onClick={() => persist({ ...config, rules: config.rules.filter((_, i) => i !== index) })}
-              className="cursor-pointer rounded px-1 text-2xs text-ink-muted hover:bg-hairline/40"
+              className="cursor-pointer rounded px-1 text-2xs text-ink-dim hover:bg-hairline/40"
             >
               ✕
             </button>

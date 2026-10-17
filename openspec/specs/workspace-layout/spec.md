@@ -137,6 +137,11 @@ SHALL NOT 於點擊後無聲無息。**已實作**的入口 SHALL 為可用狀�
 
 保留位置而非隱藏，是為了讓版面比例自第一天起就與雛型一致；標示停用而非靜默，是為了讓使用者知道那不是壞掉。
 
+Only the entry the user is in SHALL be marked as current: Sessions, the base view, unless Settings, the
+inbox or the conversation metrics is open, in which case that one is marked too. The other enabled entries
+SHALL look available but not current, with a hover and a keyboard focus style. Marking every enabled entry
+(as the bar once did) leaves no way to tell where one is.
+
 Settings 入口為**已實作**（開啟終端偏好設定介面，見 `terminal-preferences`）；對話計量入口為
 **已實作**；**Handoffs 入口為已實作**（開啟收件匣 overlay，見 `agent-intake`）；尚未實作而維持
 停用的入口為 Search。
@@ -163,6 +168,11 @@ Settings 入口為**已實作**（開啟終端偏好設定介面，見 `terminal
 
 - **WHEN** 使用者檢視 Sessions、Settings、對話計量或 Handoffs 入口
 - **THEN** 該入口為可用狀態
+
+#### Scenario: Only the entry the user is in is marked current
+
+- **WHEN** nothing is open over the main stage and the user looks at the activity bar
+- **THEN** Sessions is marked as current and no other entry is
 
 #### Scenario: 對話計量入口開啟 overlay
 

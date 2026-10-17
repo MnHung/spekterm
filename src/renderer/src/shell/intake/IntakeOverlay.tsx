@@ -225,7 +225,7 @@ export function IntakeOverlay({ onClose, opener }: IntakeOverlayProps): React.JS
           type="button"
           aria-label={t('intake.close')}
           onClick={close}
-          className="rounded px-2 py-1 text-2xs text-ink-muted hover:bg-hairline/40 focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          className="rounded px-2 py-1 text-2xs text-ink-dim hover:bg-hairline/40 focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         >
           ✕
         </button>
@@ -255,7 +255,7 @@ export function IntakeOverlay({ onClose, opener }: IntakeOverlayProps): React.JS
                 type="button"
                 aria-label={t('intake.dismissNotices')}
                 onClick={() => void window.workspace.intake.dismissNotices().then(reload)}
-                className="rounded px-2 py-0.5 text-2xs text-ink-muted hover:bg-hairline/40"
+                className="rounded px-2 py-0.5 text-2xs text-ink-dim hover:bg-hairline/40"
               >
                 {t('intake.dismissNotices')}
               </button>
@@ -272,7 +272,7 @@ export function IntakeOverlay({ onClose, opener }: IntakeOverlayProps): React.JS
             <ul className="flex flex-col gap-0.5">
               {notices.map((notice) => (
                 <li key={`${notice.key} ${notice.code}`} className="flex items-baseline gap-2">
-                  <span className="text-2xs text-ink-muted">
+                  <span className="text-2xs text-ink-dim">
                     {notice.overflow
                       ? t('intake.noticeOverflow')
                       : t(`intake.rejectReason.${notice.code}` as 'intake.rejectReason.MALFORMED')}
@@ -353,7 +353,7 @@ export function IntakeOverlay({ onClose, opener }: IntakeOverlayProps): React.JS
                       </span>
                       <OccurredAt at={item.occurredAt} />
                       <span className="flex-1" />
-                      <span className="text-2xs text-ink-muted">{t('intake.fromSession', { name: folderName })}</span>
+                      <span className="text-2xs text-ink-dim">{t('intake.fromSession', { name: folderName })}</span>
                       {/*
                         **逐則清除**：送出之後它會自己離開；這顆鈕給的是其餘的情形 —— 應用程式
                         重啟之後預填已經不在、或使用者決定不送了。它不刪紀錄也不碰 session。
@@ -409,7 +409,7 @@ export function IntakeOverlay({ onClose, opener }: IntakeOverlayProps): React.JS
 function tabClass(active: boolean): string {
   return (
     'rounded px-2 py-1 text-2xs transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-accent ' +
-    (active ? 'bg-accent/10 text-accent' : 'text-ink-muted hover:bg-hairline/40')
+    (active ? 'bg-accent/10 text-accent' : 'text-ink-dim hover:bg-hairline/40')
   )
 }
 
@@ -462,7 +462,7 @@ function IntakeCard({
         其餘資訊擠成好幾行；而 Slack 的標題就是本文裡那一則的第一行（dogfood 回報兩件事）。
       */}
       <div className="flex items-baseline gap-2 whitespace-nowrap">
-        <span className="text-2xs text-ink-muted">{item.actor}</span>
+        <span className="text-2xs text-ink-dim">{item.actor}</span>
         <span className="text-2xs text-ink-faint">{item.originLabel}</span>
         <OccurredAt at={item.occurredAt} />
         <span className="flex-1" />
@@ -481,7 +481,7 @@ function IntakeCard({
         **本文全文，純文字。** `whitespace-pre-wrap` 保留換行；沒有任何 markdown 渲染，
         因此文中的圖片與連結語法就是字面文字。
       */}
-      <p className="mt-2 whitespace-pre-wrap break-words text-2xs text-ink-muted">{item.body}</p>
+      <p className="mt-2 whitespace-pre-wrap break-words text-2xs text-ink-dim">{item.body}</p>
       <p className="mt-1 text-2xs text-ink-faint">{t('intake.bodyLength', { count: item.bodyLength })}</p>
 
       <div className="mt-2 flex items-center gap-2">
@@ -491,7 +491,7 @@ function IntakeCard({
           值為空（沒有被選定）時**一律**渲染佔位項：一個不在選項中的值會讓 select 顯示第一個
           選項、送出的卻是那個不存在的值。
         */}
-        <span className="text-2xs text-ink-muted">{t('intake.opensInLabel')}</span>
+        <span className="text-2xs text-ink-dim">{t('intake.opensInLabel')}</span>
         <select
           aria-label={t('intake.chooseFolder')}
           value={chosen}
@@ -525,7 +525,7 @@ function IntakeCard({
           type="button"
           aria-label={t('intake.dismiss')}
           onClick={() => void window.workspace.intake.dismiss(item.id, item.adapter).then(onChanged)}
-          className="cursor-pointer rounded px-2 py-1 text-2xs text-ink-muted hover:bg-hairline/40 focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          className="cursor-pointer rounded px-2 py-1 text-2xs text-ink-dim hover:bg-hairline/40 focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         >
           {t('intake.dismiss')}
         </button>

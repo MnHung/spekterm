@@ -254,8 +254,8 @@ export const MUTATIONS = [
   {
     name: 'transform-at-presentation',
     file: 'src/renderer/src/shell/intake/IntakeOverlay.tsx',
-    from: `      <p className="mt-2 whitespace-pre-wrap break-words text-2xs text-ink-muted">{item.body}</p>`,
-    to: `      <p className="mt-2 whitespace-pre-wrap break-words text-2xs text-ink-muted">`
+    from: `      <p className="mt-2 whitespace-pre-wrap break-words text-2xs text-ink-dim">{item.body}</p>`,
+    to: `      <p className="mt-2 whitespace-pre-wrap break-words text-2xs text-ink-dim">`
       + `{item.body.replace(/\\s+/g, ' ')}</p>`,
     expectRed: '交給 agent 的內容逐字元等於呈現給使用者的本文',
     why: '**呈現層多做了一次交付層沒做的轉換**（收斂空白）—— 於是使用者看到的與 agent 讀到的'

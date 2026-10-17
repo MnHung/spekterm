@@ -55,7 +55,7 @@ function Row({ event }: { event: ViewEvent }): React.JSX.Element | null {
   const { t } = useTranslation()
   if (event.kind === 'user') {
     return (
-      <div className="conversation-enter rounded border border-hairline bg-surface px-3 py-2">
+      <div className="conversation-enter rounded border border-hairline bg-panel px-3 py-2">
         <div className="mb-1 text-2xs uppercase tracking-wide text-ink-faint">
           {event.meta ? t('conversation.metaMessage') : t('conversation.userMessage')}
         </div>
@@ -83,7 +83,7 @@ function Row({ event }: { event: ViewEvent }): React.JSX.Element | null {
   if (event.kind === 'tool') {
     return (
       <div className="conversation-enter flex items-baseline gap-2 px-3 py-1 text-xs">
-        <span className="shrink-0 rounded bg-surface px-1.5 py-0.5 font-medium">{event.name}</span>
+        <span className="shrink-0 rounded bg-hover px-1.5 py-0.5 font-medium">{event.name}</span>
         {/* 辨識參數可能是一個路徑 —— 呈現為**不可導覽的純文字**（見主行程的邊界說明）。 */}
         {event.arg ? <span className="truncate text-ink-faint">{event.arg}</span> : null}
       </div>
@@ -346,7 +346,7 @@ function Composer({
       )}
       <div className="flex items-end gap-2">
         <textarea
-          className="min-h-[2.25rem] flex-1 resize-y rounded border border-hairline bg-surface px-2 py-1 text-sm text-ink outline-none focus:border-accent/50"
+          className="min-h-[2.25rem] flex-1 resize-y rounded border border-hairline bg-panel px-2 py-1 text-sm text-ink outline-none focus:border-accent/50"
           aria-label={t('conversation.composer')}
           rows={2}
           value={draft}

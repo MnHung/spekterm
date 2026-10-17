@@ -138,6 +138,17 @@ function AuthorizeDialog({
   onCancel: () => void
 }): React.JSX.Element {
   const { t } = useTranslation()
+  // **Esc cancels this dialog, not the whole overlay.** The overlay closes on Escape from a window
+  // listener; this one runs first (capture) and stops the key there.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      event.stopPropagation()
+      onCancel()
+    }
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => window.removeEventListener('keydown', onKeyDown, true)
+  }, [onCancel])
   const rows: [string, string][] = [
     [t('insights.report.authorize.period'), fmtRange(preview.from, preview.to)],
     [t('insights.report.authorize.projects'), String(preview.projects)],

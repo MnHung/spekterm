@@ -59,7 +59,7 @@ export function WorktreeBadge({
   const label = worktree.vcs === 'jj' ? `jj:${worktree.branch ?? ''}` : branch
 
   return (
-    <span className="min-w-0 shrink truncate rounded border border-line px-[6px] py-[1px] font-mono text-2xs text-ink-faint">
+    <span className="min-w-0 shrink truncate rounded border border-hairline px-[6px] py-[1px] font-mono text-2xs text-ink-faint">
       {label}
     </span>
   )
