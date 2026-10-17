@@ -26,6 +26,7 @@ The operations are:
 - renaming a session;
 - hibernating a running session;
 - closing a session;
+- keeping a session whose agent offered to close it (withdrawing the offer);
 - listing, accepting and ignoring inbox items;
 - reading handoff state and a handoff's brief;
 - reading OpenSpec changes, change details and specs;
@@ -63,8 +64,8 @@ Listing SHALL return:
 
 - the workspace folders, with id, name, branch, pinned state and whether they have OpenSpec, in rail order;
 - every session of the window, with id, folder (or the global item), target (agent or shell), label,
-  whether it is running, the agent's wait state for agent sessions, and its handoff lifecycle state and
-  lineage where it has them.
+  whether it is running, the agent's wait state for agent sessions, its handoff lifecycle state and
+  lineage where it has them, and whether its agent's close of itself is offered to the user.
 
 A change to any of these SHALL be sent to connected clients as a new complete list.
 
@@ -245,8 +246,8 @@ error.
 
 ### Requirement: With no window, session operations are refused rather than opening one
 
-While the application has no window, creating, waking, renaming, hibernating, closing and accepting SHALL be
-refused with an error stating that no window exists. The application SHALL NOT open a window for them.
+While the application has no window, creating, waking, renaming, hibernating, closing, keeping and accepting SHALL
+be refused with an error stating that no window exists. The application SHALL NOT open a window for them.
 
 This is a deliberate exception to "an action that targets the window while none exists first opens one"
 (`workspace-app-shell`). That rule serves an action the user takes at the desktop. Here the user is not at
@@ -269,6 +270,11 @@ sessions SHALL end with it, because nothing the window held outlives it. The con
 
 - **WHEN** the application has no window, and a client hibernates a session, then closes it
 - **THEN** both responses are errors stating that no window exists, no window opens, and the session is still persisted
+
+#### Scenario: No window refuses keeping
+
+- **WHEN** the application has no window, and a client keeps a session
+- **THEN** the response is an error stating that no window exists, and no window opens
 
 #### Scenario: Reloading the interface ends remote watches and keeps the connection
 
@@ -653,7 +659,7 @@ and error codes, which a client ignores when it does not know them.
 #### Scenario: The answer lists the new operations
 
 - **WHEN** a paired device authenticates
-- **THEN** the answer lists the operations the server accepts, including renaming, hibernating, closing, uploading an attachment and answering a prompt, and does not list authentication operations
+- **THEN** the answer lists the operations the server accepts, including renaming, hibernating, closing, keeping, uploading an attachment and answering a prompt, and does not list authentication operations
 
 ### Requirement: A device hibernates or closes a session through the desktop's own action, without taking the desktop away from the user
 
@@ -810,3 +816,64 @@ A client SHALL be told the reason as a value it may not know yet. Clients ignore
 
 - **WHEN** a client watches a shell session's terminal, and the shell exits
 - **THEN** the client is told the watch ended because the process exited
+
+### Requirement: A device sees and answers an agent's offer to close its own session
+
+When an agent's close of its own session is offered to the user (`agent-session-control`), the session list SHALL
+mark that session as offered for closing, and SHALL stop marking it as soon as the offer is withdrawn or the session
+stops running. A change of the mark SHALL be sent to connected clients as a new complete list, like any other change
+to the list, without waiting for an unrelated change.
+
+A device SHALL be able to answer the offer either way:
+
+- **keeping** the session withdraws the offer, with the effect of choosing to keep it on the desktop: the desktop's
+  views stop showing the offer, and the session keeps running. Keeping a session that has no offer SHALL succeed and
+  have no effect. Keeping is carried out quietly, as every session change a device requests;
+- **closing** is the device's ordinary close of the session, with its rules unchanged: a session that is not idle is
+  refused unless the device insists.
+
+Keeping SHALL be refused with a not-found error for a session that does not exist.
+
+The protocol document SHALL name, as a client obligation, that a client showing the session list offers both answers
+for a session marked as offered (closing through the close operation, keeping through the keep operation), and that
+choosing close there is the user's confirmation for the close.
+
+#### Scenario: An offer appears in the list when it is made
+
+- **WHEN** a client is connected, and the agent in session S closes its own session and its turn ends
+- **THEN** the client receives a session list in which S is marked as offered for closing and is running
+
+#### Scenario: An offer made with no other change still reaches the client
+
+- **WHEN** a client has received a session list in which S's turn has ended and S is not marked, and only then S's close of its own session is read and offered
+- **THEN** the client receives a session list in which S is marked as offered for closing
+
+#### Scenario: Keeping from a device withdraws the offer on both sides
+
+- **WHEN** S is offered for closing, and a client keeps S
+- **THEN** the response succeeds, the client receives a session list in which S is no longer marked, the desktop's views no longer show the offer, and S is still running
+
+#### Scenario: Keeping on the desktop clears the mark for devices
+
+- **WHEN** S is offered for closing, and the user chooses to keep it on the desktop
+- **THEN** a connected client receives a session list in which S is no longer marked
+
+#### Scenario: Typing into the session clears the mark for devices
+
+- **WHEN** S is offered for closing, and the user types into S on the desktop
+- **THEN** a connected client receives a session list in which S is no longer marked
+
+#### Scenario: Keeping a session with no offer has no effect
+
+- **WHEN** a client keeps a running session that is not offered for closing
+- **THEN** the response succeeds, and the session is still running and unmarked
+
+#### Scenario: Closing an offered session from a device closes it
+
+- **WHEN** S is offered for closing and its agent is waiting for input, and a client closes S without insisting
+- **THEN** the response succeeds, and S leaves the session list
+
+#### Scenario: A hibernated and woken session carries no old offer
+
+- **WHEN** S is offered for closing, the user hibernates S on the desktop, and later wakes it
+- **THEN** no session list a client receives after the hibernation marks S as offered

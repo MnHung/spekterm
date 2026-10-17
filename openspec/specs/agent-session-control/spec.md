@@ -344,9 +344,13 @@ pointer input. The offer SHALL NOT take keyboard focus.
 
 The offer SHALL be withdrawn, and the session kept, when:
 
-- the user chooses to keep it;
+- the user chooses to keep it, on the desktop or from a paired device (`remote-protocol`);
 - anything is typed into the session (the same rule that drops a waiting command);
-- the session's process ends for any other reason.
+- the session's process ends for any other reason, a hibernation included.
+
+The offer SHALL be one fact for the desktop's views and for paired devices: withdrawing it anywhere SHALL withdraw
+it everywhere, and a session whose process ended SHALL NOT be offered again when it is woken, unless its agent asks
+again. Every change to an offer SHALL reach paired devices when it happens (`remote-protocol`).
 
 Choosing to close SHALL be the user's own close, with the effects of the desktop's close. A hibernate command on the
 agent's own session, and every command on a descendant, SHALL NOT be offered: they are carried out as before. An
@@ -372,6 +376,11 @@ offer SHALL NOT survive the application quitting.
 
 - **WHEN** S is offered for closing, and the user types into S
 - **THEN** the offer is gone, and S is still running
+
+#### Scenario: A hibernated session loses its offer for good
+
+- **WHEN** S is offered for closing, the user hibernates S, and later wakes it
+- **THEN** S's views show no offer, and no paired device is told that S is offered
 
 #### Scenario: A descendant's close is not offered
 
