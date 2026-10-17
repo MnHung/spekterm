@@ -132,8 +132,10 @@ SHALL NOT 與終端偏好共用同一份檔案或同一個物件。
 （或反之），於是其後每一則 intake 都靜默地改道，**而介面上呈現的解析結果是誠實的** ——
 它報的就是那個錯誤的結果。使用者調整一次字型，收件匣就改了道。
 
-**規則的編輯入口 SHALL NOT 置於既有的偏好設定對話框之內** —— 該對話框的內容由另一個能力以
-列舉的方式規定，往其中加入本能力的區段將構成對該能力的修改。
+The rules editor SHALL be in the inbox, not in Settings. Settings is now the application's place for settings
+(see `terminal-preferences`), but the rules are not a knob of the application. They decide where each item in
+the inbox opens, and the user reads them together with those items. The inbox SHALL offer the editor as a view
+of its own, and Settings MAY offer a control that opens it (see `slack-intake-source`).
 
 持久化的內容 SHALL 以白名單判定：形狀不合的單條規則 SHALL 被忽略，SHALL NOT 使其餘規則失效。
 
@@ -151,6 +153,11 @@ SHALL NOT 與終端偏好共用同一份檔案或同一個物件。
 
 - **WHEN** 持久化的內容中有一條欄位型別不合的規則與數條合法規則
 - **THEN** 合法的規則照常生效
+
+#### Scenario: The rules editor is in the inbox
+
+- **WHEN** the user opens the inbox
+- **THEN** it offers the routing rules editor, and Settings has no rules editor of its own
 
 ### Requirement: 帶著接收端已解析目標的 intake 不比對規則，且其目標不可用時仍然拒絕
 
