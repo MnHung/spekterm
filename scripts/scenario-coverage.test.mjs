@@ -62,6 +62,7 @@ const COVERED_CHANGES = [
   'remote-prompts-attachments-rename',
   'remote-hibernate-close',
   'agent-session-control',
+  'remote-close-offer',
 ]
 
 /** change 的所在 —— 封存後它會搬到 `archive/` 之下，兩處都找。 */
@@ -2034,7 +2035,7 @@ export const TABLE = [
     'a click handler that does nothing', ''],
   ['The device list sent to the renderer carries no secret material', 'the remote state the renderer receives carries no credential, hash or private key', false,
     'project the device record as stored', 'read through the preload; unit level too: remote-service.test.ts'],
-  ['A device connects while no window exists', 'with no window: create, wake and accept answer NO_WINDOW, and the session list is empty and says so', false,
+  ['A device connects while no window exists', 'with no window: create, wake, accept and keep answer NO_WINDOW, and the session list is empty and says so', false,
     'answer the session list from the store with no window', 'unit level with no window registered; closing the window on Linux quits the app, so the macOS case is dogfood on a Mac'],
   // ── mobile-remote-bridge: remote-protocol ─────────────────────────────────────
   ['An unknown operation is refused without effect', 'an unknown operation, such as writing a file, is refused without effect and the connection stays open', false,
@@ -2085,7 +2086,7 @@ export const TABLE = [
     'select the item of a created session', ''],
   ['Waking a dormant session from a device', 'waking a dormant session from a device starts its process and lists it running', false,
     'answer wake without waking', 'the pid is found by the conversation id'],
-  ['No window refuses creation', 'with no window: create, wake and accept answer NO_WINDOW, and the session list is empty and says so', false,
+  ['No window refuses creation', 'with no window: create, wake, accept and keep answer NO_WINDOW, and the session list is empty and says so', false,
     'open a window for a device action', 'unit level: on Linux closing the window quits the app; dogfood on a Mac'],
   ['Reloading the interface ends remote watches and keeps the connection', 'reloading the interface ends remote watches and keeps the connection', false,
     'not ending watches on did-navigate', 'Page.reload, not location.reload (docs/lessons/probes.md)'],
@@ -2312,7 +2313,7 @@ export const TABLE = [
   ['An empty name hands naming back', 'an empty name hands naming back to the agent', false,
     'store the empty name', 'probe:remote runRename'],
   ['The answer lists the new operations', 'the authentication answer lists the operations, the new ones included', false,
-    'drop operations from the answer', 'probe:remote runRename (renaming, hibernating, closing, uploading, answering); unit: remote-server.test.ts (both answers)'],
+    'drop operations from the answer', 'probe:remote runRename (renaming, hibernating, closing, keeping, uploading, answering); unit: remote-server.test.ts (both answers)'],
 
   // ── remote-hibernate-close ──
   ['No window refuses hibernating and closing', 'hibernate and close: an unknown session is not found, and no window refuses both', false,
@@ -2402,7 +2403,7 @@ export const TABLE = [
   ["The agent's last words stay readable under the offer", 'the offer leaves the terminal under it reachable, and takes no focus', false,
     'a covering backdrop (control-offer-blocks-content)', 'probe:intake runSessionControl: a hit-test on the terminal under the offer, and focus outside it'],
   ['Keeping the session withdraws the offer', 'Keep withdraws the offer, and the session runs on', false,
-    'make Keep do nothing', 'probe:intake runSessionControl'],
+    'make Keep do nothing', 'probe:intake runSessionControl. Since remote-close-offer Keep also reaches the main process: probe:remote runCloseOffer ("the desktop\'s Keep clears the mark for devices")'],
   ['Typing into the session withdraws the offer', 'typing into the session withdraws the offer', false,
     'ignore keystrokes for offers', 'probe:intake runSessionControl; unit: "a keystroke into an offered session withdraws the offer"'],
   ["A descendant's close is not offered", "a descendant's close and the agent's own hibernation are carried out as before", false,
@@ -2472,6 +2473,29 @@ export const TABLE = [
     'drop the lineage on an invalid chain', 'unit: session-ancestry.test.ts'],
   ['The rail shows only the direct parent', '深度截斷於上限', false,
     'build the forest from the chain', 'unit: session-forest.test.ts nests by parentId; session-forest.ts is unchanged by this change'],
+  // ── remote-close-offer ──
+  ['An offer appears in the list when it is made', 'a close written inside the turn is marked when the turn ends', false,
+    'leave closeOffered out of the list', 'probe:remote runCloseOffer. Green without the offersChanged announcement: the mark rides on the wait state\'s change at the same turn end; the next row is the one that needs it'],
+  ['An offer made with no other change still reaches the client', 'an offer read after the turn ended reaches the client with no other change', false,
+    'no offersChanged wiring', 'probe:remote runCloseOffer: committed after an event shows the session ready and unmarked; marked within 700 ms, three times. **Without the time bound it was a false green** (ran): the 5 s list reconcile delivers the mark anyway'],
+  ['Keeping from a device withdraws the offer on both sides', "a device's keep succeeds, clears the mark and the desktop's card", false,
+    'withdraw in the main process without asking the window', 'probe:remote runCloseOffer; unit: "keep withdraws in the main process, then always asks the window"'],
+  ['Keeping on the desktop clears the mark for devices', "the desktop's Keep clears the mark for devices", false,
+    'Keep clears only the card (ran: red at this assertion only)', 'probe:remote runCloseOffer, a real click on the card\'s Keep. It does not time the mark: a withdrawal not announced still arrives by the 5 s reconcile (ran: green with offersChanged removed); the unit test "a keystroke, a failed offer and withdraw each announce once" is the carrier for the announcement'],
+  ['Typing into the session clears the mark for devices', 'typing into the session clears the mark for devices', false,
+    'withdraw on a keystroke without announcing', 'unit: "a keystroke, a failed offer and withdraw each announce once" is the discriminating carrier. probe:remote runCloseOffer is green without the announcement (ran): the 5 s reconcile delivers it'],
+  ['Keeping a session with no offer has no effect', 'keeping a session with no offer succeeds with no change', false,
+    'answer NOT_FOUND for a session with no offer', 'probe:remote runCloseOffer; unit: the window is asked even with no offer'],
+  ['Closing an offered session from a device closes it', 'closing an offered session that waits for input succeeds without forcing', true,
+    'treat an offered session as busy', 'probe:remote runCloseOffer. Green without this change: sessions.close is unchanged, and the row pins that an offered, waiting session is idle'],
+  ['A hibernated and woken session carries no old offer', 'an offered session hibernated and woken carries no old offer', false,
+    'isOffered without the process-change test (ran: red at this assertion only)', 'probe:remote runCloseOffer (Ctrl+Shift+H, then Wake on the desktop)'],
+  ['No window refuses keeping', 'with no window: create, wake, accept and keep answer NO_WINDOW', false,
+    'ask the renderer with no window', 'unit: remote-protocol.test.ts (the real host, no window); remote-host.test.ts'],
+  ['A hibernated session loses its offer for good', 'an offer ends with the next process start or end, silently', false,
+    'isOffered without the process-change test', 'unit: session-control.test.ts; probe:remote runCloseOffer ("an offered session hibernated and woken carries no old offer"). The desktop card is cleared on hibernation as before'],
+  ['An offered close notifies once', 'an offered turn raises exactly one waiting event, and no other attention event', true,
+    'raise an attention event for the offer', 'probe:remote runCloseOffer. Green without this change: it pins that no event was added'],
 ]
 
 /**

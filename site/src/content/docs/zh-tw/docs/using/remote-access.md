@@ -1,6 +1,6 @@
 ---
 title: 遠端存取
-description: 從手機連到 spekterm —— 看你的 session、讀取並回覆 agent、附上照片與檔案、回答它的提示、開新 session、改名、休眠或關閉 session，agent 在等你時收到通知。直接連線，不經中繼。
+description: 從手機連到 spekterm —— 看你的 session、讀取並回覆 agent、附上照片與檔案、回答它的提示、開新 session、改名、休眠或關閉 session、回應要求關閉自己的 agent，agent 在等你時收到通知。直接連線，不經中繼。
 sidebar:
   order: 7
 ---
@@ -25,6 +25,10 @@ change。agent 在等你時，手機會收到通知。
 手機可以讓 session 休眠（行程結束，session 留在原位，之後再喚醒），也可以關閉它（從你的工作區移除）。兩者都不會
 搶走你電腦上的鍵盤焦點，也不會改變你的選取。如果 session 正在忙 —— agent 在工作或在等你選擇、shell 正在跑指令，
 或 spekterm 判斷不出來 —— 手機會先被告知原因，問過你之後才照樣結束它。
+
+agent 要求關閉它自己的 session 時，spekterm 不會直接關，而是讓你決定（[交接](/zh-tw/docs/using/handoffs/)）；手機上也會出現同一個
+提議，附 **關閉** 與 **保留**。在任一邊回應都算數：在手機上保留，電腦上的提議就會消失；在電腦上保留或對那個 session
+打字，手機上的也會消失。agent 這一輪結束時，手機會照常通知你它在等你；提議本身則顯示在那個 session 上。
 
 ### 從手機回答提示
 

@@ -50,6 +50,15 @@ export interface HostDeps {
   /** Asks the window's interface to carry out an action; resolves with its outcome or rejects on timeout. */
   request: (contentsId: number, action: HostAction) => Promise<RendererOutcome>
   setRemoteWatched: (watchKey: string, sessionId: string | null) => void
+  /**
+   * An agent's offer to close its own session (`agent-session-control` D12), owned by `SessionControl`
+   * (`remote-close-offer` D1): whether one stands now, and withdrawing it in the main process (the window is asked
+   * here). Built after the host in `index.ts`, so passed as closures.
+   */
+  offers: {
+    offered(sessionId: string): boolean
+    withdraw(sessionId: string): boolean
+  }
   /** Where a device's attachments are stored (`remote-attachments.ts`); `null` until configured. */
   attachments?: AttachmentStore | null
   delay?: (ms: number) => Promise<void>
@@ -65,6 +74,13 @@ export interface HostDeps {
 const RENDERER_CODES: readonly ErrorCode[] = ['NOT_FOUND', 'CREATE_FAILED', 'FOLDER_REQUIRED', 'NO_WINDOW', 'TIMEOUT', 'BAD_PARAMS']
 
 const REAL_WAITS = { refresh: refreshWait, stateOf: waitStateOf, unsent: hasUnconfirmedSubmission }
+
+/** What the window's interface answered, as a device's result or error. */
+function fromRenderer(outcome: RendererOutcome): { sessionId: string } {
+  if (outcome.ok) return { sessionId: outcome.sessionId }
+  const code = (RENDERER_CODES as readonly string[]).includes(outcome.code) ? (outcome.code as ErrorCode) : 'CREATE_FAILED'
+  throw new RemoteError(code, outcome.message ?? 'the desktop could not carry it out')
+}
 
 function folderViews(folders: FolderLookup): FolderView[] {
   return folders.list().map((folder) => ({
@@ -116,6 +132,8 @@ export function createRemoteHost(deps: HostDeps): RemoteHost {
           ...(session.lineage
             ? { lineage: { parentId: session.lineage.parentId, ...(session.lineage.parentTitle ? { title: session.lineage.parentTitle } : {}) } }
             : {}),
+          // Only while it runs, whatever the record says: an end announced in advance is not timed (D5).
+          ...(live.has(session.id) && deps.offers.offered(session.id) ? { closeOffered: true as const } : {}),
         }
       })
       return { window: true, folders: folderViews(deps.folders), sessions }
@@ -276,10 +294,18 @@ export function createRemoteHost(deps: HostDeps): RemoteHost {
           if (reason) throw new RemoteError('SESSION_BUSY', `the session is busy (${reason}); send again with force to proceed`, { reason })
         }
       }
-      const outcome = await deps.request(contentsId, action)
-      if (outcome.ok) return { sessionId: outcome.sessionId }
-      const code = (RENDERER_CODES as readonly string[]).includes(outcome.code) ? (outcome.code as ErrorCode) : 'CREATE_FAILED'
-      throw new RemoteError(code, outcome.message ?? 'the desktop could not carry it out')
+      return fromRenderer(await deps.request(contentsId, action))
+    },
+
+    async keep(sessionId) {
+      const contentsId = deps.window()
+      if (contentsId === null) throw new RemoteError('NO_WINDOW', 'the desktop has no window open')
+      if (!record(sessionId)) throw new RemoteError('NOT_FOUND', `no session ${sessionId}`)
+      // The record first, so the list is right whatever the window does next (`remote-close-offer` D2).
+      deps.offers.withdraw(sessionId)
+      // Asked even when there was no offer: a retry after a timed-out attempt still clears the desktop's card.
+      fromRenderer(await deps.request(contentsId, { kind: 'withdraw-close', sessionId }))
+      return { sessionId }
     },
 
     dismissInbox(adapter, id) {

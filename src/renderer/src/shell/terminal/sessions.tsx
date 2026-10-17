@@ -204,8 +204,13 @@ export interface SessionsApi {
    */
   closeOffered(sessionId: string): boolean
   offerClose(sessionId: string): void
-  /** The user kept the session, or something was typed into it. */
+  /** The offer was taken back: the main process says so (a keystroke, a device's keep), or the user kept it. */
   withdrawCloseOffer(sessionId: string): void
+  /**
+   * The user chose Keep on the offer: the card goes at once, and the main process, which owns the offer for paired
+   * devices, is told (`remote-close-offer` D4).
+   */
+  keepCloseOffer(sessionId: string): void
   /** 重排同一個 folder 之內的 session 順序。索引是該 folder 之內的序位。 */
   reorder(folderId: string | null, fromIndex: number, toIndex: number): void
   /**
@@ -451,6 +456,13 @@ export function SessionsProvider({ children }: { children: React.ReactNode }): R
       return next
     })
   }, [])
+  const keepCloseOffer = useCallback(
+    (sessionId: string) => {
+      withdrawCloseOffer(sessionId)
+      window.workspace.handoff.keepCloseOffer(sessionId)
+    },
+    [withdrawCloseOffer],
+  )
   /** A shell's screen serialized when its hibernation was requested; it becomes the replay once the pty is gone. */
   const hibernationSnapshots = useRef(new Map<string, string>())
   /** sessionId → serialize that session's screen. Registered by `TerminalView`. */
@@ -857,6 +869,7 @@ export function SessionsProvider({ children }: { children: React.ReactNode }): R
       closeOffered: (sessionId) => closeOffers.has(sessionId),
       offerClose,
       withdrawCloseOffer,
+      keepCloseOffer,
       reorder,
       setOrder,
       attach,
@@ -868,6 +881,7 @@ export function SessionsProvider({ children }: { children: React.ReactNode }): R
       closeOffers,
       offerClose,
       withdrawCloseOffer,
+      keepCloseOffer,
       sessions,
       focused,
       attention,

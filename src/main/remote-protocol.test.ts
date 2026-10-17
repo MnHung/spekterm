@@ -48,13 +48,14 @@ test('an unknown operation is refused without effect, and the connection stays u
   assert.equal(list.ok, true)
 })
 
-test('with no window: create, wake and accept answer NO_WINDOW, and the session list is empty and says so', async () => {
+test('with no window: create, wake, accept and keep answer NO_WINDOW, and the session list is empty and says so', async () => {
   const conn = connection()
   const session = openRemoteSession(noWindowHost(), conn)
   for (const [m, p] of [
     ['sessions.create', { folderId: 'f1', target: 'claude' }],
     ['sessions.wake', { sessionId: 's1' }],
     ['inbox.accept', { adapter: 'file', id: 'i1', folderId: 'f1' }],
+    ['sessions.keep', { sessionId: 's1' }],
   ] as const) {
     const response = await call(session, conn, m, p)
     assert.equal(response.e?.code, 'NO_WINDOW', m)
@@ -198,4 +199,20 @@ test('hibernate and close read force as true only, refuse a non-boolean, and nee
     assert.equal((await call(session, conn, m, { sessionId: 's1', force: 'yes' })).e?.code, 'BAD_PARAMS')
     assert.equal((await call(session, conn, m, {})).e?.code, 'BAD_PARAMS')
   }
+})
+
+test('sessions.keep needs a session id and goes to the host', async () => {
+  const asked: string[] = []
+  const host = {
+    keep: async (sessionId: string) => {
+      asked.push(sessionId)
+      return { sessionId }
+    },
+  } as Partial<RemoteHost> as RemoteHost
+  const conn = connection()
+  const session = openRemoteSession(host, conn)
+  assert.deepEqual((await call(session, conn, 'sessions.keep', { sessionId: 's1' })).r, { sessionId: 's1' })
+  assert.equal((await call(session, conn, 'sessions.keep', {})).e?.code, 'BAD_PARAMS')
+  assert.equal((await call(session, conn, 'sessions.keep', { sessionId: 3 })).e?.code, 'BAD_PARAMS')
+  assert.deepEqual(asked, ['s1'])
 })

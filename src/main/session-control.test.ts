@@ -53,6 +53,8 @@ function harness() {
   const rejects: { code: IntakeRejection; failure: FailureContext }[] = []
   const reported: IntakeRejection[] = []
   const refreshed: string[] = []
+  let announced = 0
+  let clock = 10_000
 
   const control = new SessionControl({
     sessions: () => [...sessions.values()],
@@ -87,6 +89,8 @@ function harness() {
       return { ok: false, code, consume: true, notify: true, detail }
     },
     reportFailure: (code) => reported.push(code),
+    offersChanged: () => announced++,
+    now: () => clock,
   })
 
   let n = 0
@@ -117,6 +121,8 @@ function harness() {
     setEvents: (on: boolean) => (eventsOn = on),
     setGate: (next: () => Promise<GateResult>) => (gate = next),
     setAnswer: (next: (action: HostAction) => RendererOutcome) => (answer = next),
+    announced: () => announced,
+    setClock: (at: number) => (clock = at),
   }
 }
 
@@ -447,7 +453,94 @@ describe("the agent's own close is offered (D12)", () => {
     const h = harness()
     h.deliver(P, 'close')
     await flush()
+    h.lastChange.set(P, 10_001)
     h.control.processEnded(P)
     assert.equal(h.control.isOffered(P), false)
+  })
+})
+
+describe('offers are one record, announced on every change (remote-close-offer D1, D3)', () => {
+  // Written at the current clock, so a process change before it does not make the command itself stale (D11).
+  const offered = async (h: ReturnType<typeof harness>, id = P, at = 10_000) => {
+    h.deliver(id, 'close', {}, at)
+    await flush()
+    assert.equal(h.control.isOffered(id), true)
+  }
+
+  it('making an offer announces it once; a second self-close of an offered session does not', async () => {
+    const h = harness()
+    await offered(h)
+    assert.equal(h.announced(), 1)
+    h.deliver(P, 'close')
+    await flush()
+    assert.equal(h.announced(), 1)
+  })
+
+  it('a keystroke, a failed offer and withdraw each announce once; on an unoffered session never', async () => {
+    const h = harness()
+    await offered(h)
+    h.type(P)
+    assert.equal(h.announced(), 2, 'keystroke')
+    h.type(P)
+    assert.equal(h.announced(), 2, 'keystroke with no offer')
+
+    assert.equal(h.control.withdraw(C), false)
+    await offered(h, C)
+    const before = h.requests.length
+    assert.equal(h.control.withdraw(C), true)
+    assert.equal(h.control.isOffered(C), false)
+    assert.equal(h.announced(), 4, 'withdraw')
+    assert.equal(h.requests.length, before, 'withdraw does not contact the window')
+
+    h.setAnswer(() => ({ ok: false, code: 'TIMEOUT' }))
+    h.deliver(C2, 'close')
+    await flush()
+    assert.equal(h.control.isOffered(C2), false)
+    assert.equal(h.announced(), 6, 'offered, then taken back by the failed request')
+  })
+
+  it("processEnded keeps a pending command's session's offer and announces nothing", async () => {
+    const h = harness()
+    await offered(h)
+    h.inTurn.add(P)
+    h.deliver(C, 'close', { target: 'alpha-p' })
+    assert.equal(h.announced(), 1)
+    h.control.processEnded(P)
+    assert.equal(h.control.isOffered(P), true)
+    assert.equal(h.announced(), 1)
+  })
+
+  it('an offer ends with the next process start or end, silently; one before the offer does not end it', async () => {
+    const h = harness()
+    h.lastChange.set(P, 9_000)
+    await offered(h)
+    h.setClock(12_000)
+    assert.equal(h.control.isOffered(P), true, 'a change before the offer')
+
+    h.lastChange.set(P, 10_500)
+    assert.equal(h.control.isOffered(P), false, 'a later start or end')
+    assert.equal(h.announced(), 1, 'reading a stale offer announces nothing')
+    assert.equal(h.control.withdraw(P), false, 'a stale offer is none')
+    assert.equal(h.announced(), 1)
+  })
+
+  it('a self-close after a stale offer is a fresh offer, announced', async () => {
+    const h = harness()
+    await offered(h)
+    h.lastChange.set(P, 10_500)
+    h.setClock(11_000)
+    await offered(h, P, 11_000)
+    assert.equal(h.announced(), 2)
+  })
+
+  it('a failed rename or hibernate of an offered session keeps the offer', async () => {
+    const h = harness()
+    await offered(h, C)
+    h.setAnswer(() => ({ ok: false, code: 'TIMEOUT' }))
+    h.deliver(P, 'rename', { target: 'alpha-c', name: 'x' })
+    h.deliver(P, 'hibernate', { target: 'alpha-c' })
+    await flush()
+    assert.equal(h.control.isOffered(C), true)
+    assert.equal(h.announced(), 1)
   })
 })

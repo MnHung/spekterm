@@ -74,7 +74,8 @@ ones those sessions handed off in turn. Ask in plain words:
 - **An agent never closes its own session by itself.** When it asks to, it finishes its reply, and the
   session then shows **The agent asked to close this session** with **Close** and **Keep**. The reply
   stays readable and scrollable underneath; nothing closes until you choose **Close**. Typing into the
-  session counts as keeping it.
+  session counts as keeping it. A paired phone shows the same offer and can answer it
+  ([Remote access](/docs/using/remote-access/)); answering on either side answers it on both.
 - **Typing into that session cancels a waiting close or hibernate**: you have taken it back. So does
   hibernating, closing, or waking it yourself. A waiting command is also dropped when spekterm quits.
 - The agent can only act on its own subtree. Asking it to close its parent, a sibling, or an unrelated

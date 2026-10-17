@@ -551,6 +551,28 @@ its two buttons take the pointer, so the reply under it stays selectable and scr
 terminal under it, and a covering backdrop turns that red. It takes no focus. A descendant's close and the
 agent's own hibernation are not offered: "close the finished handoffs" stays one request.
 
+**A paired device sees the offer and answers it** (`remote-close-offer`: `closeOffered` in the session list,
+`sessions.keep`). Three things that were harmless while only the window showed the offer, and fail silently once
+it leaves the window:
+
+- **The main process owns the offer** (`SessionControl`), and the list reads it there. So every way the user
+  answers must reach it: the desktop's Keep sends `handoff.keepCloseOffer` besides clearing the card. Clearing
+  only the card left the main process's record standing, and a phone would show an offer the user declined.
+- **An offer ends with the next process start or end, by time, not by wiring.** It records when it was made and
+  is stale once `lastProcessChangeAt` is later. The first plan, clearing it from `onPtyChange` as waiting
+  commands are, depended on the wiring whose absence caused the bug, and missed a race: a wake that spawns before
+  the hibernated pty's exit arrives makes that exit ignored, so no `onPtyChange` fires and the woken session
+  would show the old offer. The list also requires the session to be live, since an end a command announced in
+  advance (`expectCommandEnd`) is not timed.
+- **Nothing else announces an offer at once.** It usually rides on the wait state's change at the same turn end,
+  and the list's 5 s reconcile (while a device is connected) delivers it anyway, later. Both hide a missing
+  announcement: the first control group of the probe stayed green until the late-read step (the command read after
+  the turn ended, as the watcher's late event or the 30 s re-read do) asserted on time, ~160 ms with
+  `offersChanged` against 1.4–2.1 s without. **An "it arrives" assertion on the session list proves nothing while
+  that reconcile runs; assert how soon.** And a failed
+  request drops the offer only when it was the `offer-close` itself: a parent's rename of an offered child that
+  timed out used to drop the child's offer while its card stayed.
+
 ### Classification and delivery
 
 - `CONTROL_UNAVAILABLE` (agent events off) and `CONTROL_NO_WINDOW` are **temporary**, as `agent-intake` rules a

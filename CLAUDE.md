@@ -84,7 +84,8 @@ OpenSpec 結構的側欄，讓使用者不必另外開 IDE 就能一邊駕駛 ag
   **An agent can also close, hibernate or rename its own session and its descendants** (`agent-session-control`,
   `kind: "close" | "hibernate" | "rename"` in the same drop point). Close and hibernate wait for the target's turn
   to end, and the user's typing cancels them. **An agent's close of its own session is only offered**: an overlay
-  with Close / Keep, the content readable underneath. "In a turn" is **not** the wait state's `ready` (see
+  with Close / Keep, the content readable underneath. **The main process owns the offer** and a paired phone sees
+  and answers it (`remote-close-offer`): any new way to answer it must reach `SessionControl`, not only the card. "In a turn" is **not** the wait state's `ready` (see
   `docs/lessons/handoff.md`, "Session commands").
 - **鍵盤** —— 見下文「快捷鍵」。
 - **Website** (`project-website`) — `spekterm.com` is built from `site/` (Astro + Starlight, its own
@@ -110,7 +111,7 @@ OpenSpec 結構的側欄，讓使用者不必另外開 IDE 就能一邊駕駛 ag
   - **`src/main/remote-server.ts` is the only module that may create a server or import `https`/`ws`**
     (`scripts/server-source.test.mjs`, file-scoped entries in `scripts/network-surface.test.mjs`). `probe:core`
     runs on a throwaway profile because the real one may have remote access on.
-  - **The renderer stays the authority on sessions**: a device's create, wake, rename, hibernate, close and accept
+  - **The renderer stays the authority on sessions**: a device's create, wake, rename, hibernate, close, keep and accept
     are requests to it (`workspace:remote:request`), carried out **quietly** — no selection change, no keyboard
     focus, and no focused-session change except the one a close of the displayed session forces
     (`takeQuietArrival`; for hibernate and close, `isFocusHeld`, which lasts one commit — a mark that waits to

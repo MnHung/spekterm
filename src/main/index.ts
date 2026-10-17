@@ -13,7 +13,7 @@ import { registerIntakeHandlers } from './ipc/intake'
 import { registerInsightsHandlers, spawnReportDelegate, spawnScanWorker } from './ipc/insights'
 import { registerOpenSpecHandlers } from './ipc/openspec'
 import { registerPanelHandlers } from './ipc/panel'
-import { broadcastLifecycle, registerHandoffHandlers, revealHandoffBrief } from './ipc/handoff'
+import { broadcastLifecycle, registerHandoffHandlers, registerKeepCloseOffer, revealHandoffBrief } from './ipc/handoff'
 import { registerSettingsHandlers } from './ipc/settings'
 import { registerSlackHandlers } from './ipc/slack'
 import { registerShellHandlers } from './ipc/shell'
@@ -646,6 +646,12 @@ void app.whenReady().then(async () => {
       request: requestRenderer,
       setRemoteWatched,
       attachments,
+      // `sessionControl` is built below in this same synchronous run, before any device can connect or a list be
+      // sent; a call that came earlier would throw, not read an empty record (`remote-close-offer` D2).
+      offers: {
+        offered: (sessionId) => sessionControl.isOffered(sessionId),
+        withdraw: (sessionId) => sessionControl.withdraw(sessionId),
+      },
     }),
   })
   registerRemoteHandlers(remoteService)
@@ -775,7 +781,10 @@ void app.whenReady().then(async () => {
     reject: (code, label, detail, failure) => intakeService.reject(code, label, detail, { adapter: HANDOFF_ADAPTER, ...failure }),
     reportFailure: (code, detail, failure) =>
       intakeService.reportFailure({ code, ...(detail === undefined ? {} : { detail }), ...failure, at: Date.now() }),
+    // Devices read offers from the session list, and nothing else announces one (`remote-close-offer` D1).
+    offersChanged: () => remoteService.listChanged('sessions'),
   })
+  registerKeepCloseOffer((sessionId) => void sessionControl.withdraw(sessionId))
   // A waiting command dies with its target's process, whatever ended it (D3).
   onPtyChange(() => {
     const running = new Set(runningAgents())

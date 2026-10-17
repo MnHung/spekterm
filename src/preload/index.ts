@@ -527,6 +527,11 @@ const workspaceApi = {
       ipcRenderer.on('workspace:handoff:reveal', handler)
       return () => ipcRenderer.removeListener('workspace:handoff:reveal', handler)
     },
+    /**
+     * The user kept a session its agent offered to close (`remote-close-offer` D4): the main process owns the offer,
+     * and paired devices read it from there. Only a session id; the most it can do is withdraw an offer.
+     */
+    keepCloseOffer: (sessionId: string): void => ipcRenderer.send('workspace:handoff:keepCloseOffer', sessionId),
   },
   panel: {
     /**

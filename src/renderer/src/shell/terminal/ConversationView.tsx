@@ -113,7 +113,7 @@ export function ConversationView({ sessionId, active, dormant, covered = false }
   const [draft, setDraft] = useState('')
   const [blocked, setBlocked] = useState<WaitState | null>(null)
     const bottomRef = useRef<HTMLDivElement | null>(null)
-  const { wake, takeQuietArrival, isFocusHeld, closeOffered, close, withdrawCloseOffer } = useSessions()
+  const { wake, takeQuietArrival, isFocusHeld, closeOffered, close, keepCloseOffer } = useSessions()
   const rootRef = useRef<HTMLDivElement | null>(null)
   const wakeButtonRef = useRef<HTMLButtonElement | null>(null)
 
@@ -215,7 +215,7 @@ export function ConversationView({ sessionId, active, dormant, covered = false }
       {/* Sticky, so it stays in view while the conversation scrolls under it (D12 of `agent-session-control`). */}
       {closeOffered(sessionId) && (
         <div className="pointer-events-none sticky top-0 z-10 flex justify-center pb-2">
-          <CloseOffer onClose={() => close(sessionId)} onKeep={() => withdrawCloseOffer(sessionId)} />
+          <CloseOffer onClose={() => close(sessionId)} onKeep={() => keepCloseOffer(sessionId)} />
         </div>
       )}
       {/* 內容不完整時**明示** —— 一份看起來完整、實際少了開頭的對話會誤導判斷。 */}

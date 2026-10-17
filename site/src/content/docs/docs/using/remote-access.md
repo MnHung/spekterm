@@ -1,6 +1,6 @@
 ---
 title: Remote access
-description: Reach spekterm from your phone — see your sessions, read and answer agents, attach photos and files, answer their prompts, start, rename, hibernate and close sessions, and get told when an agent waits for you. Directly, with no relay.
+description: Reach spekterm from your phone — see your sessions, read and answer agents, attach photos and files, answer their prompts, start, rename, hibernate and close sessions, answer an agent that asks to close its own, and get told when an agent waits for you. Directly, with no relay.
 sidebar:
   order: 7
 ---
@@ -29,6 +29,12 @@ The phone can hibernate a session (its process ends; it stays in place and you w
 (it leaves your workspace). Neither takes your keyboard focus or changes your selection on the computer. If a
 session is busy — an agent working or waiting on your choice, a command running in a shell, or spekterm cannot
 tell — the phone is told why first and asks you before ending it anyway.
+
+When an agent asks to close its own session, spekterm offers it to you instead of closing it ([Handoffs](/docs/using/handoffs/)),
+and the phone shows the same offer with **Close** and **Keep**. Answering on either side answers it on both: keeping it
+on the phone removes the offer from the computer, and keeping it or typing into the session on the computer removes it
+from the phone. The phone tells you an agent is waiting when its turn ends, as for any turn; the offer itself shows on
+the session.
 
 ### Answering prompts from the phone
 

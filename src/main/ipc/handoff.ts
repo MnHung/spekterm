@@ -12,6 +12,7 @@ export const HANDOFF_CHANNELS = {
   lifecycle: 'workspace:handoff:lifecycle',
   lifecycleChanged: 'workspace:handoff:lifecycleChanged',
   reveal: 'workspace:handoff:reveal',
+  keepCloseOffer: 'workspace:handoff:keepCloseOffer',
 } as const
 
 let store: SessionStore | null = null
@@ -44,4 +45,15 @@ export function registerHandoffHandlers(sessions: SessionStore): void {
   store = sessions
   ipcMain.handle(HANDOFF_CHANNELS.brief, (_event, sessionId: unknown) => readBriefFor(sessions, sessionId))
   ipcMain.handle(HANDOFF_CHANNELS.lifecycle, (): LifecycleView[] => lifecycleViewOf(sessions))
+}
+
+/**
+ * The desktop's Keep on an agent's offer to close its own session reaches the main process, which owns the offer
+ * (`remote-close-offer` D4). Registered once `SessionControl` exists. The window is not told back: it already cleared
+ * its own card.
+ */
+export function registerKeepCloseOffer(withdraw: (sessionId: string) => void): void {
+  ipcMain.on(HANDOFF_CHANNELS.keepCloseOffer, (_event, sessionId: unknown) => {
+    if (typeof sessionId === 'string' && sessionId !== '') withdraw(sessionId)
+  })
 }

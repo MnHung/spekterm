@@ -133,7 +133,8 @@ and models are clipped to 64 characters and control characters removed.
 
 ## 5. Operations
 
-A paired device has the user's power over agents: it can type into any session, and hibernate or close one.
+A paired device has the user's power over agents: it can type into any session, hibernate or close one, and answer
+an agent's offer to close its own session.
 Everything else — files outside OpenSpec, settings, Slack, credentials, resizing a terminal — is not an
 operation. The one file a device writes is an attachment, and only into the desktop's own attachment store,
 under a name the desktop chooses (`attachments.put`). No operation takes a path or a directory.
@@ -143,10 +144,15 @@ under a name the desktop chooses (`attachments.put`). No operation takes a path 
 `p`: `{}` → `r`: `{ "window": bool, "folders": [Folder], "sessions": [Session] }`
 
 - `Folder`: `{ id, name, branch: string|null, pinned: bool, hasOpenSpec: bool }`, in rail order.
-- `Session`: `{ id, folderId: string|null (null = the global item), target: "claude"|"shell", label, running: bool, wait?, lifecycle?, lineage? }`
+- `Session`: `{ id, folderId: string|null (null = the global item), target: "claude"|"shell", label, running: bool, wait?, lifecycle?, lineage?, closeOffered? }`
   - `wait` (agent sessions): `"ready"` (waiting for input), `"busy"`, `"awaiting-choice"` (a permission prompt), `"unknown"`.
   - `lifecycle` (handoff-created sessions): `"working"`, `"waiting"`, `"done"`, `"idle"`.
   - `lineage`: `{ parentId, title? }`.
+  - `closeOffered: true` (a running agent session only; absent otherwise): the session's agent asked to close its own
+    session and the user has not answered. The desktop shows "The agent asked to close this session" with Close and
+    Keep, and nothing closes on its own. It goes when the user keeps the session (on the desktop or with
+    `sessions.keep`), types into it, or the session's process ends for any reason; a woken session never brings an
+    old offer back. Answer it with `sessions.close` or `sessions.keep` (section 9, obligation 13).
 - With no window, `window` is `false` and `sessions` is empty.
 - Changes arrive as `sessions.changed` events carrying the whole list.
 
@@ -202,7 +208,15 @@ it displays the item's next session instead, without taking keyboard focus. A do
 no further check. The session then leaves the session list, and watches of it end (reason `"closed"`).
 
 A session that is not idle is refused with `SESSION_BUSY`, as for `sessions.hibernate`, unless `force` is
-`true`. Errors: `SESSION_BUSY`, `NOT_FOUND`, `NO_WINDOW`, `TIMEOUT`, `CREATE_FAILED`, `BAD_PARAMS`.
+`true`. That holds for a session marked `closeOffered` too: it has just finished its turn, so it is usually idle,
+but not always. Errors: `SESSION_BUSY`, `NOT_FOUND`, `NO_WINDOW`, `TIMEOUT`, `CREATE_FAILED`, `BAD_PARAMS`.
+
+### `sessions.keep`
+
+`p`: `{ "sessionId" }` → `r`: `{ "sessionId" }`. Keeps a session whose agent offered to close it (`closeOffered`):
+the offer is withdrawn, the desktop stops showing it, and the session keeps running, as the desktop's Keep does.
+Quietly, as every session operation. A session with no offer answers with no effect. The mark leaves the list in
+`sessions.changed`. Errors: `NOT_FOUND`, `NO_WINDOW`, `TIMEOUT`, `CREATE_FAILED`, `BAD_PARAMS` (no `sessionId`).
 
 ### `conversation.watch`
 
@@ -430,6 +444,9 @@ title, summary?, tool?, suppressed }`:
   removed, clipped to 80 characters. `folderName` is clipped, not reduced. Reduce nothing further.
 - `suppressed: true` — the user is looking at that session on the desktop right now. Update state; **do not
   notify**.
+- **An agent's offer to close its own session raises no event of its own.** It follows the end of the agent's turn,
+  which raises `waiting`; the offer itself arrives in `sessions.changed` (`closeOffered`). One exception: a turn that
+  ends in an API error raises no `waiting`, so an offer after it is seen only in the session list.
 
 **The desktop remembers**, while remote access is on, every attention event of the last 24 hours, up to the
 200 most recent. A position names the event and the *span* the desktop has held events without interruption;
@@ -479,3 +496,6 @@ open (on Android, a foreground service), and reconnect with backoff when the net
 12. **Confirm with the user before `sessions.close`, and before any request with `force: true`.** Send
     `sessions.hibernate` and `sessions.close` without `force` first; on `SESSION_BUSY`, show `detail.reason` in
     the confirmation and send again with `force` only if the user agrees. Never force on the first attempt.
+13. **Offer Close and Keep for a session marked `closeOffered`**, wherever you show that session: Close as
+    `sessions.close`, Keep as `sessions.keep` (shown only when `sessions.keep` is in `operations`). Choosing Close
+    there is the confirmation obligation 12 asks for; a `SESSION_BUSY` answer still goes through obligation 12.

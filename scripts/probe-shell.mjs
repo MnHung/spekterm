@@ -260,7 +260,13 @@ const PROBE_EXPRESSION = `(async () => {
     // lifecycle／onLifecycle（handoff-completion）：唯讀的生命週期投影，沒有任何寫入的能力 ——
     // 完成由子 agent 的報告宣告，renderer 表達不出「把某個 session 標成已完成」。
     // onReveal：觸發完成通知時主行程送來一個 session 識別碼，renderer 只拿它去跳轉與打開交接單。
-    surplusHandoffKeys: Object.keys(api?.handoff ?? {}).filter((key) => !['brief', 'lifecycle', 'onLifecycle', 'onReveal'].includes(key)),
+    // keepCloseOffer (remote-close-offer): the namespace's one member that changes state. It takes only a session id,
+    // and the most it can do is withdraw an agent's offer to close its own session: the session keeps running, and
+    // nothing the agent decided is undone. It is how the desktop's Keep reaches the main process, which owns the
+    // offer for paired devices.
+    surplusHandoffKeys: Object.keys(api?.handoff ?? {}).filter(
+      (key) => !['brief', 'lifecycle', 'onLifecycle', 'onReveal', 'keepCloseOffer'].includes(key),
+    ),
     // **insights 底下也要逐成員列舉。** 只在頂層 namespace 清單裡登記的話，
     // 底下再加幾個方法這支探針一聲都不會響 —— 而讀後感往這裡加了四個會送出使用者訊息的入口。
     surplusInsightsKeys: Object.keys(api?.insights ?? {}).filter(

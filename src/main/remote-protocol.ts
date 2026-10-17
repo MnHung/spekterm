@@ -38,6 +38,8 @@ export interface SessionView {
   wait?: WaitState
   lifecycle?: string
   lineage?: { parentId: string; title?: string }
+  /** The agent asked to close its own session, and the user has not answered (`remote-close-offer`). */
+  closeOffered?: true
 }
 
 export interface SessionList {
@@ -56,8 +58,8 @@ export type HostAction =
   | { kind: 'accept'; adapter: string; id: string; folderId: string }
   /**
    * An agent asked to close its own session, and its turn ended (`agent-session-control` D12): show the offer, do
-   * not close. `withdraw-close` takes it back (a keystroke into the session). Window-channel only: neither is a
-   * device operation.
+   * not close. `withdraw-close` takes it back (a keystroke into the session, or a device's `sessions.keep`). Neither
+   * is a device operation as such.
    */
   | { kind: 'offer-close'; sessionId: string }
   | { kind: 'withdraw-close'; sessionId: string }
@@ -100,6 +102,8 @@ export interface RemoteHost {
   writeTerminal(sessionId: string, data: string): boolean
   /** Carried out by the window's interface; rejects with a `RemoteError` (`NO_WINDOW`, `TIMEOUT`, …). */
   perform(action: HostAction): Promise<{ sessionId: string }>
+  /** Withdraws an agent's offer to close its own session, as the desktop's Keep (`remote-close-offer` D2). */
+  keep(sessionId: string): Promise<{ sessionId: string }>
   dismissInbox(adapter: string, id: string): void
   openspecChanges(folderId: string): Promise<unknown>
   openspecChange(folderId: string, slug: string): Promise<unknown>
@@ -203,6 +207,8 @@ export const OPERATIONS: Record<string, Operation> = {
   'sessions.hibernate': (state, p) => state.host.perform({ kind: 'hibernate', sessionId: str(p, 'sessionId'), force: force(p) }),
 
   'sessions.close': (state, p) => state.host.perform({ kind: 'close', sessionId: str(p, 'sessionId'), force: force(p) }),
+
+  'sessions.keep': (state, p) => state.host.keep(str(p, 'sessionId')),
 
   'conversation.watch': (state, p) => {
     const sessionId = str(p, 'sessionId')

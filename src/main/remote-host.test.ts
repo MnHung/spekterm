@@ -30,6 +30,7 @@ function host(overrides: Partial<HostDeps> = {}) {
     output,
     request: () => Promise.resolve({ ok: true, sessionId: 'new' }),
     setRemoteWatched: () => undefined,
+    offers: { offered: () => false, withdraw: () => false },
     ...overrides,
   } as unknown as HostDeps
   return { host: createRemoteHost(deps), output, writes }
@@ -186,4 +187,60 @@ test('hibernate and close: an unknown session is not found, and no window refuse
     assert.equal(await busy(noWindow.perform({ kind, sessionId: 'a', force: true })), 'NO_WINDOW')
   }
   assert.equal(asked.length + none.asked.length, 0)
+})
+
+test('the list marks an offered close only on a running session (remote-close-offer D5)', () => {
+  const offered = new Set(['a', 'b', 'c'])
+  const list = host({ offers: { offered: (id) => offered.has(id), withdraw: () => false } }).host.sessionList()
+  assert.deepEqual(
+    list.sessions.map((s) => [s.id, s.closeOffered]),
+    [
+      ['a', true],
+      ['b', true],
+      ['c', undefined],
+    ],
+    'c is offered in the record but has no process',
+  )
+  const none = host().host.sessionList()
+  assert.equal(
+    none.sessions.some((s) => 'closeOffered' in s),
+    false,
+    'absent, not false, with no offer',
+  )
+})
+
+test('keep withdraws in the main process, then always asks the window (remote-close-offer D2)', async () => {
+  const order: string[] = []
+  const asked: unknown[] = []
+  let had = true
+  let answer: { ok: true; sessionId: string } | { ok: false; code: string } = { ok: true, sessionId: 'a' }
+  const { host: h } = host({
+    offers: {
+      offered: () => false,
+      withdraw: (id) => {
+        order.push(`withdraw ${id}`)
+        const was = had
+        had = false
+        return was
+      },
+    },
+    request: (_contents, action) => {
+      order.push(`ask ${action.kind}`)
+      asked.push(action)
+      return Promise.resolve(answer)
+    },
+  })
+  assert.deepEqual(await h.keep('a'), { sessionId: 'a' })
+  assert.deepEqual(await h.keep('a'), { sessionId: 'a' }, 'no offer: still succeeds')
+  assert.deepEqual(order, ['withdraw a', 'ask withdraw-close', 'withdraw a', 'ask withdraw-close'], 'the window is asked even with no offer')
+  assert.deepEqual(asked[0], { kind: 'withdraw-close', sessionId: 'a' })
+
+  answer = { ok: false, code: 'TIMEOUT' }
+  await assert.rejects(h.keep('a'), (error: { code?: string }) => error.code === 'TIMEOUT')
+  answer = { ok: false, code: 'SOMETHING_ELSE' }
+  await assert.rejects(h.keep('a'), (error: { code?: string }) => error.code === 'CREATE_FAILED')
+
+  await assert.rejects(h.keep('zzz'), (error: { code?: string }) => error.code === 'NOT_FOUND')
+  const { host: windowless } = host({ window: () => null })
+  await assert.rejects(windowless.keep('a'), (error: { code?: string }) => error.code === 'NO_WINDOW')
 })

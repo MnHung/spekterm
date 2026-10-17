@@ -1318,7 +1318,9 @@ async function runRename(_mode, _config, context) {
   check(
     results,
     'the authentication answer lists the operations, the new ones included, and not authentication',
-    ['sessions.rename', 'sessions.hibernate', 'sessions.close', 'attachments.put', 'conversation.answer'].every((op) => operations.includes(op)) &&
+    ['sessions.rename', 'sessions.hibernate', 'sessions.close', 'sessions.keep', 'attachments.put', 'conversation.answer'].every((op) =>
+      operations.includes(op),
+    ) &&
       !operations.includes('hello') && !operations.includes('pair'),
     JSON.stringify(operations),
   )
@@ -1882,6 +1884,191 @@ async function runWatchEndAutoHibernate(_mode, _config, context) {
   await app.close()
 }
 
+/**
+ * remote-close-offer: a device sees an agent's offer to close its own session, and answers it. Every assertion reads a
+ * `sessions.changed` event that arrived after its action, never a fresh `sessions.list`: a missing announcement must
+ * turn it red.
+ */
+async function runCloseOffer(_mode, _config, context) {
+  const repos = makeRepos()
+  const profile = seedProfile(repos, { remote: { enabled: true, port: LISTEN_A } })
+  const { app, stub } = await start(context, profile)
+  const { client } = await phone(app)
+  await call(client, 'attention.watch')
+
+  // Created on the desktop, so it is displayed and its offer card is on screen.
+  await selectFolder(app, repos.names.f)
+  const before = new Set((await list(client)).sessions.map((s) => s.id))
+  await desktopCreate(app, 'claude')
+  const S = await pollFor({
+    read: async () => (await list(client)).sessions.find((s) => s.target === 'claude' && !before.has(s.id))?.id ?? null,
+    settled: Boolean,
+    timeoutMs: 15_000,
+    label: 'the desktop agent listed',
+  })
+  await conversationOf(profile, S)
+  await pollFor({ read: () => stub.ready(), settled: Boolean, timeoutMs: 15_000, label: 'the stub ready' })
+
+  const sessionIn = (d) => d.sessions.find((s) => s.id === S)
+  const changed = (from, match, what) =>
+    client.waitEvent('sessions.changed', { from, match: (d) => match(sessionIn(d)), timeoutMs: 15_000, label: what })
+  // The agent's close of its own session: written into its own drop point, as an agent does.
+  const outbox = join(profile, 'handoff', 'outbox', S)
+  let n = 0
+  const stage = () => {
+    mkdirSync(outbox, { recursive: true })
+    const partial = join(outbox, `.control-${++n}.partial`)
+    writeFileSync(partial, JSON.stringify({ kind: 'close' }))
+    return partial
+  }
+  const commit = (partial) => renameSync(partial, join(outbox, `control-${Date.now()}-${n}.json`))
+  const turnStart = () => fireEvent(profile, S, { hook_event_name: 'UserPromptSubmit', prompt: 'wrap up' })
+  const stop = () => fireEvent(profile, S, { hook_event_name: 'Stop' })
+  /** A turn in which the agent closes itself, ending in an offer the list marks. */
+  const offer = async (what) => {
+    const from = client.events.length
+    turnStart()
+    commit(stage())
+    await sleep(800)
+    stop()
+    return changed(from, (s) => s?.closeOffered === true, what)
+  }
+  const CARD = `[role="group"]${label('sessions.closeOffer.label')}`
+  const cardShown = () =>
+    app.client.evaluate(`[...document.querySelectorAll(${JSON.stringify(CARD)})].some((g) => g.getBoundingClientRect().width > 0)`)
+  const clickCard = async (text) => {
+    const at = await pollFor({
+      read: () =>
+        app.client.evaluate(`(() => {
+          const group = [...document.querySelectorAll(${JSON.stringify(CARD)})].find((g) => g.getBoundingClientRect().width > 0)
+          const button = [...(group?.querySelectorAll('button') ?? [])].find((b) => b.textContent === ${JSON.stringify(text)})
+          const r = button?.getBoundingClientRect()
+          return r && r.width > 0 ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : null
+        })()`),
+      settled: Boolean,
+      timeoutMs: 10_000,
+      label: `the card's ${text}`,
+    })
+    if (!at) throw new Error(`no card button ${text}`)
+    await realClick(app.client, at)
+  }
+
+  // ── an offer made with no other change: the command is read after the turn ended. The list is also recomputed
+  // every 5 s while a device is connected, which delivers the mark without `offersChanged`, only later: so the
+  // assertion is on time (measured: ~160 ms with it, 1.4–2.1 s without). Three tries: a reconcile tick landing inside
+  // the window by chance each time is ~0.3%. ──
+  const LATE_WITHIN_MS = 700
+  const lateTry = async () => {
+    const from = client.events.length
+    turnStart()
+    const partial = stage()
+    await sleep(1_000)
+    stop()
+    const ready = await changed(from, (s) => s?.wait === 'ready' && s.closeOffered === undefined, 'S ready and unmarked after its turn')
+    await sleep(600)
+    const commitFrom = client.events.length
+    const commitAt = Date.now()
+    commit(partial)
+    const marked = await changed(commitFrom, (s) => s?.closeOffered === true, 'the late-read offer marked').catch(() => null)
+    return { from, ready: Boolean(ready), running: marked ? sessionIn(marked.d)?.running : null, ms: marked ? marked.receivedAt - commitAt : null }
+  }
+  const tries = []
+  for (let i = 0; i < 3; i += 1) {
+    if (i > 0) {
+      const from = client.events.length
+      await call(client, 'sessions.keep', { sessionId: S })
+      await changed(from, (s) => s !== undefined && s.closeOffered === undefined, 'S unmarked between tries')
+    }
+    tries.push(await lateTry())
+  }
+  const lateCard = await pollFor({ read: cardShown, settled: Boolean, timeoutMs: 10_000, label: 'the card on the desktop' }).catch(() => false)
+  check(
+    results,
+    'an offer read after the turn ended reaches the client with no other change, at once: marked and running, and the desktop shows the card',
+    tries.every((t) => t.ready && t.running === true && t.ms !== null && t.ms < LATE_WITHIN_MS) && lateCard === true,
+    JSON.stringify({ tries: tries.map(({ ready, running, ms }) => ({ ready, running, ms })), card: lateCard }),
+  )
+  await sleep(2_000)
+  const attentionForS = client.eventsOf('attention', tries.at(-1).from).filter((event) => event.d.sessionId === S)
+  check(
+    results,
+    'an offered turn raises exactly one waiting event, and no other attention event, for the session',
+    attentionForS.length === 1 && attentionForS[0].d.kind === 'waiting',
+    JSON.stringify(attentionForS.map((event) => event.d.kind)),
+  )
+
+  // ── keeping from the device withdraws it on both sides ──
+  const keepFrom = client.events.length
+  const kept = await call(client, 'sessions.keep', { sessionId: S })
+  const keptEvent = await changed(keepFrom, (s) => s !== undefined && s.closeOffered === undefined, 'S unmarked after keep').catch(() => null)
+  const cardGone = await pollFor({ read: cardShown, settled: (shown) => shown === false, timeoutMs: 10_000, label: 'the card gone' }).catch(() => true)
+  check(
+    results,
+    "a device's keep succeeds, clears the mark and the desktop's card, and the session runs on",
+    kept.ok === true && sessionIn(keptEvent?.d ?? { sessions: [] })?.running === true && cardGone === false,
+    JSON.stringify({ kept: kept.e ?? kept.r, event: keptEvent ? sessionIn(keptEvent.d) : null, card: cardGone }),
+  )
+
+  // ── the usual offer (the command inside the turn) is marked; the desktop's Keep clears the mark ──
+  const usual = await offer('the usual offer marked').catch(() => null)
+  check(results, 'a close written inside the turn is marked when the turn ends', Boolean(usual), '')
+  await pollFor({ read: cardShown, settled: Boolean, timeoutMs: 10_000, label: 'the card shown' })
+  const desktopKeepFrom = client.events.length
+  await clickCard(copy('sessions.closeOffer.keep'))
+  const desktopKept = await changed(desktopKeepFrom, (s) => s !== undefined && s.closeOffered === undefined, 'S unmarked after the desktop Keep').catch(() => null)
+  check(results, "the desktop's Keep clears the mark for devices", Boolean(desktopKept) && sessionIn(desktopKept.d).running === true, '')
+
+  // ── typing into the session clears the mark ──
+  await offer('offered before typing')
+  const typeFrom = client.events.length
+  await app.client.evaluate(`window.workspace.terminal.write(${JSON.stringify(S)}, 'y')`)
+  const typedAway = await changed(typeFrom, (s) => s !== undefined && s.closeOffered === undefined, 'S unmarked after typing').catch(() => null)
+  check(results, 'typing into the session clears the mark for devices', Boolean(typedAway), '')
+
+  // ── keeping a session with no offer has no effect ──
+  const noneFrom = client.events.length
+  const keptNone = await call(client, 'sessions.keep', { sessionId: S })
+  await sleep(1_000)
+  const after = sessionIn(await list(client))
+  check(
+    results,
+    'keeping a session with no offer succeeds with no change',
+    keptNone.ok === true && after?.running === true && after.closeOffered === undefined &&
+      client.eventsOf('sessions.changed', noneFrom).every((event) => sessionIn(event.d)?.closeOffered === undefined),
+    JSON.stringify({ keep: keptNone.e ?? keptNone.r, after }),
+  )
+
+  // ── hibernated on the desktop and woken: the old offer does not come back ──
+  await offer('offered before hibernating')
+  const hibernateFrom = client.events.length
+  await pressHibernate(app.client)
+  await changed(hibernateFrom, (s) => s?.running === false, 'S dormant')
+  const wakeFrom = client.events.length
+  await clickButtonText(app.client, 'main', copy('sessions.wake'))
+  const woken = await changed(wakeFrom, (s) => s?.running === true, 'S running again').catch(() => null)
+  await sleep(1_500)
+  const markedSince = client.eventsOf('sessions.changed', hibernateFrom).filter((event) => sessionIn(event.d)?.closeOffered === true)
+  check(
+    results,
+    'an offered session hibernated and woken carries no old offer',
+    Boolean(woken) && sessionIn(woken.d).closeOffered === undefined && markedSince.length === 0,
+    JSON.stringify({ woken: woken ? sessionIn(woken.d) : null, marked: markedSince.length }),
+  )
+
+  // ── closing an offered, waiting session from the device closes it, without forcing ──
+  await pollFor({ read: () => stub.ready(), settled: Boolean, timeoutMs: 15_000, label: 'the stub ready again' })
+  const toClose = await offer('offered before closing').catch(() => null)
+  const closeFrom = client.events.length
+  const closed = await call(client, 'sessions.close', { sessionId: S })
+  const gone = await changed(closeFrom, (s) => s === undefined, 'S unlisted').catch(() => null)
+  check(
+    results,
+    'closing an offered session that waits for input succeeds without forcing, and it leaves the list',
+    sessionIn(toClose?.d ?? { sessions: [] })?.wait === 'ready' && closed.ok === true && Boolean(gone),
+    JSON.stringify({ offered: toClose ? sessionIn(toClose.d) : null, close: closed.e ?? closed.r }),
+  )
+}
+
 const SECTIONS = [
   { name: 'runListener', run: runListener },
   { name: 'runPairing', run: runPairing },
@@ -1900,6 +2087,7 @@ const SECTIONS = [
   { name: 'runHibernateClose', run: runHibernateClose },
   { name: 'runHibernateCloseConversation', run: runHibernateCloseConversation },
   { name: 'runWatchEndAutoHibernate', run: runWatchEndAutoHibernate },
+  { name: 'runCloseOffer', run: runCloseOffer },
 ].map((section) => ({
   ...section,
   // A section that hangs leaves its app behind; the profile prefix finds it (character class: not this command).

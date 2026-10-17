@@ -64,6 +64,14 @@ export interface SessionControlDeps {
   request: ControlRequest
   /** The source session's rail item and label, for the trace (`failure.origin`); `null` when it is gone. */
   describe: (sessionId: string) => string | null
+  /**
+   * An offer was made or withdrawn (`remote-close-offer` D1): paired devices read offers from the session list, and
+   * nothing else announces this change. Called only on a real change. An offer that ends with its process is not
+   * announced here: the process change already is.
+   */
+  offersChanged?: () => void
+  /** The clock an offer is timed by (D3); `Date.now` by default. */
+  now?: () => number
   /** The intake service's two halves of a visible failure. */
   reject: (code: IntakeRejection, label: string, detail: string | undefined, failure: FailureContext) => DeliverOutcome
   reportFailure: (code: IntakeRejection, detail: string | undefined, failure: FailureContext) => void
@@ -85,8 +93,12 @@ export class SessionControl {
   readonly #deps: SessionControlDeps
   readonly #seen = new Set<string>()
   readonly #pending = new Map<string, Pending>()
-  /** Sessions whose own close is offered to the user (D12): a keystroke into one withdraws the offer. */
-  readonly #offered = new Set<string>()
+  /**
+   * Sessions whose own close is offered to the user (D12), with the time of the offer. An offer holds only until the
+   * session's process next starts or ends (`remote-close-offer` D3): decided by time, so no caller has to remember to
+   * clear it, and a late exit that the terminal ignores cannot keep an old offer alive.
+   */
+  readonly #offered = new Map<string, number>()
   readonly #stopKeystrokes: () => void
 
   constructor(deps: SessionControlDeps) {
@@ -103,21 +115,51 @@ export class SessionControl {
     for (const sessionId of [...this.#pending.keys()]) this.#drop(sessionId)
   }
 
-  /** The target's process ended for any reason: a command waiting on its turn is dropped (D3). */
+  /**
+   * The target's process ended for any reason: a command waiting on its turn is dropped (D3). An offer is not
+   * touched: its time already tells it ended (`remote-close-offer` D3).
+   */
   processEnded(sessionId: string): void {
     this.#drop(sessionId)
-    this.#offered.delete(sessionId)
   }
 
-  /** Sessions whose own close is offered, for tests and diagnostics. */
+  /** The session's own close is offered to the user now: what the session list tells paired devices. */
   isOffered(sessionId: string): boolean {
-    return this.#offered.has(sessionId)
+    const at = this.#offered.get(sessionId)
+    if (at === undefined) return false
+    const changed = this.#deps.runs.lastProcessChangeAt(sessionId)
+    if (changed === null || changed <= at) return true
+    // Stale: its process started or ended since. Dropped silently; the process change was announced.
+    this.#offered.delete(sessionId)
+    return false
+  }
+
+  /**
+   * The user kept the session (on the desktop or from a device): the offer goes, the session stays. Whether the
+   * window is told is the caller's (`remote-close-offer` D2, D4). Returns whether there was an offer.
+   */
+  withdraw(sessionId: string): boolean {
+    return this.#removeOffer(sessionId)
   }
 
   /** Typing into an offered session takes it back: the offer goes, the session stays. */
   #withdrawOffer(sessionId: string): void {
-    if (!this.#offered.delete(sessionId)) return
+    if (!this.#removeOffer(sessionId)) return
     void this.#deps.request({ kind: 'withdraw-close', sessionId }).catch(() => undefined)
+  }
+
+  /** The one way an offer is removed: announced when there was one. A stale offer counts as none. */
+  #removeOffer(sessionId: string): boolean {
+    if (!this.isOffered(sessionId)) return false
+    this.#offered.delete(sessionId)
+    this.#deps.offersChanged?.()
+    return true
+  }
+
+  #addOffer(sessionId: string): void {
+    const fresh = !this.isOffered(sessionId)
+    this.#offered.set(sessionId, (this.#deps.now ?? Date.now)())
+    if (fresh) this.#deps.offersChanged?.()
   }
 
   /** The targets with a command waiting on their turn. */
@@ -255,7 +297,7 @@ export class SessionControl {
       if (command.kind === 'close' && self && running) {
         // The agent's close of its own session is **offered**, not carried out (D12): its last reply may be what
         // the user needs to read. Nothing ends, so no command end is announced.
-        this.#offered.add(sessionId)
+        this.#addOffer(sessionId)
         action = { kind: 'offer-close', sessionId }
       } else {
         // `force`: this module already decided; the interface does not read it.
@@ -270,7 +312,9 @@ export class SessionControl {
       outcome = { ok: false, code: 'CREATE_FAILED', message: String(error) }
     }
     if (outcome.ok) return
-    this.#offered.delete(sessionId)
+    // Only a failed offer takes the offer back: a failed rename or hibernate of an offered session leaves the card
+    // where it is, so the offer stays one fact for the desktop and devices (`remote-close-offer` D1).
+    if (action.kind === 'offer-close') this.#removeOffer(sessionId)
     if (command.kind !== 'rename') this.#deps.runs.cancelCommandEnd(sessionId)
     const windowGone = outcome.code === 'NO_WINDOW' || outcome.code === 'TIMEOUT'
     this.#fail(windowGone ? 'CONTROL_NO_WINDOW' : 'CONTROL_FAILED', outcome.code, failure)

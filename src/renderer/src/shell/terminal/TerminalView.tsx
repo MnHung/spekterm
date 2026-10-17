@@ -66,7 +66,7 @@ export function TerminalView({
       useSessions()
   // Read in render only, never in an effect: `closeOffered` changes with every offer (D12 of
   // `agent-session-control`).
-  const { closeOffered, close, withdrawCloseOffer } = useSessions()
+  const { closeOffered, close, keepCloseOffer } = useSessions()
   const { terminal: termPrefs, gpuEnabled } = usePreferences()
   const hostRef = useRef<HTMLDivElement | null>(null)
     const handleRef = useRef<XtermHandle | null>(null)
@@ -512,7 +512,7 @@ export function TerminalView({
       {status === 'running' && closeOffered(sessionId) && (
         // Top-centred: the agent's last reply sits at the bottom, above its input box (D12).
         <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex justify-center pt-3">
-          <CloseOffer onClose={() => close(sessionId)} onKeep={() => withdrawCloseOffer(sessionId)} />
+          <CloseOffer onClose={() => close(sessionId)} onKeep={() => keepCloseOffer(sessionId)} />
         </div>
       )}
 
