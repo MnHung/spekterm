@@ -65,7 +65,8 @@ Listing SHALL return:
 - the workspace folders, with id, name, branch, pinned state and whether they have OpenSpec, in rail order;
 - every session of the window, with id, folder (or the global item), target (agent or shell), label,
   whether it is running, the agent's wait state for agent sessions, its handoff lifecycle state and
-  lineage where it has them, and whether its agent's close of itself is offered to the user.
+  lineage where it has them, whether its agent's close of itself is offered to the user, and, for a running agent
+  session, the background tasks its agent runs (`agent-event-bridge`).
 
 For an agent session whose wait state is "waits for input", the list SHALL also carry whether that state has been
 seen (`session-wait-indicator`): seen when someone looked at the session since its last turn ended (the desktop's
@@ -1048,3 +1049,38 @@ artifacts in another order, and no change events.
 - **WHEN** a client watches a folder, its OpenSpec content changes, and the folder is removed from the workspace
   before the event is sent
 - **THEN** the client receives no event for that folder
+
+### Requirement: A device sees the background work of an agent session
+
+The session list SHALL carry, for each agent session whose process is running and that has at least one kept
+background task (`agent-event-bridge`), those tasks in the order the agent reported them, each with its identifier,
+kind and label (none when it has no label). For any other session — a shell, a dormant session, an agent session with
+no kept task — the list SHALL carry no background field at all, so that a client reads the absence the same way for
+this desktop and for one that predates the field.
+
+A change of a session's kept tasks, their order included, SHALL be sent to connected clients as a new complete list,
+like any other change to the list, without waiting for an unrelated change.
+
+The protocol document SHALL describe the field, that it reflects the agent's last report rather than the present
+moment, when it appears and goes, and the label rule; and SHALL name, as a client obligation, that a client shows a
+label as plain text and never as a link.
+
+#### Scenario: A background shell is listed when the turn ends
+
+- **WHEN** a client is connected, and an agent session S's turn completion lists a running background shell with a description
+- **THEN** the client receives a session list in which S carries one background task of kind shell, labelled with that description
+
+#### Scenario: A subagent's completion reaches the client at once
+
+- **WHEN** a client has received a session list in which S carries a background subagent C and a shell D, and C's completion lists C and D as running
+- **THEN** the client receives, without any other change, a session list in which S carries D alone
+
+#### Scenario: The field is absent when there is nothing to show
+
+- **WHEN** the client receives a session list with a shell session, a dormant agent session, and a running agent session whose last turn completion listed no task in flight
+- **THEN** none of those sessions carries the background field
+
+#### Scenario: Hibernation removes the background field
+
+- **WHEN** S carries background tasks, and the user hibernates S on the desktop
+- **THEN** the client receives a session list in which S is not running and carries no background field
