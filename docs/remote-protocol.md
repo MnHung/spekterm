@@ -146,7 +146,7 @@ under a name the desktop chooses (`attachments.put`). No operation takes a path 
 `p`: `{}` → `r`: `{ "window": bool, "folders": [Folder], "sessions": [Session] }`
 
 - `Folder`: `{ id, name, branch: string|null, pinned: bool, hasOpenSpec: bool }`, in rail order.
-- `Session`: `{ id, folderId: string|null (null = the global item), target: "claude"|"shell", label, running: bool, wait?, seen?, lifecycle?, lineage?, closeOffered? }`
+- `Session`: `{ id, folderId: string|null (null = the global item), target: "claude"|"shell", label, running: bool, wait?, seen?, lifecycle?, lineage?, closeOffered?, background? }`
   - `wait` (agent sessions): `"ready"` (waiting for input), `"busy"`, `"awaiting-choice"` (a permission prompt), `"unknown"`.
   - `seen` (present, `true` or `false`, exactly while `wait` is `"ready"`; absent otherwise): whether someone has
     looked at the session since its agent's last turn ended. Looking is the session displayed in the desktop's
@@ -167,6 +167,23 @@ under a name the desktop chooses (`attachments.put`). No operation takes a path 
     Keep, and nothing closes on its own. It goes when the user keeps the session (on the desktop or with
     `sessions.keep`), types into it, or the session's process ends for any reason; a woken session never brings an
     old offer back. Answer it with `sessions.close` or `sessions.keep` (section 9, obligation 13).
+  - `background` (a running agent session with background work only; absent otherwise):
+    `[{ id, kind: "agent"|"shell"|"monitor"|"other", label: string|null }]`, the background tasks the agent reports in
+    flight — background subagents, background shells, monitors — in the agent's order. **Absent means none**, and a
+    desktop older than the field never sends it: show no background work for either.
+    - It is **the agent's last report**, not the present moment: the agent reports the whole list when its turn ends
+      and when one of its subagents stops, and each report replaces the last. A task started during the current turn
+      appears when that turn ends; while a turn runs, a task whose end started that turn may still be listed. A task
+      that ends with no later report (an interrupted turn) stays listed until the next one.
+    - It goes when the session's process ends (exit, hibernation, close); a woken session has none until its agent
+      reports again. Clearing or compacting the conversation does not change it.
+    - `kind`: `"agent"` a background subagent, `"shell"` a background shell — **a task of the agent's Monitor tool is
+      a `"shell"` too** —, `"monitor"` another kind of subscription (for example an artifact's live updates),
+      `"other"` anything else (such as a workflow). Accept a kind you do not know (obligation 7).
+    - `label`: the task's description, or else a shell's command, or else `null`; control characters and runs of
+      whitespace become one space, at most 200 characters. It is the agent's (or its CLI's) own text and may contain
+      paths and URLs: show it as plain text (obligation 15).
+    - `id`: the agent's task id, stable while the task runs. Use it to keep a row in place across lists.
 - With no window, `window` is `false` and `sessions` is empty.
 - Changes arrive as `sessions.changed` events carrying the whole list.
 
@@ -586,3 +603,5 @@ open (on Android, a foreground service), and reconnect with backoff when the net
     reference resolves to nothing (the desktop shows a relative link as text). Open an `http(s)` link only when the
     user taps it, outside the app. Do not load remote images automatically. Show a `data` artifact as plain
     monospace text.
+15. **Show a background task's `label` as plain text**, never as a link or markup, and do not open what it names:
+    it is the agent's own text and may contain paths and URLs.

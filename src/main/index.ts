@@ -667,7 +667,8 @@ void app.whenReady().then(async () => {
     // The seen mark first, so an unseen turn end reaches the window and the lists in this same tick.
     noteWaitBatch(sessionId, snapshot)
     remoteAttention.onWait(sessionId, snapshot)
-    if (snapshot.state !== previous) remoteService.listChanged('sessions')
+    // A subagent's stop moves no wait state but can change the background tasks (`remote-background-tasks` D6).
+    if (snapshot.state !== previous || snapshot.backgroundChanged) remoteService.listChanged('sessions')
   })
   // A key typed into a session with an open prompt makes that prompt unanswerable from a device, with no agent
   // event to say so: tell its followers now (`remote-protocol`).

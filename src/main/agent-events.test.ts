@@ -41,6 +41,7 @@ const ev = (name: string, extra: Partial<AgentEvent> = {}): AgentEvent => ({
   source: null,
   runningAgents: null,
   backgroundAgentRunning: false,
+  backgroundTasks: null,
   trigger: null,
   ...extra,
 })
@@ -89,7 +90,7 @@ test('payload 以白名單取欄位，絕對路徑不外流（transcript_path �
   })
   assert.ok(parsed)
   assert.deepEqual(Object.keys(parsed).sort(), [
-    'agentId', 'answers', 'backgroundAgentRunning', 'inputHash', 'name', 'notificationType', 'permissionMode', 'plan',
+    'agentId', 'answers', 'backgroundAgentRunning', 'backgroundTasks', 'inputHash', 'name', 'notificationType', 'permissionMode', 'plan',
     'questions', 'runningAgents', 'source', 'toolArg', 'toolName', 'toolUseId', 'transcriptPath', 'trigger',
   ])
   // `toolArg` 是**單一辨識參數**，其值本身可能是路徑 —— 那是刻意的（使用者要看得出 agent 在動
@@ -735,4 +736,132 @@ test('another tool start or finish of the same agent after a request marks it st
   put(1_792_000_001_101, pre('Read', 'q', { file_path: '/w/in' }))
   put(1_792_000_001_200, ask('Read', { file_path: '/h/out' }))
   assert.equal(drainEvents('s1', heldWait()).held.requests[0].stirred, true)
+})
+
+// ── remote-background-tasks ──
+
+/** The measured CLI 2.1.302 shapes (`remote-background-tasks` design, Context). */
+const SUBAGENT = { id: 'sub1', type: 'subagent', status: 'running', description: 'Background task probe agent', agent_type: 'general-purpose' }
+const SLEEP = { id: 'sh1', type: 'shell', status: 'running', description: 'Sleep 45 seconds in the background', command: 'sleep 45' }
+const COPIER = { id: 'sh2', type: 'shell', status: 'running', description: 'Copy hook events', command: "bash -c 'cp /home/me/a /tmp/b'" }
+const MONITOR_TOOL = { id: 'sh3', type: 'shell', status: 'running', description: 'Wait about 40 seconds, then emit done', command: 'until false; do sleep 1; done' }
+
+test('background tasks are read by white-list: id, kind and label, in flight only', () => {
+  const tasks = parseEvent({
+    hook_event_name: 'Stop',
+    background_tasks: [
+      SUBAGENT, SLEEP, MONITOR_TOOL,
+      { id: 'm1', type: 'monitor', status: 'running', description: 'live updates for artifact https://example.com/a', server: 'x' },
+      { id: 'w1', type: 'workflow', status: 'pending' },
+      { id: 'p1', type: 'shell', status: 'paused', command: 'make' },
+      { id: 'c1', type: 'shell', status: 'completed', command: 'done' },
+      { id: 'f1', type: 'shell', status: 'failed', command: 'failed' },
+      { id: 'k1', type: 'shell', status: 'killed', command: 'killed' },
+      { type: 'shell', status: 'running', command: 'no id' },
+      { id: '', type: 'shell', status: 'running', command: 'empty id' },
+      { ...SLEEP, description: 'a repeat of sh1' },
+      { id: 'l1', type: 'local_agent', status: 'running' },
+      null, 'text',
+    ],
+  })?.backgroundTasks
+  assert.deepEqual(tasks, [
+    { id: 'sub1', kind: 'agent', label: 'Background task probe agent' },
+    { id: 'sh1', kind: 'shell', label: 'Sleep 45 seconds in the background' },
+    { id: 'sh3', kind: 'shell', label: 'Wait about 40 seconds, then emit done' },
+    { id: 'm1', kind: 'monitor', label: 'live updates for artifact https://example.com/a' },
+    { id: 'w1', kind: 'other', label: null },
+    { id: 'p1', kind: 'shell', label: 'make' },
+    { id: 'l1', kind: 'agent', label: null },
+  ])
+  for (const task of tasks ?? []) assert.deepEqual(Object.keys(task).sort(), ['id', 'kind', 'label'])
+})
+
+test('a background label is the command on one line when there is no description, clipped to 200', () => {
+  const label = (task: Record<string, unknown>) =>
+    parseEvent({ hook_event_name: 'Stop', background_tasks: [{ id: 't', status: 'running', ...task }] })?.backgroundTasks?.[0]?.label
+  assert.equal(label({ type: 'shell', command: 'cd /home/me/repo &&\n\tnpm   test\r\n' }), 'cd /home/me/repo && npm test')
+  assert.equal(label({ type: 'shell', description: '   ', command: 'ls' }), 'ls', 'a blank description falls back to the command')
+  assert.equal(label({ type: 'agent-ish', command: 'not a shell' }), null, 'only a shell\'s command is a label')
+  assert.equal(label({ type: 'shell', description: 'x'.repeat(300) })?.length, 200)
+})
+
+test('background tasks are read only from Stop and SubagentStop', () => {
+  assert.equal(parseEvent({ hook_event_name: 'Stop' })?.backgroundTasks, null, 'absent')
+  assert.equal(parseEvent({ hook_event_name: 'Stop', background_tasks: 'x' })?.backgroundTasks, null, 'not an array')
+  assert.deepEqual(parseEvent({ hook_event_name: 'SubagentStop', background_tasks: [SLEEP] })?.backgroundTasks?.map((t) => t.id), ['sh1'])
+  assert.equal(parseEvent({ hook_event_name: 'StopFailure', background_tasks: [SLEEP] })?.backgroundTasks, null)
+  assert.equal(parseEvent({ hook_event_name: 'UserPromptSubmit', background_tasks: [SLEEP] })?.backgroundTasks, null)
+})
+
+test('each report replaces the held background tasks; a Stop without the list clears them', () => {
+  const r = rig()
+  const ids = () => r.drain().held.background.map((t) => t.id)
+  r.fire({ hook_event_name: 'Stop', background_tasks: [SLEEP, COPIER] })
+  assert.deepEqual(ids(), ['sh1', 'sh2'])
+  r.fire({ hook_event_name: 'Stop', background_tasks: [SUBAGENT] })
+  assert.deepEqual(ids(), ['sub1'], 'replaced, not merged')
+  r.fire({ hook_event_name: 'Stop' })
+  assert.deepEqual(ids(), [], 'a Stop without the field clears')
+})
+
+test('a subagent\'s Stop replaces the list without the subagent; without the list it changes nothing', () => {
+  const r = rig()
+  const ids = () => r.drain().held.background.map((t) => t.id)
+  r.fire({ hook_event_name: 'Stop', background_tasks: [SUBAGENT, SLEEP] })
+  assert.deepEqual(ids(), ['sub1', 'sh1'])
+  r.fire({ hook_event_name: 'SubagentStop', agent_id: 'helper', agent_type: '' })
+  assert.deepEqual(ids(), ['sub1', 'sh1'], 'no list: unchanged')
+  r.fire({ hook_event_name: 'SubagentStop', agent_id: 'sub1', background_tasks: [SUBAGENT, SLEEP, COPIER] })
+  assert.deepEqual(ids(), ['sh1', 'sh2'])
+})
+
+test('a failed turn, a submission and every SessionStart leave the background tasks alone', () => {
+  const r = rig()
+  r.fire({ hook_event_name: 'Stop', background_tasks: [SLEEP] })
+  r.drain()
+  for (const body of [
+    { hook_event_name: 'StopFailure' },
+    { hook_event_name: 'UserPromptSubmit', prompt: '<task-notification>' },
+    { hook_event_name: 'PreCompact', trigger: 'manual' },
+    { hook_event_name: 'SessionStart', source: 'compact' },
+    { hook_event_name: 'SessionStart', source: 'clear' },
+    { hook_event_name: 'SessionStart', source: 'resume' },
+    { hook_event_name: 'SessionStart', source: 'startup' },
+    { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'x', tool_input: { command: 'ls' } },
+    { hook_event_name: 'Notification', notification_type: 'idle_prompt' },
+  ]) {
+    r.fire(body)
+    const result = r.drain()
+    assert.deepEqual(result.held.background.map((t) => t.id), ['sh1'], body.hook_event_name)
+    assert.equal(result.backgroundChanged, false, body.hook_event_name)
+  }
+})
+
+test('the measured sequence ends with the agent\'s copier and the subagent\'s Monitor', () => {
+  // design Context steps 1–4 (CLI 2.1.302): the subagent pauses on its own work, is dropped, resumes and stops.
+  const r = rig()
+  const ids = () => r.drain().held.background.map((t) => t.id)
+  r.fire({ hook_event_name: 'Stop', background_tasks: [SUBAGENT, SLEEP, COPIER, MONITOR_TOOL] })
+  r.fire({ hook_event_name: 'SubagentStop', agent_id: 'sub1', background_tasks: [SUBAGENT, SLEEP, COPIER, MONITOR_TOOL] })
+  assert.deepEqual(ids(), ['sh1', 'sh2', 'sh3'])
+  r.fire({ hook_event_name: 'UserPromptSubmit', prompt: '<task-notification>' })
+  r.fire({ hook_event_name: 'Stop', background_tasks: [SLEEP, COPIER, MONITOR_TOOL] })
+  assert.deepEqual(ids(), ['sh1', 'sh2', 'sh3'])
+  r.fire({ hook_event_name: 'PreToolUse', agent_id: 'sub1', tool_name: 'Bash', tool_use_id: 'y', tool_input: { command: 'ls' } })
+  r.fire({ hook_event_name: 'UserPromptSubmit', prompt: '<agent-message>' })
+  r.fire({ hook_event_name: 'SubagentStop', agent_id: 'sub1', background_tasks: [SUBAGENT, COPIER, MONITOR_TOOL] })
+  assert.deepEqual(ids(), ['sh2', 'sh3'])
+})
+
+test('backgroundChanged reports a change of the list or its order, not an identical replacement', () => {
+  const r = rig()
+  assert.equal(r.drain().backgroundChanged, false, 'an empty drain')
+  r.fire({ hook_event_name: 'Stop', background_tasks: [SLEEP, COPIER] })
+  assert.equal(r.drain().backgroundChanged, true)
+  r.fire({ hook_event_name: 'Stop', background_tasks: [SLEEP, COPIER] })
+  assert.equal(r.drain().backgroundChanged, false, 'the same list again')
+  r.fire({ hook_event_name: 'Stop', background_tasks: [COPIER, SLEEP] })
+  assert.equal(r.drain().backgroundChanged, true, 'the order changed')
+  r.fire({ hook_event_name: 'Stop', background_tasks: [COPIER, { ...SLEEP, description: 'renamed' }] })
+  assert.equal(r.drain().backgroundChanged, true, 'a label changed')
 })

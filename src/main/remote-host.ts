@@ -1,5 +1,5 @@
 import { preferredTitle } from '../shared/lineage/label'
-import { dismissRequest, markAnswered, openRequestsOf, refreshWait, subscribeWait, waitStateOf } from './agent-wait'
+import { backgroundOf, dismissRequest, markAnswered, openRequestsOf, refreshWait, subscribeWait, waitStateOf } from './agent-wait'
 import type { FinishedCall, WaitState } from './agent-events'
 import { busyReason } from './hibernation-policy'
 import { lastKeystrokeAt } from './pty-input'
@@ -118,6 +118,12 @@ function waitFields(sessionId: string): Pick<SessionView, 'wait' | 'seen'> {
   return wait === 'ready' ? { wait, seen: seenMarks.seenOf(sessionId) } : { wait }
 }
 
+/** A running agent session's background tasks, absent when there is none (`remote-background-tasks` D5). */
+function backgroundField(sessionId: string): Pick<SessionView, 'background'> {
+  const background = backgroundOf(sessionId)
+  return background.length > 0 ? { background } : {}
+}
+
 export function createRemoteHost(deps: HostDeps): RemoteHost {
   const delay = deps.delay ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
 
@@ -149,6 +155,8 @@ export function createRemoteHost(deps: HostDeps): RemoteHost {
             : {}),
           // Only while it runs, whatever the record says: an end announced in advance is not timed (D5).
           ...(live.has(session.id) && deps.offers.offered(session.id) ? { closeOffered: true as const } : {}),
+          // Only while it runs, as the offer: a list kept past a process end never reaches a device (D3).
+          ...(target === 'claude' && live.has(session.id) ? backgroundField(session.id) : {}),
         }
       })
       return { window: true, folders: folderViews(deps.folders), sessions }

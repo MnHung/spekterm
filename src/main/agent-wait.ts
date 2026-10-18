@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
 import {
+  type BackgroundTask,
   drainEvents,
   type DrainResult,
   type FinishedCall,
@@ -61,6 +62,8 @@ export interface WaitSnapshot {
   choicesRaised: { tool: string; arg: string | null }[]
   /** Tool calls that ended in the batch (`DrainResult.finished`). */
   finished: FinishedCall[]
+  /** The batch changed the held background tasks (`DrainResult.backgroundChanged`). */
+  backgroundChanged: boolean
   /**
    * Published with no event (`pokeWait`): a request was answered or dismissed, or the session was typed into.
    * What a device may answer can have changed, so followers send it again.
@@ -127,6 +130,11 @@ export function inTurnOf(sessionId: string, keystrokeAt: number | null = lastKey
   return held.turnEndAt === null || keystrokeAt > held.turnEndAt
 }
 
+/** The background tasks in flight as of the agent's last report (`remote-background-tasks`), a copy. */
+export function backgroundOf(sessionId: string): BackgroundTask[] {
+  return heldOf(sessionId).background.map((task) => ({ ...task }))
+}
+
 export function pendingRequestOf(sessionId: string): { tool: string; arg: string | null } | null {
   return pendingOf(heldOf(sessionId))
 }
@@ -149,6 +157,7 @@ function snapshotOf(sessionId: string, extra: Partial<WaitSnapshot> = {}): WaitS
     inTurn: inTurnOf(sessionId),
     choicesRaised: [],
     finished: [],
+    backgroundChanged: false,
     poke: false,
     ...extra,
   }
@@ -165,6 +174,7 @@ export function foldDrain(sessionId: string, result: DrainResult): WaitSnapshot 
     sessionStarted: result.sessionStarted,
     choicesRaised: result.choicesRaised,
     finished: result.finished,
+    backgroundChanged: result.backgroundChanged,
   })
 }
 

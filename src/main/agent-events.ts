@@ -175,6 +175,22 @@ export interface Question {
   options: QuestionOption[]
 }
 
+/**
+ * A background task the agent reports in flight (`remote-background-tasks` D4), by white-list. `kind` maps the CLI's
+ * `type`: `subagent` (measured CLI 2.1.302) and `local_agent` → agent; a `Monitor` tool's task is reported as a `shell`;
+ * `monitor` is another kind (MCP-style subscriptions); anything else → other.
+ */
+export interface BackgroundTask {
+  /** The CLI's task id (a subagent's `agent_id`). An identifier, not a location. */
+  id: string
+  kind: 'agent' | 'shell' | 'monitor' | 'other'
+  /**
+   * The task's `description`, else a shell's `command`, on one line and clipped; `null` when neither. Text the agent
+   * or its CLI wrote, delivered as written (the path rule's scope, `agent-event-bridge`).
+   */
+  label: string | null
+}
+
 export interface AgentEvent {
   name: string
   /** agent 自己回報的紀錄位置。定位的**權威來源**（見 `transcript-follow`）。 */
@@ -217,6 +233,12 @@ export interface AgentEvent {
    * absent.
    */
   backgroundAgentRunning: boolean
+  /**
+   * The background tasks in flight a `Stop` or `SubagentStop` lists (D2 of `remote-background-tasks`); `null` for any
+   * other event, or when the field is absent. Unlike `runningAgents`, a pending or paused task counts — on purpose:
+   * those two decide the wait state and the turn, which this list does not touch (D2, "the two existing readings").
+   */
+  backgroundTasks: BackgroundTask[] | null
   /** `PreCompact`'s `trigger` (`manual` for the user's `/compact`, `auto`). */
   trigger: string | null
 }
@@ -306,6 +328,40 @@ function runningAgents(tasks: unknown): string[] | null {
   return ids
 }
 
+const FINISHED_STATUSES = new Set(['completed', 'failed', 'killed'])
+const LABEL_MAX = 200
+
+function taskKind(type: unknown): BackgroundTask['kind'] {
+  if (type === 'subagent' || type === 'local_agent') return 'agent'
+  if (type === 'shell' || type === 'monitor') return type
+  return 'other'
+}
+
+/** One line: every control character and whitespace run becomes a single space. */
+function oneLine(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  // eslint-disable-next-line no-control-regex
+  const text = value.replace(/[\s\x00-\x1f\x7f]+/g, ' ').trim()
+  return text === '' ? null : clip(text, LABEL_MAX).trimEnd()
+}
+
+/** D4 of `remote-background-tasks`: in flight, with an id, first of a repeated id, three fields. */
+function backgroundTasks(tasks: unknown): BackgroundTask[] | null {
+  if (!Array.isArray(tasks)) return null
+  const seen = new Set<string>()
+  const kept: BackgroundTask[] = []
+  for (const task of tasks) {
+    if (task === null || typeof task !== 'object') continue
+    const t = task as Record<string, unknown>
+    const id = str(t.id)
+    if (id === null || seen.has(id) || FINISHED_STATUSES.has(t.status as string)) continue
+    seen.add(id)
+    const kind = taskKind(t.type)
+    kept.push({ id, kind, label: oneLine(t.description) ?? (kind === 'shell' ? oneLine(t.command) : null) })
+  }
+  return kept
+}
+
 /**
  * 解析一則事件。**以白名單取欄位** —— payload 的基底就帶著四個以上的絕對路徑
  * （紀錄位置、工作目錄、暫存目錄，工具類再加參數裡的檔案路徑）。
@@ -343,6 +399,7 @@ export function parseEvent(raw: unknown): AgentEvent | null {
     source: str(o.source),
     runningAgents: name === 'Stop' ? runningAgents(o.background_tasks) : null,
     backgroundAgentRunning: name === 'Stop' && backgroundAgentRunning(o.background_tasks),
+    backgroundTasks: name === 'Stop' || name === 'SubagentStop' ? backgroundTasks(o.background_tasks) : null,
     trigger: name === 'PreCompact' ? str(o.trigger) : null,
   }
 }
@@ -474,10 +531,15 @@ export interface HeldWait {
   turnEndAt: number | null
   submitted: boolean
   manualCompact: boolean
+  /**
+   * The background tasks in flight as of the agent's last report (`remote-background-tasks` D2): replaced by each
+   * report, never merged. Held here so the reset on a process end (`forgetRequests`) clears it too (D3).
+   */
+  background: BackgroundTask[]
 }
 
 export function heldWait(base: WaitState = 'unknown', turnEndAt: number | null = null): HeldWait {
-  return { base, requests: [], starts: [], turnEndAt, submitted: false, manualCompact: false }
+  return { base, requests: [], starts: [], turnEndAt, submitted: false, manualCompact: false, background: [] }
 }
 
 /** The fold's turn end: the last turn closed at `at`. */
@@ -537,6 +599,11 @@ export interface DrainResult {
   choicesRaised: { tool: string; arg: string | null }[]
   /** Tool calls that ended in the batch. */
   finished: FinishedCall[]
+  /**
+   * The held background tasks differ after the batch, order included (`remote-background-tasks` D6). **Not derivable
+   * from `state`**: a `SubagentStop` moves no wait state.
+   */
+  backgroundChanged: boolean
   held: HeldWait
 }
 
@@ -635,6 +702,8 @@ function apply(held: HeldWait, event: AgentEvent, at: number, newId: () => strin
       held.base = nextWaitState(event)
       return
     case 'SubagentStop':
+      // Its list names the subagent itself as still running (measured CLI 2.1.302); the agent's next Stop does not.
+      if (event.backgroundTasks !== null) held.background = event.backgroundTasks.filter((task) => task.id !== event.agentId)
       if (event.agentId !== null) {
         held.requests = held.requests.filter((request) => request.agentId !== event.agentId)
         held.starts = held.starts.filter((start) => start.agentId !== event.agentId)
@@ -648,6 +717,8 @@ function apply(held: HeldWait, event: AgentEvent, at: number, newId: () => strin
         else if (event.name === 'StopFailure' || !event.backgroundAgentRunning) endTurn(held, at)
         held.requests = held.requests.filter((request) => request.agentId !== null)
         held.starts = held.starts.filter((start) => start.agentId !== null)
+        // The whole list, replaced; a Stop without it clears (`remote-background-tasks` D2). A failed turn has none.
+        if (event.name === 'Stop') held.background = event.backgroundTasks ?? []
         if (event.name === 'Stop' && event.runningAgents !== null) {
           const running = new Set(event.runningAgents)
           held.requests = held.requests.filter((request) => request.agentId === null || running.has(request.agentId))
@@ -681,6 +752,7 @@ function copyHeld(held: HeldWait): HeldWait {
     ...held,
     requests: held.requests.map((r) => ({ ...r })),
     starts: held.starts.map((s) => ({ ...s })),
+    background: held.background.map((task) => ({ ...task })),
   }
 }
 
@@ -703,6 +775,7 @@ export function drainEvents(sessionId: string, held: HeldWait = heldWait(), opti
     choicesRaised: [] as DrainResult['choicesRaised'],
     finished: [] as FinishedCall[],
   }
+  const backgroundBefore = JSON.stringify(next.background)
   const finish = (transcriptPath: string | null, count: number, turnEnded: boolean, sessionStarted = false): DrainResult => ({
     state: stateOf(next),
     transcriptPath,
@@ -712,6 +785,7 @@ export function drainEvents(sessionId: string, held: HeldWait = heldWait(), opti
     sessionStarted,
     choicesRaised: result.choicesRaised,
     finished: result.finished,
+    backgroundChanged: JSON.stringify(next.background) !== backgroundBefore,
     held: next,
   })
   const dir = sessionDir(sessionId)

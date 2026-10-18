@@ -542,8 +542,9 @@ agent, tool and input: parallel calls' starts can arrive 1.5 ms apart, before ei
   prompt was open produced no event for 20 s, and its notice and the `Stop` came right after Esc.
 - A subagent whose prompt is dismissed ends: `SubagentStop` with its `agent_id`. `SubagentStop` also arrives for
   helper agents (`agent_type: ""`) that raised nothing, after the turn ended.
-- `Stop` lists the background tasks (`background_tasks: [{ id, type, status }]`, `id` = the subagent's
-  `agent_id`, `status: "running"` while its prompt is open).
+- `Stop` lists the background tasks (`background_tasks: [{ id, type, status, … }]`, `id` = the subagent's
+  `agent_id`, `status: "running"` while its prompt is open). The fields per kind, and `SubagentStop`'s copy of the
+  list, are in "Background tasks" below.
 - `SessionStart` carries `source` (`startup`, `resume`, `clear`, `compact`).
 
 ### Answering a question
@@ -604,6 +605,34 @@ of idling. It also turns on focus reporting, bracketed paste, the alternate scre
 answers reach the pty as writes. `isTerminalReport` (`src/main/pty-input.ts`) therefore counts them as the
 terminal's own, alongside focus and mouse reports. Without that, a session the user never typed into would
 count as typed into after its start.
+
+## Background tasks (`remote-background-tasks`, CLI 2.1.302, 2026-10-18)
+
+Measured on a real spekterm session: a background copier saved the session's event files before the drain removed
+them, while a background subagent started a `sleep 45` in the background and a `Monitor`, paused on them, resumed and
+reported. **Re-measure after a CLI upgrade**: the remote list's `background` field rests on every line.
+
+- **The list is in two payloads**: the agent's own `Stop`, and **`SubagentStop`**, each with the session's complete
+  list. No other event carries it (no capture of `SessionStart` does). A helper agent's `SubagentStop` after a `Stop`
+  carried the running shell too (CLI 2.1.301).
+- **`SubagentStop` lists the stopping subagent itself** as `running` — at a pause on its own background work and at
+  its final stop. The agent's `Stop` after the pause no longer listed it; the `Stop` after the final stop was not
+  captured.
+- **The list is session-wide**: the subagent's own background tasks appear in the agent's `Stop`.
+- Shapes:
+  - a background subagent: `{ id, type: "subagent", status, description, agent_type }` (`local_agent` appears only in
+    hand-written fixtures);
+  - a background shell: `{ id, type: "shell", status, description, command }` — `description` is the agent's own
+    summary from the tool call;
+  - **a `Monitor` tool's task is a `shell`** with the same fields; `type: "monitor"` is another kind (seen for an
+    artifact's live-update subscriptions, `description: "live updates for artifact https://… (re-armed on session
+    resume)"`, text the CLI wrote, with a URL).
+- From the Agent SDK's declarations (0.3.220 ≈ CLI 2.1.220), **not observed**: the hook list is "in-flight
+  background work (running/pending + backgrounded)", statuses are `pending | running | completed | failed | killed |
+  paused`, and a `workflow` type exists. The SDK's separate background-tasks stream message says to replace the set
+  with each payload and to reset it when the CLI process restarts; the hook field is read the same way by analogy.
+- **Still to measure**: whether `/clear` stops background tasks (spekterm keeps the list across it), and whether
+  `pending` ever appears in a hook payload.
 
 ## The status dots read these boundaries (`session-wait-indicator`)
 

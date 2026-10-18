@@ -66,6 +66,7 @@ const COVERED_CHANGES = [
   'remote-openspec-browse',
   'session-wait-indicator',
   'settings-sections',
+  'remote-background-tasks',
 ]
 
 /** change 的所在 —— 封存後它會搬到 `archive/` 之下，兩處都找。 */
@@ -2230,8 +2231,8 @@ export const TABLE = [
     'accept any shape', 'Green if parsing were absent (null); the cases with a partly valid shape are what turn the mutation red'],
   ['A denial written for a device makes the agent ready', 'own request makes it ready', false,
     'dismissRequest leaves the base state', 'Over the protocol: runAnswer "the agent then takes a reply"'],
-  ['事件內容不含絕對路徑', 'payload 以白名單取欄位，絕對路徑不外流（transcript_path 除外，它不送 renderer）', true,
-    'copy the whole payload', 'The scope paragraph only states what the code always did; the existing test pins the field white-list'],
+  ['事件內容不含絕對路徑', 'background tasks are read by white-list: id, kind and label, in flight only', true,
+    'copy the whole payload, or a whole background task', 'Since remote-background-tasks the THEN also covers background tasks: that test pins each task to exactly { id, kind, label }. The event white-list itself stays pinned by 「payload 以白名單取欄位，絕對路徑不外流」 (its key list)'],
   ['選擇類請求的選項不含絕對路徑', '等待選擇時回報「正在被問什麼」，離開後清掉', true,
     'keep the whole tool input on the request', 'The case checks that another parameter (should-not-leak) does not reach the request'],
   ['An agent-written option is shown as plain text', 'Agent-written prose is kept as written, a path included', true,
@@ -2650,6 +2651,32 @@ export const TABLE = [
     "the radio checks 'terminal' always", 'probe:agent-view runParallelSessions'],
   ['A choice in Settings changes every agent session', 'A choice in Settings changes every agent session', false,
     'the Terminal radio writes nothing', 'probe:agent-view runParallelSessions (two stub agent sessions)'],
+  // ── remote-background-tasks: agent-event-bridge ──
+  ["A turn completion's list replaces the kept tasks", 'each report replaces the held background tasks; a Stop without the list clears them', false,
+    'merge the reported list into the held one', 'unit: agent-events.test.ts'],
+  ["A subagent's completion leaves the subagent out", 'Stop replaces the list without the subagent; without the list it changes nothing', false,
+    'drop the agent_id filter in the SubagentStop branch (**Ran**: red, with the measured-sequence test)', 'unit: agent-events.test.ts; probe:remote runBackground ("a subagent\'s stop reaches the client at once, without the subagent")'],
+  ['Finished tasks are not kept, pending ones are', 'background tasks are read by white-list: id, kind and label, in flight only', false,
+    "keep only status === 'running' (drops the pending and paused tasks), or keep every status", 'unit: agent-events.test.ts; probe:remote runBackground (a completed shell is not listed)'],
+  ['An unknown kind is kept as other', 'background tasks are read by white-list: id, kind and label, in flight only', false,
+    'drop a task whose type is not known', 'unit: agent-events.test.ts (a workflow task)'],
+  ['The label prefers the description', 'a background label is the command on one line when there is no description, clipped to 200', false,
+    'label = command first, or no whitespace collapsing', 'unit: agent-events.test.ts (the description half in the white-list test)'],
+  ['A failed turn and a conversation event leave the kept tasks alone', 'a failed turn, a submission and every SessionStart leave the background tasks alone', true,
+    'clear on a non-compaction SessionStart (**Ran**: red)', 'unit: agent-events.test.ts; probe:remote runBackground ("a cleared conversation leaves the background tasks listed"). Green if absent: with no list at all nothing changes either; the mutation is what it guards against'],
+  ['A process end clears the kept tasks', 'the background tasks follow the session, not the drain', false,
+    'keep background outside HeldWait, so forgetRequests does not reset it', 'unit: agent-turn.test.ts; probe:remote runBackground ("a hibernated session carries no background field")'],
+  ["A background task's label is delivered as written", 'a background label is the command on one line when there is no description, clipped to 200', false,
+    'rewrite paths in the label, or drop a command with a path', 'unit: agent-events.test.ts (a command with /home/me/repo kept as written)'],
+  // ── remote-background-tasks: remote-protocol ──
+  ['A background shell is listed when the turn ends', 'a turn end lists the subagent and the shell in flight, labelled, and not the finished shell', false,
+    'leave background out of the session list', 'probe:remote runBackground; unit: remote-host.test.ts'],
+  ["A subagent's completion reaches the client at once", 'reaches the client at once, without the subagent', false,
+    "no backgroundChanged wiring in index.ts's observeWaits callback", 'probe:remote runBackground: within 1000 ms, three times. **Without the time bound it would be a false green**: the 5 s list reconcile delivers it anyway (control group in the section comment)'],
+  ['The field is absent when there is nothing to show', 'the list carries background tasks only for a running agent session with some', false,
+    'emit background: [] or emit it for a dormant session', 'unit: remote-host.test.ts; probe:remote runBackground ("a turn end with nothing in flight removes the background field")'],
+  ['Hibernation removes the background field', 'a hibernated session carries no background field', true,
+    'emit background for a session that is not live, with a list still held', 'probe:remote runBackground. Green if the host did not gate on liveness: hibernation also calls clearWait. The live gate is carried by the unit test in remote-host.test.ts (a dormant session with tasks still held)'],
 ]
 
 /**

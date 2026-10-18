@@ -303,6 +303,27 @@ test('keep withdraws in the main process, then always asks the window (remote-cl
   await assert.rejects(windowless.keep('a'), (error: { code?: string }) => error.code === 'NO_WINDOW')
 })
 
+test('the list carries background tasks only for a running agent session with some (remote-background-tasks D5)', () => {
+  const tasks = [
+    { id: 't2', kind: 'shell', label: 'Run the dev server' },
+    { id: 't1', kind: 'agent', label: null },
+  ] as const
+  const hold = (id: string, background: readonly { id: string; kind: string; label: string | null }[]): void => {
+    foldDrain(id, { held: { ...heldWait('ready'), background: background.map((t) => ({ ...t })) }, transcriptPath: null, count: 0, turnEnded: false, sessionStarted: false, choicesRaised: [], finished: [], backgroundChanged: false } as never)
+  }
+  try {
+    for (const id of ['a', 'b', 'c']) hold(id, tasks)
+    const list = host().host.sessionList().sessions
+    assert.deepEqual(list.find((s) => s.id === 'a')?.background, tasks, 'a running agent session, in the agent\'s order')
+    assert.equal('background' in list.find((s) => s.id === 'b')!, false, 'a shell')
+    assert.equal('background' in list.find((s) => s.id === 'c')!, false, 'a dormant agent session with tasks still held')
+    hold('a', [])
+    assert.equal('background' in host().host.sessionList().sessions.find((s) => s.id === 'a')!, false, 'none held: absent')
+  } finally {
+    for (const id of ['a', 'b', 'c']) clearWait(id)
+  }
+})
+
 test('seen is listed exactly while an agent session is ready (session-wait-indicator)', () => {
   const ready = (id: string): void => {
     foldDrain(id, { held: heldWait('ready'), transcriptPath: null, count: 0, turnEnded: false, sessionStarted: false, choicesRaised: [], finished: [] } as never)

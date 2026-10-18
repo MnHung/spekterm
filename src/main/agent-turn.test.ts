@@ -5,7 +5,7 @@ import path from 'node:path'
 import { after, describe, it } from 'node:test'
 
 import { configureAgentEvents, drainEvents, HOOKED_EVENTS, parseEvent, prepareEventInjection, type HeldWait } from './agent-events'
-import { clearWait, dismissRequest, forgetRequests, foldDrain, inTurnOf, openRequestsOf, waitStateOf } from './agent-wait'
+import { backgroundOf, clearWait, dismissRequest, forgetRequests, foldDrain, inTurnOf, openRequestsOf, waitStateOf } from './agent-wait'
 
 /**
  * Turn tracking (`agent-session-control` design D3, measured CLI 2.1.301 in `docs/lessons/transcript.md`, "Turn
@@ -189,5 +189,34 @@ describe('only the agent\'s own turn boundaries end a turn', () => {
     assert.equal(inTurnOf(s.id, T0 + 900), true)
     forgetRequests(s.id)
     assert.equal(inTurnOf(s.id, T0 + 900), false)
+  })
+})
+
+describe('the background tasks follow the session, not the drain (remote-background-tasks D3)', () => {
+  const SHELL = { id: 'b1', type: 'shell', status: 'running', description: 'Run the dev server', command: 'npm run dev' }
+
+  it('backgroundOf follows a drained Stop and returns a copy', () => {
+    const s = session()
+    s.at(1_000, ev('Stop', { background_tasks: [SHELL] }))
+    s.drain()
+    assert.deepEqual(backgroundOf(s.id), [{ id: 'b1', kind: 'shell', label: 'Run the dev server' }])
+    backgroundOf(s.id)[0].label = 'changed'
+    assert.equal(backgroundOf(s.id)[0].label, 'Run the dev server')
+  })
+
+  it('a process end empties it', () => {
+    const s = session()
+    s.at(1_000, ev('Stop', { background_tasks: [SHELL] }))
+    s.drain()
+    forgetRequests(s.id)
+    assert.deepEqual(backgroundOf(s.id), [])
+  })
+
+  it('clearWait empties it', () => {
+    const s = session()
+    s.at(1_000, ev('Stop', { background_tasks: [SHELL] }))
+    s.drain()
+    clearWait(s.id)
+    assert.deepEqual(backgroundOf(s.id), [])
   })
 })

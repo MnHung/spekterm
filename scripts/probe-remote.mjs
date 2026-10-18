@@ -415,6 +415,7 @@ function fireEvent(profile, sessionId, body) {
   const file = join(dir, `${lastEventNs}-probe.json`)
   writeFileSync(`${file}.tmp`, JSON.stringify(body))
   renameSync(`${file}.tmp`, file)
+  return file
 }
 
 /** The conversation id the main process gave a session (the stub keys its receipts by it). */
@@ -2378,6 +2379,111 @@ async function runSeen(_mode, _config, context) {
   await app.close()
 }
 
+/**
+ * remote-background-tasks: a device sees the background work of an agent session, from the agent's own reports
+ * (`Stop` and `SubagentStop`). Every assertion but the `/clear` one reads a `sessions.changed` event that arrived after
+ * its action: a missing announcement must turn it red.
+ */
+async function runBackground(_mode, _config, context) {
+  if (context.app) await context.app.close()
+  const repos = makeRepos()
+  const profile = seedProfile(repos, { remote: { enabled: true, port: LISTEN_A } })
+  const { app, stub } = await start(context, profile)
+  const { client } = await phone(app)
+  await selectFolder(app, repos.names.f)
+  const before = new Set((await list(client)).sessions.map((s) => s.id))
+  await desktopCreate(app, 'claude')
+  const S = await pollFor({
+    read: async () => (await list(client)).sessions.find((s) => s.target === 'claude' && !before.has(s.id))?.id ?? null,
+    settled: Boolean,
+    timeoutMs: 15_000,
+    label: 'the desktop agent listed',
+  })
+  await conversationOf(profile, S)
+  await pollFor({ read: () => stub.ready(), settled: Boolean, timeoutMs: 15_000, label: 'the stub ready' })
+  // The stub's own startup events are drained before the first report.
+  await sleep(1_000)
+
+  const sessionIn = (d) => d.sessions.find((s) => s.id === S)
+  const changed = (from, match, what) =>
+    client.waitEvent('sessions.changed', { from, match: (d) => match(sessionIn(d)), timeoutMs: 15_000, label: what })
+  const idsOf = (s) => (s?.background ?? []).map((task) => task.id).join(',')
+  const C = { id: 'agent-c', type: 'subagent', status: 'running', description: 'Probe agent', agent_type: 'general-purpose' }
+  const SH = { id: 'shell-d', type: 'shell', status: 'running', description: 'Run the dev server', command: 'npm run dev -- --port 5173' }
+  const DONE = { id: 'shell-x', type: 'shell', status: 'completed', command: 'true' }
+  const stop = (tasks) => fireEvent(profile, S, { hook_event_name: 'Stop', background_tasks: tasks })
+
+  // ── a turn ends with a subagent and a shell in flight, and a finished shell ──
+  let from = client.events.length
+  fireEvent(profile, S, { hook_event_name: 'UserPromptSubmit', prompt: 'start the dev server' })
+  stop([C, SH, DONE])
+  const listed = await changed(from, (s) => idsOf(s) === 'agent-c,shell-d', 'S carries C and the shell').catch(() => null)
+  const listedTasks = listed ? sessionIn(listed.d).background : null
+  check(
+    results,
+    'a turn end lists the subagent and the shell in flight, labelled, and not the finished shell',
+    JSON.stringify(listedTasks) ===
+      JSON.stringify([
+        { id: 'agent-c', kind: 'agent', label: 'Probe agent' },
+        { id: 'shell-d', kind: 'shell', label: 'Run the dev server' },
+      ]),
+    JSON.stringify(listedTasks),
+  )
+
+  // ── a subagent's stop changes no wait state; its list reaches the device at once. The list is also recomputed every
+  // 5 s while a device is connected, which delivers it without the `backgroundChanged` wiring, only later: so the
+  // assertion is on time (measured: 178–381 ms with it, 4.4–5.0 s without, red at this assertion only). Each try first
+  // lists C again (otherwise the debounce or the JSON dedup would merge the two changes). ──
+  const SUBAGENT_WITHIN_MS = 1_000
+  const tries = []
+  for (let i = 0; i < 3; i += 1) {
+    if (i > 0) {
+      from = client.events.length
+      stop([C, SH])
+      await changed(from, (s) => idsOf(s) === 'agent-c,shell-d', 'C listed again')
+      await sleep(600)
+    }
+    from = client.events.length
+    const at = Date.now()
+    fireEvent(profile, S, { hook_event_name: 'SubagentStop', agent_id: C.id, agent_type: 'general-purpose', background_tasks: [C, SH] })
+    const alone = await changed(from, (s) => idsOf(s) === 'shell-d', 'S carries the shell alone').catch(() => null)
+    tries.push(alone ? alone.receivedAt - at : null)
+  }
+  check(
+    results,
+    "a subagent's stop reaches the client at once, without the subagent",
+    tries.every((ms) => ms !== null && ms < SUBAGENT_WITHIN_MS),
+    JSON.stringify({ ms: tries }),
+  )
+
+  // ── /clear leaves the list alone: read once the event was drained ──
+  const clearFile = fireEvent(profile, S, { hook_event_name: 'SessionStart', source: 'clear' })
+  await pollFor({ read: () => !existsSync(clearFile), settled: Boolean, timeoutMs: 10_000, label: 'the SessionStart drained' })
+  const afterClear = sessionIn(await list(client))
+  check(results, 'a cleared conversation leaves the background tasks listed', idsOf(afterClear) === 'shell-d', JSON.stringify(afterClear?.background))
+
+  // ── a turn end with nothing in flight removes the field ──
+  from = client.events.length
+  stop([])
+  const emptied = await changed(from, (s) => s !== undefined && !('background' in s), 'S without background').catch(() => null)
+  check(results, 'a turn end with nothing in flight removes the background field', Boolean(emptied), '')
+
+  // ── hibernation removes it ──
+  from = client.events.length
+  stop([SH])
+  const relisted = await changed(from, (s) => idsOf(s) === 'shell-d', 'the shell listed before hibernating').catch(() => null)
+  from = client.events.length
+  await pressHibernate(app.client)
+  const dormant = await changed(from, (s) => s?.running === false, 'S dormant').catch(() => null)
+  check(
+    results,
+    'a hibernated session carries no background field',
+    Boolean(relisted) && Boolean(dormant) && !('background' in sessionIn(dormant.d)),
+    JSON.stringify(dormant ? sessionIn(dormant.d) : null),
+  )
+  await app.close()
+}
+
 const SECTIONS = [
   { name: 'runListener', run: runListener },
   { name: 'runPairing', run: runPairing },
@@ -2398,6 +2504,7 @@ const SECTIONS = [
   { name: 'runWatchEndAutoHibernate', run: runWatchEndAutoHibernate },
   { name: 'runCloseOffer', run: runCloseOffer },
   { name: 'runSeen', run: runSeen },
+  { name: 'runBackground', run: runBackground },
 ].map((section) => ({
   ...section,
   // A section that hangs leaves its app behind; the profile prefix finds it (character class: not this command).

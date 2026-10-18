@@ -23,6 +23,14 @@ have a shell, so treat a paired phone like your keyboard. It cannot edit files o
 settings, or see your Slack connection or any credential. The only files it can put on your computer are
 attachments, and only into spekterm's own data folder, under names spekterm chooses.
 
+### Background work
+
+An agent can leave work running after its turn ends: a background subagent, a background command such as a dev
+server or a test run, a monitor. The phone can show that work under the session, with the agent's own one-line
+description of each, so a session that has finished its turn but still has work running does not look idle. The
+list is what the agent last reported: it is updated when the agent's turn ends and when one of its subagents stops,
+and it goes when the session's process ends.
+
 ### Hibernating and closing from the phone
 
 The phone can hibernate a session (its process ends; it stays in place and you wake it later) or close it

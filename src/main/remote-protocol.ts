@@ -1,4 +1,4 @@
-import type { WaitState } from './agent-events'
+import type { BackgroundTask, WaitState } from './agent-events'
 import { type AnswerDecision, type AnswerOutcome, DECISIONS, type PromptView } from './remote-answer'
 import { LIMITS, type PutParams, type PutResult } from './remote-attachments'
 import type { AttentionEvent, AttentionPosition } from './remote-attention'
@@ -46,6 +46,11 @@ export interface SessionView {
   lineage?: { parentId: string; title?: string }
   /** The agent asked to close its own session, and the user has not answered (`remote-close-offer`). */
   closeOffered?: true
+  /**
+   * The background tasks in flight as of the agent's last report (`remote-background-tasks`): present only for a
+   * running agent session with at least one, in the agent's order.
+   */
+  background?: BackgroundTask[]
 }
 
 export interface SessionList {
