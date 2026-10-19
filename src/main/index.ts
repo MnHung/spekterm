@@ -34,7 +34,7 @@ import { notifyIntakeChanged, onIntakeChanged } from './intake-changes'
 import { OpenSpecService } from './openspec-service'
 import { AttentionLog } from './remote-attention'
 import { createRemoteHost } from './remote-host'
-import { RemoteService } from './remote-service'
+import { RemoteService, resendSessionsOnPrefill } from './remote-service'
 import { RemoteStore } from './remote-store'
 import { applyNavigationGuards } from './navigation'
 import { formatScanSummary, scanRepo } from './openspec'
@@ -63,6 +63,7 @@ import { anyWindowReceives, HandoffOpener, OPENER_INTERVAL_MS, whenAnnounced } f
 import { HandoffService, registerHandoffService } from './handoff-service'
 import { HandoffCompletion } from './handoff-completion'
 import { inTurnOf, observeWaits, openRequestsOf, pokeWait, refreshWait, subscribeWait } from './agent-wait'
+import { hasUnconfirmedSubmission, onPrefillChange } from './intake-prefill'
 import { onKeystroke } from './pty-input'
 import { isRestored, onRestoreGateOpen, whenRestored } from './restore-gate'
 import { SessionControl } from './session-control'
@@ -685,6 +686,9 @@ void app.whenReady().then(async () => {
   })
   intakeService.onArrival(whenAnnounced((record) => remoteAttention.onIntake(record)))
   onIntakeChanged(() => remoteService.listChanged('inbox'))
+  resendSessionsOnPrefill({ onPrefillChange, onKeystroke, onIntakeChanged, hasPrefill: hasUnconfirmedSubmission }, (kind) =>
+    remoteService.listChanged(kind),
+  )
   sessionStore.subscribe(() => remoteService.listChanged('sessions'))
   onPtyChange(() => remoteService.listChanged('sessions'))
   onSessionEnded((sessionId, how) => remoteService.sessionEnded(sessionId, how))

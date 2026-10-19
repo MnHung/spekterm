@@ -65,6 +65,32 @@ const OPENSPEC_THROTTLE_MS = 1_000
 
 type ListKind = 'sessions' | 'inbox' | 'handoffs'
 
+/** What can change a session's listed fill (`remote-prefill-send` D4), each a subscription. */
+export interface PrefillSignals {
+  onPrefillChange(listener: (sessionId: string) => void): () => void
+  onKeystroke(listener: (sessionId: string) => void): () => void
+  onIntakeChanged(listener: () => void): () => void
+  hasPrefill(sessionId: string): boolean
+}
+
+/**
+ * Sends the session list when a fill is set, offered or removed, typed over, or its item changes (cleared,
+ * accepted elsewhere). A keystroke moves no wait state, and an inbox change sends only the inbox list, so without
+ * this a device would learn of them only at the next reconcile.
+ */
+export function resendSessionsOnPrefill(signals: PrefillSignals, listChanged: (kind: 'sessions') => void): () => void {
+  const offs = [
+    signals.onPrefillChange(() => listChanged('sessions')),
+    signals.onKeystroke((sessionId) => {
+      if (signals.hasPrefill(sessionId)) listChanged('sessions')
+    }),
+    signals.onIntakeChanged(() => listChanged('sessions')),
+  ]
+  return () => {
+    for (const off of offs) off()
+  }
+}
+
 /** The non-loopback interface addresses: IPv4 first, then global IPv6 (link-local needs a zone id). */
 export function reachableAddresses(): string[] {
   const v4: string[] = []

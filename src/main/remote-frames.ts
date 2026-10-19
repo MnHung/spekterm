@@ -40,6 +40,9 @@ export const ERROR_CODES = [
   'TOO_MANY',
   'UNSUPPORTED_TYPE',
   'SESSION_BUSY',
+  'PREFILL_GONE',
+  'PREFILL_EDITED',
+  'PREFILL_PENDING',
   'INTERNAL',
 ] as const
 

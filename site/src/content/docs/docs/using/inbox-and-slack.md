@@ -28,7 +28,8 @@ Once accepted, an item shows as **Already opened** until you **Clear from inbox*
 reread what you accepted.
 
 Message text written by someone else is never sent to an agent on its own. You review it first, and the
-first prompt waits for your `Enter`.
+first prompt waits for your `Enter` — or, for an item accepted on a paired phone, for you to send it from the phone
+after reading it there ([Remote access](/docs/using/remote-access/#sending-an-inbox-items-prompt-from-the-phone)).
 
 ## Scheduled handoffs
 

@@ -384,6 +384,7 @@ export function registerIntakeHandlers(deps: IntakeHandlerDeps): void {
       const sender = event.sender
       schedulePrefill(sessionId, prompt, {
         write: (target_, data) => existingTerminalService(sender.id)?.write(target_, data),
+        processStartedAt: (target_) => existingTerminalService(sender.id)?.startedAtOf(target_) ?? null,
         onFilled: () => {
           /**
            * 「使用者送出了」**發生在 pty 之內** —— renderer 與主行程都收不到自己發出的訊號。
@@ -414,7 +415,7 @@ export function registerIntakeHandlers(deps: IntakeHandlerDeps): void {
           if (!sender.isDestroyed()) sender.send(INTAKE_CHANNELS.prefill, sessionId, 'timedOut')
           broadcast()
         },
-      }, mode)
+      }, mode, { adapter, id })
 
       return { ok: true }
     },

@@ -1,5 +1,8 @@
+import { randomUUID } from 'node:crypto'
+
 import { encodePrefill, type WaitState } from './agent-events'
 import { subscribeWait, waitStateOf } from './agent-wait'
+import { keystrokeSeq, lastKeystrokeAt } from './pty-input'
 
 /**
  * 預填 —— 把第一則 prompt 寫進 agent 的輸入處，**而不送出**。
@@ -108,24 +111,101 @@ export const SUBMIT_KEY_DELAY_MS = 500
  */
 export const SUBMIT_CONFIRM_MS = 10_000
 
+/** The inbox item a prefill came from. */
+export interface PrefillIntake {
+  adapter: string
+  id: string
+}
+
 /**
- * Sessions holding a filled-in prompt whose submission has not been confirmed (`session-hibernation`).
+ * A filled-in prompt whose submission has not been confirmed (`session-hibernation`, `remote-prefill-send` D4).
  *
  * Set when the text is written — in submit mode too, because the send key sometimes does not take
- * (see `SUBMIT_CONFIRM_MS`) — and cleared when the agent starts working or the session ends. While a
- * session is in here it is never hibernated automatically: resuming would discard the unsent text.
- * `watchSubmission` keeps its own state in a closure and only messages the renderer, so the main
- * process needs this registry to ask the question at all.
+ * (see `SUBMIT_CONFIRM_MS`) — and removed when the agent starts working or the session ends. While a
+ * session has one it is never hibernated automatically (resuming would discard the unsent text), and a
+ * device's reply is refused (it would be submitted together with the prompt). `watchSubmission` keeps its
+ * own state in a closure and only messages the renderer, so the main process needs this registry to ask
+ * the question at all.
  */
-const unconfirmed = new Set<string>()
+interface PrefillRecord {
+  /** This one fill's identity: a device submits the fill it showed the user, not a later one. */
+  id: string
+  /** Exactly what was written, before any submit key. */
+  text: string
+  intake: PrefillIntake | null
+  /** The session's keystroke count after the desktop's last write for this fill (`keystrokeSeq`). */
+  seq: number
+  /**
+   * Something was typed since the session's process started, before the fill: the input box may hold it in
+   * front of the prompt. No event says the box is empty — a `Stop` leaves text typed during the turn in place —
+   * so any keystroke of this process counts.
+   */
+  typedBefore: boolean
+  /** The desktop shows its "not sent" label: at once when only filled in, after the fallback when submitted. */
+  offered: boolean
+}
+
+const records = new Map<string, PrefillRecord>()
+const changeListeners = new Set<(sessionId: string) => void>()
+
+function changed(sessionId: string): void {
+  for (const listener of changeListeners) {
+    try {
+      listener(sessionId)
+    } catch (error) {
+      console.error(`[intake-prefill] listener failed: ${String(error)}`)
+    }
+  }
+}
 
 export function hasUnconfirmedSubmission(sessionId: string): boolean {
-  return unconfirmed.has(sessionId)
+  return records.has(sessionId)
 }
 
 /** The session ended (its pty is gone, and the prompt with it). */
 export function forgetSubmission(sessionId: string): void {
-  unconfirmed.delete(sessionId)
+  if (records.delete(sessionId)) changed(sessionId)
+}
+
+/** A session's unconfirmed prefill as the remote protocol reads it (`remote-prefill-send` D2). */
+export interface PrefillView {
+  id: string
+  text: string
+  intake: PrefillIntake | null
+  /** The input box may hold more than `text`: typed into after the fill, or before it in this process. */
+  edited: boolean
+  offered: boolean
+}
+
+export function prefillOf(sessionId: string): PrefillView | null {
+  const record = records.get(sessionId)
+  if (!record) return null
+  return {
+    id: record.id,
+    text: record.text,
+    intake: record.intake,
+    edited: record.typedBefore || keystrokeSeq(sessionId) > record.seq,
+    offered: record.offered,
+  }
+}
+
+/** A submit key the desktop wrote for the fill (its own, or a device's): not someone typing over the prompt. */
+export function notePrefillKey(sessionId: string): void {
+  const record = records.get(sessionId)
+  if (record) record.seq = keystrokeSeq(sessionId)
+}
+
+/** Hears a prefill set, removed, or offered. */
+export function onPrefillChange(listener: (sessionId: string) => void): () => void {
+  changeListeners.add(listener)
+  return () => changeListeners.delete(listener)
+}
+
+function markOffered(sessionId: string): void {
+  const record = records.get(sessionId)
+  if (!record || record.offered) return
+  record.offered = true
+  changed(sessionId)
 }
 
 export interface SubmissionHandlers {
@@ -166,6 +246,7 @@ export function watchSubmission(
   const showPending = (): void => {
     if (done || pendingShown) return
     pendingShown = true
+    markOffered(sessionId)
     handlers.onPending()
   }
 
@@ -184,7 +265,7 @@ export function watchSubmission(
   subscription.unsubscribe = deps.subscribe(sessionId, (snapshot) => {
         if (done || !isSubmitted(snapshot.state)) return
     stop()
-    unconfirmed.delete(sessionId)
+    if (records.delete(sessionId)) changed(sessionId)
     handlers.onSubmitted()
   })
   if (done) subscription.unsubscribe()
@@ -198,6 +279,8 @@ export interface PrefillDeps {
   onTimeout(sessionId: string): void
   /** 成功填入。 */
   onFilled?(sessionId: string): void
+  /** When the session's current process was spawned, or `null` (then any earlier keystroke counts as typed). */
+  processStartedAt?(sessionId: string): number | null
 }
 
 interface PendingPrefill {
@@ -223,6 +306,7 @@ export function schedulePrefill(
   prompt: string,
   deps: PrefillDeps,
   mode: PrefillMode = 'fill',
+  intake: PrefillIntake | null = null,
 ): void {
   cancelPrefill(sessionId)
 
@@ -241,11 +325,22 @@ export function schedulePrefill(
   }
 
   const fill = (): void => {
+    // Read before the write: the write itself is a keystroke (`noteWrite`), and would mark every fill typed into.
+    const startedAt = deps.processStartedAt?.(sessionId) ?? null
+    const last = lastKeystrokeAt(sessionId)
+    const typedBefore = last !== null && (startedAt === null || last >= startedAt)
     // **不附送出字元，且換行由編碼器濾掉** —— 單行是編碼器的性質，不是呼叫端的義務。
-        deps.write(sessionId, encodePrefill(prompt))
-    unconfirmed.add(sessionId)
+    const text = encodePrefill(prompt)
+    deps.write(sessionId, text)
+    records.set(sessionId, { id: randomUUID(), text, intake, seq: keystrokeSeq(sessionId), typedBefore, offered: mode === 'fill' })
+    changed(sessionId)
     // 送出字元**分開、稍後**才寫 —— 與文字一起到達會被當成貼上的一部分（見 `SUBMIT_KEY_DELAY_MS`）。
-    if (mode === 'submit') setTimeout(() => deps.write(sessionId, SUBMIT_KEY), SUBMIT_KEY_DELAY_MS)
+    if (mode === 'submit') {
+      setTimeout(() => {
+        deps.write(sessionId, SUBMIT_KEY)
+        notePrefillKey(sessionId)
+      }, SUBMIT_KEY_DELAY_MS)
+    }
     finish(true)
   }
 

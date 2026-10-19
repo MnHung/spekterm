@@ -72,6 +72,12 @@ export function makeStubAgent(
      */
     announceTitle = '',
     /**
+     * Ask the terminal for two modes (DECRQM, `CSI ? 2026 $ p` and `CSI ? 1016 $ p`) before and after `SessionStart`,
+     * as the real CLI does since 2.1.303 (measured, `remote-prefill-send`). xterm.js answers each into the pty, and the
+     * product must not take the answers for someone typing. **Off by default**: the answers land in the byte receipts.
+     */
+    queryModes = false,
+    /**
      * **吞掉每個 session 收到的第一個送出字元**（它不結束一行，那一行繼續累積）。
      *
      * 模擬真實 CLI 的一個實測行為：首次就緒時寫入的 `prompt\r` 偶爾只有文字進了輸入框、送出字元
@@ -280,7 +286,9 @@ export function makeStubAgent(
     // 前景的阻塞讀取正是這支替身活著的理由。
     '(',
     readyDelaySeconds ? `sleep ${readyDelaySeconds}` : '',
+    queryModes ? `printf '\\033[?2026$p\\033[?1016$p'` : '',
     'fire SessionStart',
+    queryModes ? `printf '\\033[?2026$p'` : '',
     announceTitle ? `printf '\\033]0;%s\\007' ${JSON.stringify(announceTitle)}` : '',
     // 就緒的閘門 —— 判準的兩端都由檔案界定，呼叫端不必睡任何固定的時間。
     `date +%s%N > ${JSON.stringify(readyReceipt)}`,

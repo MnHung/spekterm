@@ -768,6 +768,11 @@ export class TerminalService {
     this.sink.resized?.(sessionId, safeCols, safeRows)
   }
 
+  /** When the session's current process was spawned (wall-clock ms), or `null` when it has none. */
+  startedAtOf(sessionId: string): number | null {
+    return this.#sessions.get(sessionId)?.startedAt ?? null
+  }
+
   /** The pty's current size, or `null` when the session has no pty. */
   sizeOf(sessionId: string): { cols: number; rows: number } | null {
     const session = this.#sessions.get(sessionId)

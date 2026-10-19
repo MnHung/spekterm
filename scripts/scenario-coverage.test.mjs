@@ -68,6 +68,7 @@ const COVERED_CHANGES = [
   'settings-sections',
   'remote-background-tasks',
   'scheduled-handoff',
+  'remote-prefill-send',
 ]
 
 /** change 的所在 —— 封存後它會搬到 `archive/` 之下，兩處都找。 */
@@ -2787,6 +2788,33 @@ export const TABLE = [
     'build the context without the times (schedule-line-missing)', 'probe:intake runScheduledStart; unit: intake-context.test.ts'],
   ['The introduction states that a handoff opens only while spekterm runs', 'scheduling: the field, the offset, the bound, now, and only while spekterm runs', false,
     'drop the sentence', 'unit'],
+  // ── remote-prefill-send: remote-protocol ──
+  ["A device's accept of a third-party item lists the filled-in prompt", 'lists the filled-in prompt with its exact text, its item, not edited, and no submit key', false,
+    'list the body instead of the text written, write a submit key for a third-party prompt, or count the terminal\'s DECRPM answers as typing', 'probe:remote runPrefillSubmit, with the stub\'s queryModes (a real CLI\'s mode queries; without them this was green while a real agent\'s fill read as edited); unit: remote-host.test.ts. The arrival of the list would come even without the set signal (the fill comes with the unknown→ready change); that signal is carried by remote-service.test.ts'],
+  ['Submitting from a device sends the prompt and settles the item', 'submitting from a device writes the submit key alone', false,
+    'write the prompt again before the key, or answer confirmed without a start', 'probe:remote runPrefillSubmit; unit: remote-host.test.ts "submitting writes the submit key alone, notes it". The settle is watchSubmission\'s (design D3)'],
+  ['Submitting while the agent waits on a choice writes nothing', 'every refusal of a submit writes nothing', false,
+    'refuse only a working agent, letting a choice through', 'unit with injected waits: remote-host.test.ts, and "a refresh that removes the fill: a choice is answered as one". Integrated, a choice the desktop already read answers PREFILL_GONE (design D3), so no probe asserts WAIT_STATE'],
+  ['Submitting after something was typed is refused', 'a fill typed into is listed edited', false,
+    'compare wall-clock times of the last write, or drop the keystroke count from edited', 'probe:remote runPrefillSubmit; unit: intake-prefill.test.ts "a keystroke after the fill marks it edited"'],
+  ['Text typed before the fill marks it edited', 'a keystroke of this process before the fill marks it edited from the start', false,
+    'drop typedBefore from edited, or read it after the write (**Ran**: both red)', 'unit: intake-prefill.test.ts, with remote-host.test.ts (an edited fill is listed edited and refused). The integrated path needs a 30 s prefill timeout or a clear and re-accept; not built'],
+  ['Submitting a fill that is not the current one is refused', 'a stale fill id is refused, a reply into the filled-in prompt is refused', false,
+    'accept any id', 'probe:remote runPrefillSubmit; unit: remote-host.test.ts ("another id", "a shell with no fill")'],
+  ['Clearing the item at the desktop withdraws the fill', 'clearing the item at the desktop withdraws the fill', false,
+    'drop the settledAt check in listedPrefill', 'probe:remote runPrefillSubmit; unit: remote-host.test.ts ("its item was cleared"). The prompt arrival of the list is carried by remote-service.test.ts (the inbox signal)'],
+  ['Submitting with no window is refused', 'with no window, sessions.submitPrefill answers NO_WINDOW', false,
+    'skip the window check', 'unit: remote-protocol.test.ts over the real host'],
+  ['Sending at the desktop withdraws the field', 'sending at the desktop withdraws the fill from the session list', false,
+    'keep the record after a start', 'probe:remote runPrefillSubmit. Its arrival does not show the change-signal wiring: a start also changes the wait state, which re-sends the list. The wiring is carried by remote-service.test.ts "the session list is re-sent on each signal" (**Ran**: red without the keystroke subscription)'],
+  ["The desktop's own submit of a first-party prompt is not listed as waiting", "the desktop's own submit of a handoff's prompt is never listed", true,
+    'list a submit-mode fill before the fallback (drop !view.offered in listedPrefill)', 'probe:remote runIntakeHandoff; unit: remote-host.test.ts ("a submit-mode fill before the fallback"). Green if absent: with no field nothing is listed; the mutation is what it guards against'],
+  ['A reply while a filled-in prompt waits is refused', 'a reply while a filled-in prompt waits is refused and writes nothing', false,
+    'no prefillPending check in sendReply', 'unit: remote-conversation.test.ts; probe:remote runPrefillSubmit (the stale-id check)'],
+  ['A reply into a filled-in prompt that was typed over is still refused', 'a device reply is refused while any fill stands', false,
+    'refuse only a fill that is not edited', 'unit: remote-host.test.ts; probe:remote runPrefillSubmit ("a reply still is")'],
+  ['A prompt filled in while a reply waits for its submit key keeps the key back', 'a fill that appears during the delay keeps the submit key back', false,
+    'remove the check before the submit key (**Ran**: red)', 'unit: remote-conversation.test.ts'],
 ]
 
 /**

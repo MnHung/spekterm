@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { heldWait } from './agent-events'
 import { clearWait, foldDrain } from './agent-wait'
+import type { PrefillView } from './intake-prefill'
+import { runQueued } from './remote-conversation'
 import { createRemoteHost, type HostDeps } from './remote-host'
 import { seenMarks } from './wait-seen'
 import { RemoteOutput } from './remote-output'
@@ -344,4 +346,159 @@ test('seen is listed exactly while an agent session is ready (session-wait-indic
     clearWait('a')
     seenMarks.forget('a')
   }
+})
+
+/**
+ * A host with a fill on `a` (`remote-prefill-send`): the prefill, the intake record of its item, the wait state and
+ * the agent's start are each switchable, and every pty write is recorded.
+ */
+function prefilled(opts: { wait?: string; offered?: boolean; edited?: boolean; item?: Record<string, unknown> | null; started?: boolean } = {}) {
+  let fill: PrefillView | null = {
+    id: 'p1',
+    text: 'Read /x/ctx.md.',
+    intake: { adapter: 'slack', id: 'i1' },
+    edited: opts.edited ?? false,
+    offered: opts.offered ?? true,
+  }
+  let wait = opts.wait ?? 'ready'
+  let item: Record<string, unknown> | null = opts.item === undefined ? { state: 'accepted', sessionId: 'a' } : opts.item
+  const notes: string[] = []
+  const refreshed: string[] = []
+  let onRefresh: (() => void) | null = null
+  const made = host({
+    intake: { store: { get: () => item, list: () => [] } } as unknown as HostDeps['intake'],
+    prefills: { of: (id) => (id === 'a' ? fill : null), noteKey: (id) => void notes.push(id) },
+    waits: {
+      refresh: (id) => {
+        refreshed.push(id)
+        onRefresh?.()
+      },
+      stateOf: () => wait as never,
+      unsent: () => fill !== null,
+    },
+    started: () => Promise.resolve(opts.started ?? true),
+  })
+  return {
+    ...made,
+    notes,
+    refreshed,
+    setFill: (next: PrefillView | null) => void (fill = next),
+    setWait: (next: string) => void (wait = next),
+    setItem: (next: Record<string, unknown> | null) => void (item = next),
+    onRefresh: (fn: () => void) => void (onRefresh = fn),
+  }
+}
+
+const code = (promise: Promise<unknown>) => promise.then(
+  (value) => value,
+  (error: { code: string; detail?: unknown }) => ({ code: error.code, detail: error.detail }),
+)
+
+test('the list carries a fill on a running agent session while it is offered and its item is listed (remote-prefill-send D2)', () => {
+  const listed = prefilled().host.sessionList().sessions.find((s) => s.id === 'a')
+  assert.deepEqual(listed?.prefill, { id: 'p1', text: 'Read /x/ctx.md.', intake: { adapter: 'slack', id: 'i1' }, edited: false })
+  const absent = (made: ReturnType<typeof prefilled>, why: string) =>
+    assert.equal(made.host.sessionList().sessions.find((s) => s.id === 'a')?.prefill, undefined, why)
+  absent(prefilled({ offered: false }), 'a submit-mode fill before the fallback')
+  absent(prefilled({ item: { state: 'accepted', sessionId: 'a', settledAt: 1 } }), 'its item was cleared')
+  absent(prefilled({ item: { state: 'accepted', sessionId: 'other' } }), 'its item was accepted into another session')
+  absent(prefilled({ item: { state: 'pending', sessionId: 'a' } }), 'its item went back to pending')
+  absent(prefilled({ item: null }), 'its item is gone')
+  const noFill = prefilled()
+  noFill.setFill(null)
+  absent(noFill, 'no fill')
+  assert.equal(prefilled({ edited: true }).host.sessionList().sessions.find((s) => s.id === 'a')?.prefill?.edited, true)
+})
+
+test('the list carries no fill on a shell or a dormant session', () => {
+  const made = prefilled()
+  // `of` answers for `a` only; ask about the others through the same host by re-pointing the fill at them.
+  const sessions = made.host.sessionList().sessions
+  assert.equal(sessions.find((s) => s.id === 'b')?.prefill, undefined, 'a shell')
+  assert.equal(sessions.find((s) => s.id === 'c')?.prefill, undefined, 'dormant')
+  const dormant = host({
+    intake: { store: { get: () => ({ state: 'accepted', sessionId: 'c' }), list: () => [] } } as unknown as HostDeps['intake'],
+    prefills: { of: () => ({ id: 'p', text: 't', intake: { adapter: 'x', id: 'y' }, edited: false, offered: true }), noteKey: () => undefined },
+  }).host
+  assert.equal(dormant.sessionList().sessions.find((s) => s.id === 'c')?.prefill, undefined, 'dormant, with a fill pointed at it')
+})
+
+test('submitting writes the submit key alone, notes it, and answers confirmed or sent (remote-prefill-send D3)', async () => {
+  const made = prefilled()
+  assert.deepEqual(await made.host.submitPrefill('a', 'p1'), { outcome: 'confirmed' })
+  assert.deepEqual(made.writes, ['\r'])
+  assert.deepEqual(made.notes, ['a'])
+  assert.deepEqual(made.refreshed, ['a'], 'the state is refreshed before it is read')
+  const unseen = prefilled({ started: false })
+  assert.deepEqual(await unseen.host.submitPrefill('a', 'p1'), { outcome: 'sent' })
+  assert.deepEqual(await unseen.host.submitPrefill('a', 'p1'), { outcome: 'sent' }, 'a second submit after sent is accepted')
+  assert.deepEqual(unseen.writes, ['\r', '\r'])
+})
+
+test('every refusal of a submit writes nothing', async () => {
+  const cases: [string, ReturnType<typeof prefilled>, string, string, unknown?][] = [
+    ['a choice', prefilled({ wait: 'awaiting-choice' }), 'a', 'WAIT_STATE', { state: 'awaiting-choice' }],
+    ['working', prefilled({ wait: 'busy' }), 'a', 'WAIT_STATE', { state: 'busy' }],
+    ['unknown', prefilled({ wait: 'unknown' }), 'a', 'WAIT_STATE', { state: 'unknown' }],
+    ['edited', prefilled({ edited: true }), 'a', 'PREFILL_EDITED'],
+    ['not offered', prefilled({ offered: false }), 'a', 'PREFILL_GONE'],
+    ['a cleared item', prefilled({ item: { state: 'accepted', sessionId: 'a', settledAt: 1 } }), 'a', 'PREFILL_GONE'],
+    ['a shell with no fill', prefilled(), 'b', 'PREFILL_GONE'],
+    ['no such session', prefilled(), 'nope', 'NOT_FOUND'],
+    ['no process', prefilled(), 'c', 'NOT_FOUND'],
+  ]
+  for (const [why, made, sessionId, expected, detail] of cases) {
+    const answer = (await code(made.host.submitPrefill(sessionId, 'p1'))) as { code: string; detail?: unknown }
+    assert.equal(answer.code, expected, why)
+    if (detail) assert.deepEqual(answer.detail, detail, why)
+    assert.deepEqual(made.writes, [], why)
+    assert.deepEqual(made.notes, [], why)
+  }
+  const stale = prefilled()
+  assert.equal(((await code(stale.host.submitPrefill('a', 'p0'))) as { code: string }).code, 'PREFILL_GONE', 'another id')
+  const noWindow = prefilled()
+  const nw = host({ window: () => null, prefills: { of: () => null, noteKey: () => undefined } }).host
+  assert.equal(((await code(nw.submitPrefill('a', 'p1'))) as { code: string }).code, 'NO_WINDOW')
+  assert.deepEqual([...stale.writes, ...noWindow.writes], [])
+})
+
+test('a refresh that removes the fill: a choice is answered as one, a start as the fill gone', async () => {
+  // The refresh reaches `watchSubmission` first, which removes the record on a start or a choice (D3).
+  const choice = prefilled()
+  choice.onRefresh(() => {
+    choice.setWait('awaiting-choice')
+    choice.setFill(null)
+  })
+  assert.equal(((await code(choice.host.submitPrefill('a', 'p1'))) as { code: string }).code, 'WAIT_STATE')
+  const removed = prefilled()
+  removed.onRefresh(() => removed.setFill(null))
+  assert.equal(((await code(removed.host.submitPrefill('a', 'p1'))) as { code: string }).code, 'PREFILL_GONE')
+  assert.deepEqual([...choice.writes, ...removed.writes], [])
+})
+
+test('a reply queued before a submit is written first', async () => {
+  const made = prefilled()
+  const order: string[] = []
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => (release = resolve))
+  void runQueued('a', () => gate.then(() => void order.push('reply')))
+  const submitted = made.host.submitPrefill('a', 'p1').then(() => void order.push('submit'))
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(made.writes, [], 'the submit waits its turn')
+  release()
+  await submitted
+  assert.deepEqual(order, ['reply', 'submit'])
+})
+
+test('a device reply is refused while any fill stands (remote-prefill-send D5)', async () => {
+  for (const opts of [{}, { edited: true }, { offered: false }]) {
+    const made = prefilled(opts)
+    const answer = (await code(made.host.reply('a', 'a', 'hi', []))) as { code: string; detail?: unknown }
+    assert.equal(answer.code, 'PREFILL_PENDING', JSON.stringify(opts))
+    assert.deepEqual(made.writes, [])
+  }
+  const listed = (await code(prefilled().host.reply('a', 'a', 'hi', []))) as { detail?: unknown }
+  assert.deepEqual(listed.detail, { prefillId: 'p1', edited: false })
+  const unlisted = (await code(prefilled({ offered: false }).host.reply('a', 'a', 'hi', []))) as { detail?: unknown }
+  assert.deepEqual(unlisted.detail, { edited: false }, 'no id for a fill a device cannot see')
 })

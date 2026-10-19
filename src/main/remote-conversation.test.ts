@@ -171,3 +171,62 @@ test('a reply refused after its attachments were taken releases them', async () 
   )
   assert.equal(r.writes.length, 0)
 })
+
+/** `prefillPending` of `sendReply` (`remote-prefill-send` D5): a switchable fill. */
+function withFill(r: ReturnType<typeof rig>, initial: { prefillId?: string; edited: boolean } | null) {
+  let fill = initial
+  r.deps.prefillPending = () => fill
+  return (next: { prefillId?: string; edited: boolean } | null) => {
+    fill = next
+  }
+}
+
+test('a reply while a filled-in prompt waits is refused and writes nothing, edited or not, listed or not', async () => {
+  for (const fill of [{ prefillId: 'p1', edited: false }, { prefillId: 'p1', edited: true }, { edited: false }]) {
+    const r = rig('ready')
+    withFill(r, fill)
+    const a = attachments(['/x/a.png'])
+    await assert.rejects(sendReply(r.deps, 's', 's', 'also do this', a.take), (error: RemoteError) => {
+      assert.equal(error.code, 'PREFILL_PENDING')
+      assert.deepEqual(error.detail, fill)
+      return true
+    })
+    assert.deepEqual(r.writes, [], JSON.stringify(fill))
+    assert.deepEqual(a.log, [], 'refused before the attachments are taken')
+  }
+})
+
+test('a fill that appears while the reply waits its turn refuses it inside the queue and releases the attachments', async () => {
+  const r = rig('ready')
+  const set = withFill(r, null)
+  const a = attachments(['/x/a.png'])
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => (release = resolve))
+  void runQueued('s', () => gate)
+  const reply = sendReply(r.deps, 's', 's', 'hi', a.take)
+  set({ prefillId: 'p1', edited: false })
+  release()
+  await assert.rejects(reply, (error: RemoteError) => error.code === 'PREFILL_PENDING')
+  assert.deepEqual(r.writes, [])
+  assert.deepEqual(a.log, ['release'])
+})
+
+test('a fill that appears during the delay keeps the submit key back', async () => {
+  // Control group: remove the check before the submit key → the outcome is `submitted` and `\r` is written (red).
+  const r = rig('ready')
+  const set = withFill(r, null)
+  const outcome = sendReply(r.deps, 's', 's', 'go on')
+  await r.advance(100)
+  set({ edited: true })
+  await r.advance(SUBMIT_KEY_DELAY_MS)
+  assert.equal((await outcome).outcome, 'filled-not-submitted')
+  assert.deepEqual(r.writes.map((w) => w.data), ['go on'])
+})
+
+test('with no fill a reply is written and submitted as before', async () => {
+  const r = rig('ready')
+  withFill(r, null)
+  const outcome = sendReply(r.deps, 's', 's', 'hi')
+  await r.advance(SUBMIT_KEY_DELAY_MS)
+  assert.equal((await outcome).outcome, 'submitted')
+})

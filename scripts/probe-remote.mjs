@@ -1111,7 +1111,8 @@ async function runIntakeHandoff(_mode, _config, context) {
     remote: { enabled: true, port: LISTEN_A },
     extraFolders: [{ id: 'gone', path: gone, addedAt: '2026-10-13T00:00:03.000Z' }],
   })
-  const { app, stub } = await start(context, profile, { readyDelaySeconds: 1 })
+  // Busy for a while after a submission, so the child's start is seen as one (`remote-prefill-send`, below).
+  const { app, stub } = await start(context, profile, { readyDelaySeconds: 1, busySeconds: 2 })
   const { client } = await phone(app)
   const watchAttention = await call(client, 'attention.watch')
   check(results, 'prerequisite: the attention stream is watched', watchAttention.ok === true, JSON.stringify(watchAttention.e ?? ''))
@@ -1180,6 +1181,7 @@ async function runIntakeHandoff(_mode, _config, context) {
     timeoutMs: 20_000,
     label: 'the parent outbox',
   })
+  const handoffFrom = client.events.length
   writeFileSync(join(outbox, 'h1.json.partial'), JSON.stringify({ target: repos.names.g, title: 'REMOTE-HANDOFF', body: 'do the thing' }))
   renameSync(join(outbox, 'h1.json.partial'), join(outbox, 'h1.json'))
   const child = await pollFor({
@@ -1195,6 +1197,18 @@ async function runIntakeHandoff(_mode, _config, context) {
   const brief = await call(client, 'handoffs.brief', { sessionId: child.id })
   const handoffEvent = await client.waitEvent('attention', { match: (d) => d.kind === 'handoff-done' && d.sessionId === child.id, timeoutMs: 15_000, label: 'the handoff-done event' })
   check(results, 'a reported handoff is read as done with its report', Boolean(done) && brief.r?.report?.summary?.includes('Fixed it'), JSON.stringify(brief.r ?? brief.e))
+  /*
+    The desktop submits a handoff's prompt itself, so no device is offered it (`remote-prefill-send` D2). Control
+    group: list a submit-mode fill before the fallback (drop `!view.offered` in `listedPrefill`) → the list sent
+    with the fill carries it (red).
+  */
+  const listsWithChild = client.events.slice(handoffFrom).filter((e) => e.k === 'sessions.changed' && e.d.sessions.some((s) => s.id === child.id))
+  check(
+    results,
+    "the desktop's own submit of a handoff's prompt is never listed as a fill waiting to be sent",
+    listsWithChild.length > 0 && !listsWithChild.some((e) => e.d.sessions.find((s) => s.id === child.id)?.prefill),
+    `lists=${listsWithChild.length} withFill=${listsWithChild.filter((e) => e.d.sessions.find((s) => s.id === child.id)?.prefill).length}`,
+  )
   check(results, 'an adopted report raises a handoff event whose summary lacks the URL', Boolean(handoffEvent) && !handoffEvent.d.summary.includes('example.com') && handoffEvent.d.summary.includes('Fixed it'), JSON.stringify(handoffEvent?.d))
   await app.close()
 }
@@ -1267,6 +1281,122 @@ async function runScheduled(_mode, _config, context) {
   const children = await pollFor({ read: () => childrenOf().length, settled: (n) => n === 2, timeoutMs: 20_000, label: 'the due child' })
   check(results, 'a scheduled handoff raises its intake event when it opens, and opens a new session', Boolean(event) && children === 2 && Date.now() >= Date.parse(dueAt), `children=${children}`)
   void stub
+  await app.close()
+}
+
+/**
+ * remote-protocol: a prompt a device's accept left unsent is listed and sent from the device (`remote-prefill-send`).
+ * The stub stays busy for a few seconds after a submission, so the start is seen (design, Risks: a start and the
+ * next ready in one drained batch are never seen as a start, by the desktop's Enter either).
+ */
+async function runPrefillSubmit(_mode, _config, context) {
+  const repos = makeRepos()
+  const profile = seedProfile(repos, { remote: { enabled: true, port: LISTEN_A } })
+  // `queryModes`: the stub asks for two terminal modes as the real CLI does; the terminal's answers must not mark a
+  // fill typed into (control group: drop the DECRPM alternative from `REPORT` in pty-input.ts → the first check is red).
+  const { app, stub } = await start(context, profile, { readyDelaySeconds: 1, busySeconds: 4, queryModes: true })
+  const { client } = await phone(app)
+  const drop = (id) => {
+    const inbox = join(profile, 'intake-inbox')
+    mkdirSync(inbox, { recursive: true })
+    const target = join(inbox, `${id}.json`)
+    writeFileSync(`${target}.tmp`, JSON.stringify({ id, origin: { kind: 'slack', id: 'C1', label: '#dev' }, title: `PREFILL-${id}`, body: `BODY-${id}`, actor: 'someone' }))
+    renameSync(`${target}.tmp`, target)
+  }
+  const prefillIn = (d, sessionId) => d.sessions.find((s) => s.id === sessionId)?.prefill
+  /** The UTF-8 bytes of a string as the stub records them, one character per byte. */
+  const asBytes = (text) => Buffer.from(text, 'utf8').toString('latin1')
+  const accept = async (id) => {
+    drop(id)
+    const item = await pollFor({ read: async () => (await call(client, 'inbox.list')).r.items.find((i) => i.id === id) ?? null, settled: Boolean, timeoutMs: 20_000, label: `item ${id}` })
+    const from = client.events.length
+    const accepted = await call(client, 'inbox.accept', { adapter: item.adapter, id, folderId: 'g' })
+    const sessionId = accepted.r?.sessionId
+    const conv = await conversationOf(profile, sessionId)
+    await pollFor({ read: () => stub.sessionInputs()[conv ?? '']?.bytes ?? '', settled: (b) => b.length > 0, timeoutMs: 20_000, label: `the prompt of ${id} filled in` })
+    const listed = await client.waitEvent('sessions.changed', { from, match: (d) => Boolean(prefillIn(d, sessionId)), timeoutMs: 10_000, label: `the fill of ${id} listed` })
+    return { item, sessionId, conv, prefill: listed ? prefillIn(listed.d, sessionId) : undefined }
+  }
+  /** What the stub received, without the terminal's answers to its mode queries (DECRPM). */
+  // eslint-disable-next-line no-control-regex
+  const withoutAnswers = (text) => text.replace(/\x1b\[\?\d+;\d+\$y/g, '')
+  const bytesOf = (conv) => withoutAnswers(stub.sessionInputs()[conv]?.bytes ?? '')
+
+  // One: listed, refused for a stale id and for a reply, then sent.
+  const one = await accept('p1')
+  await sleep(1_500)
+  check(
+    results,
+    "a device's accept of a third-party item lists the filled-in prompt with its exact text, its item, not edited, and no submit key",
+    one.prefill?.text !== undefined && bytesOf(one.conv) === asBytes(one.prefill.text) && one.prefill.intake?.id === 'p1' &&
+      one.prefill.intake?.adapter === one.item.adapter && one.prefill.edited === false && typeof one.prefill.id === 'string',
+    `prefill=${JSON.stringify(one.prefill)} bytes=${JSON.stringify(bytesOf(one.conv).slice(-24))}`,
+  )
+  const stale = await call(client, 'sessions.submitPrefill', { sessionId: one.sessionId, prefillId: 'not-this-one' })
+  await call(client, 'conversation.watch', { sessionId: one.sessionId })
+  const reply = await call(client, 'conversation.send', { sessionId: one.sessionId, text: 'ALSO-THIS' })
+  await sleep(1_000)
+  check(
+    results,
+    'a stale fill id is refused, a reply into the filled-in prompt is refused, and neither writes anything',
+    stale.e?.code === 'PREFILL_GONE' && reply.e?.code === 'PREFILL_PENDING' && reply.e?.detail?.prefillId === one.prefill?.id &&
+      bytesOf(one.conv) === asBytes(one.prefill?.text ?? ''),
+    `stale=${JSON.stringify(stale.e ?? stale.r)} reply=${JSON.stringify(reply.e ?? reply.r)} tail=${JSON.stringify(bytesOf(one.conv).slice(-12))}`,
+  )
+  const blocksBefore = stub.sessionBlocks(one.conv).length
+  const sentFrom = client.events.length
+  const submitted = await call(client, 'sessions.submitPrefill', { sessionId: one.sessionId, prefillId: one.prefill?.id })
+  const withdrawn = await client.waitEvent('sessions.changed', { from: sentFrom, match: (d) => d.sessions.some((s) => s.id === one.sessionId) && !prefillIn(d, one.sessionId), timeoutMs: 10_000, label: 'the fill withdrawn' })
+  const settled = await pollFor({ read: async () => (await call(client, 'inbox.list')).r.items.some((i) => i.id === 'p1'), settled: (listed) => !listed, timeoutMs: 10_000, label: 'the item settled' })
+  // One block, the key alone (the tty's line discipline reads it as a newline, as in runConversation).
+  const keyBlocks = stub.sessionBlocks(one.conv).slice(blocksBefore)
+  const lines = stub.sessionInputs()[one.conv]?.lines ?? []
+  check(
+    results,
+    'submitting from a device writes the submit key alone, the agent records the prompt, the item leaves the inbox, and the fill leaves the list',
+    submitted.r?.outcome === 'confirmed' && keyBlocks.length === 1 && /^[\r\n]$/.test(keyBlocks[0].text) && lines.length === 1 &&
+      withoutAnswers(lines[0]) === one.prefill?.text && Boolean(withdrawn) && settled === false,
+    `outcome=${JSON.stringify(submitted.r ?? submitted.e)} blocks=${JSON.stringify(keyBlocks.map((b) => b.text))} lines=${lines.length} sameText=${withoutAnswers(lines[0] ?? '') === one.prefill?.text} withdrawn=${Boolean(withdrawn)} listed=${settled}`,
+  )
+
+  // Two: typed into after the fill — edited, refused for a submit and still for a reply.
+  const two = await accept('p2')
+  const typedFrom = client.events.length
+  await call(client, 'terminal.input', { sessionId: two.sessionId, data: 'x' })
+  const edited = await client.waitEvent('sessions.changed', { from: typedFrom, match: (d) => prefillIn(d, two.sessionId)?.edited === true, timeoutMs: 6_000, label: 'the fill edited' })
+  const editedBytes = bytesOf(two.conv)
+  const refused = await call(client, 'sessions.submitPrefill', { sessionId: two.sessionId, prefillId: two.prefill?.id })
+  await call(client, 'conversation.watch', { sessionId: two.sessionId })
+  const replyTwo = await call(client, 'conversation.send', { sessionId: two.sessionId, text: 'ALSO-THIS' })
+  await sleep(1_000)
+  check(
+    results,
+    'a fill typed into is listed edited; its submit is refused, a reply still is, and neither writes anything',
+    Boolean(edited) && refused.e?.code === 'PREFILL_EDITED' && replyTwo.e?.code === 'PREFILL_PENDING' && bytesOf(two.conv) === editedBytes,
+    `edited=${Boolean(edited)} submit=${JSON.stringify(refused.e ?? refused.r)} reply=${JSON.stringify(replyTwo.e ?? replyTwo.r)}`,
+  )
+
+  // Three: sent with Enter through the desktop's own terminal write — the fill leaves the list.
+  const three = await accept('p3')
+  const enterFrom = client.events.length
+  await app.client.evaluate(`window.workspace.terminal.write(${JSON.stringify(three.sessionId)}, '\\r')`)
+  const enterGone = await client.waitEvent('sessions.changed', { from: enterFrom, match: (d) => d.sessions.some((s) => s.id === three.sessionId) && !prefillIn(d, three.sessionId), timeoutMs: 10_000, label: 'the fill gone after the desktop Enter' })
+  check(results, 'sending at the desktop withdraws the fill from the session list', Boolean(enterGone), '')
+
+  // Four: cleared on the desktop — the fill goes, and its submit is refused.
+  const four = await accept('p4')
+  const clearFrom = client.events.length
+  await app.client.evaluate(`window.workspace.intake.settle('p4', ${JSON.stringify(four.item.adapter)})`)
+  const clearGone = await client.waitEvent('sessions.changed', { from: clearFrom, match: (d) => d.sessions.some((s) => s.id === four.sessionId) && !prefillIn(d, four.sessionId), timeoutMs: 6_000, label: 'the fill gone after clearing' })
+  const fourBytes = bytesOf(four.conv)
+  const clearedSubmit = await call(client, 'sessions.submitPrefill', { sessionId: four.sessionId, prefillId: four.prefill?.id })
+  await sleep(1_000)
+  check(
+    results,
+    'clearing the item at the desktop withdraws the fill, and its submit is refused without writing',
+    Boolean(clearGone) && clearedSubmit.e?.code === 'PREFILL_GONE' && bytesOf(four.conv) === fourBytes,
+    `gone=${Boolean(clearGone)} submit=${JSON.stringify(clearedSubmit.e ?? clearedSubmit.r)}`,
+  )
   await app.close()
 }
 
@@ -2564,6 +2694,7 @@ const SECTIONS = [
   { name: 'runTerminal', run: runTerminal },
   { name: 'runIntakeHandoff', run: runIntakeHandoff },
   { name: 'runReaccept', run: runReaccept },
+  { name: 'runPrefillSubmit', run: runPrefillSubmit },
   { name: 'runScheduled', run: runScheduled },
   { name: 'runOpenSpec', run: runOpenSpec },
   { name: 'runAttention', run: runAttention },

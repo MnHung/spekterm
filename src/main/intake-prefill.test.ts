@@ -11,14 +11,18 @@ import {
   forgetSubmission,
   hasUnconfirmedSubmission,
   isSubmitted,
+  notePrefillKey,
+  onPrefillChange,
   pendingPrefillCount,
   prefillModeFor,
+  prefillOf,
   schedulePrefill,
   SUBMIT_CONFIRM_MS,
   SUBMIT_KEY,
   SUBMIT_KEY_DELAY_MS,
   watchSubmission,
 } from './intake-prefill'
+import { forgetInput, noteWrite } from './pty-input'
 
 const bases: string[] = []
 after(() => {
@@ -318,5 +322,121 @@ describe('unconfirmed submissions (session-hibernation)', () => {
     forgetSubmission(sessionId)
     assert.equal(hasUnconfirmedSubmission(sessionId), false)
     clearWait(sessionId)
+  })
+})
+
+describe('the prefill record (remote-prefill-send D4)', () => {
+  const ITEM = { adapter: 'slack', id: 'i1' }
+  /** The terminal service's write: every write is reported to `pty-input`, as `TerminalService.write` does. */
+  const writer = (writes: string[] = []) => (sessionId: string, data: string) => {
+    writes.push(data)
+    noteWrite(sessionId, data)
+  }
+  async function filled(sessionId: string, opts: { mode?: 'fill' | 'submit'; startedAt?: number | null; before?: () => void } = {}) {
+    const base = configure()
+    prepareEventInjection(sessionId, true)
+    forgetInput(sessionId)
+    opts.before?.()
+    const writes: string[] = []
+    schedulePrefill(
+      sessionId,
+      'line one\nline two',
+      { write: writer(writes), onTimeout: () => assert.fail('no timeout expected'), processStartedAt: () => opts.startedAt === undefined ? 0 : opts.startedAt },
+      opts.mode ?? 'fill',
+      ITEM,
+    )
+    fire(base, sessionId, { hook_event_name: 'SessionStart' })
+    await waitFor('filled', () => prefillOf(sessionId) !== null)
+    return { base, writes }
+  }
+
+  it('a fill records the exact text written and the item, offered and not edited', async () => {
+    const { writes } = await filled('R1')
+    const view = prefillOf('R1')
+    assert.deepEqual({ ...view, id: typeof view?.id }, { id: 'string', text: 'line oneline two', intake: ITEM, edited: false, offered: true })
+    assert.equal(writes[0], view?.text)
+    forgetSubmission('R1')
+    assert.equal(prefillOf('R1'), null)
+    clearWait('R1')
+  })
+
+  it('each fill gets its own identity', async () => {
+    await filled('R2')
+    const first = prefillOf('R2')?.id
+    forgetSubmission('R2')
+    clearWait('R2')
+    await filled('R2')
+    assert.notEqual(prefillOf('R2')?.id, first)
+    forgetSubmission('R2')
+    clearWait('R2')
+  })
+
+  it('a keystroke after the fill marks it edited; the fill\'s own write and a noted key do not', async () => {
+    await filled('R3')
+    assert.equal(prefillOf('R3')?.edited, false, 'the fill\'s own write')
+    noteWrite('R3', '\r')
+    notePrefillKey('R3')
+    assert.equal(prefillOf('R3')?.edited, false, 'a submit key the desktop noted')
+    noteWrite('R3', 'x')
+    assert.equal(prefillOf('R3')?.edited, true)
+    forgetSubmission('R3')
+    clearWait('R3')
+  })
+
+  it('a keystroke of this process before the fill marks it edited from the start; an earlier process\'s does not', async () => {
+    // Control group: drop `typedBefore` from `edited` → the first assertion turns red; read it after the write →
+    // the second turns red (the fill's own write counts).
+    const now = Date.now()
+    await filled('R4', { startedAt: now - 1000, before: () => noteWrite('R4', 'typed', undefined, now - 500) })
+    assert.equal(prefillOf('R4')?.edited, true, 'typed after the process started')
+    forgetSubmission('R4')
+    clearWait('R4')
+    await filled('R5', { startedAt: now, before: () => noteWrite('R5', 'typed', undefined, now - 500) })
+    assert.equal(prefillOf('R5')?.edited, false, 'typed by a previous process')
+    forgetSubmission('R5')
+    clearWait('R5')
+    await filled('R6', { startedAt: null, before: () => noteWrite('R6', 'typed', undefined, 1) })
+    assert.equal(prefillOf('R6')?.edited, true, 'no spawn time: any keystroke counts')
+    forgetSubmission('R6')
+    clearWait('R6')
+  })
+
+  it('submit mode: not offered until the fallback, and its own submit key is not typing', async () => {
+    // Control group: drop the `notePrefillKey` after the desktop's key → `edited` turns true (red).
+    const { writes } = await filled('R7', { mode: 'submit' })
+    assert.equal(prefillOf('R7')?.offered, false)
+    await waitFor('the submit key', () => writes.includes(SUBMIT_KEY), SUBMIT_KEY_DELAY_MS + 2000)
+    assert.equal(prefillOf('R7')?.edited, false)
+    const timers: (() => void)[] = []
+    watchSubmission('R7', 'submit', { onPending: () => undefined, onSubmitted: () => undefined }, {
+      subscribe: () => () => undefined,
+      setTimer: (fn) => timers.push(fn),
+      clearTimer: () => undefined,
+    })
+    timers[0]()
+    assert.equal(prefillOf('R7')?.offered, true, 'offered once the desktop falls back to "pending"')
+    forgetSubmission('R7')
+    clearWait('R7')
+  })
+
+  it('listeners hear a fill set, offered and removed; a start removes it', async () => {
+    const heard: string[] = []
+    const off = onPrefillChange((id) => heard.push(id))
+    const { base } = await filled('R8', { mode: 'submit' })
+    assert.deepEqual(heard.filter((id) => id === 'R8').length, 1, 'set')
+    const timers: (() => void)[] = []
+    watchSubmission('R8', 'submit', { onPending: () => undefined, onSubmitted: () => undefined }, {
+      subscribe: () => () => undefined,
+      setTimer: (fn) => timers.push(fn),
+      clearTimer: () => undefined,
+    })
+    timers[0]()
+    assert.equal(heard.filter((id) => id === 'R8').length, 2, 'offered')
+    watchSubmission('R8', 'fill', { onPending: () => undefined, onSubmitted: () => undefined })
+    fire(base, 'R8', { hook_event_name: 'PreToolUse' })
+    await waitFor('removed on a start', () => prefillOf('R8') === null)
+    assert.equal(heard.filter((id) => id === 'R8').length, 3, 'removed')
+    off()
+    clearWait('R8')
   })
 })

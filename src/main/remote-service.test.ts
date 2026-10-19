@@ -9,7 +9,7 @@ import { helloRemote, openRemote, pairRemote } from '../../scripts/lib/remote-cl
 import { AttentionLog } from './remote-attention'
 import { RemoteOutput } from './remote-output'
 import type { RemoteHost } from './remote-protocol'
-import { RemoteService, pairingLink } from './remote-service'
+import { RemoteService, pairingLink, resendSessionsOnPrefill } from './remote-service'
 import { RemoteStore } from './remote-store'
 import { SecretStore } from './secret-store'
 
@@ -254,4 +254,36 @@ test('openspec.changed: to the connections watching that folder, at most once pe
   } finally {
     await r.done()
   }
+})
+
+test('the session list is re-sent on each signal that can change a listed fill (remote-prefill-send D4)', () => {
+  // Control group: leave the keystroke subscription out of `resendSessionsOnPrefill` → the keystroke count is 0 (red).
+  const hub = () => {
+    const listeners = new Set<(id: string) => void>()
+    return {
+      on: (listener: (id: string) => void) => (listeners.add(listener), () => void listeners.delete(listener)),
+      emit: (id: string) => listeners.forEach((listener) => listener(id)),
+    }
+  }
+  const prefill = hub()
+  const keys = hub()
+  const intake = hub()
+  const sent: string[] = []
+  const off = resendSessionsOnPrefill(
+    { onPrefillChange: prefill.on, onKeystroke: keys.on, onIntakeChanged: (l) => intake.on(() => l()), hasPrefill: (id) => id === 'filled' },
+    (kind) => void sent.push(kind),
+  )
+  prefill.emit('filled')
+  assert.equal(sent.length, 1, 'a fill set, offered or removed')
+  keys.emit('filled')
+  assert.equal(sent.length, 2, 'a keystroke into a session with a fill')
+  keys.emit('other')
+  assert.equal(sent.length, 2, 'a keystroke into a session without one')
+  intake.emit('')
+  assert.deepEqual(sent, ['sessions', 'sessions', 'sessions'], 'an inbox change')
+  off()
+  prefill.emit('filled')
+  keys.emit('filled')
+  intake.emit('')
+  assert.equal(sent.length, 3, 'unsubscribed')
 })

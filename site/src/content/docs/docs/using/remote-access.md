@@ -59,6 +59,14 @@ spekterm presses the keys you would press, one at a time, and never sends text o
 each key it checks that the prompt is still the same one and still open. The phone cannot answer when more than
 one prompt is waiting, or once you typed into that session on your computer; answer those on the computer.
 
+### Sending an inbox item's prompt from the phone
+
+Accepting an inbox item on the phone opens its session on the computer as accepting it there does, with the first
+prompt typed in and **not sent** ([Inbox and Slack](/docs/using/inbox-and-slack/)). A phone app that offers it then
+shows that prompt waiting, with the item's full text, and sends it only when you tap send — spekterm presses `Enter`
+for you, nothing more. Until then a reply from the phone to that session is refused, so it can never go out together
+with a prompt you have not read. If you typed into that session on the computer, finish it there.
+
 ### Attaching files
 
 A reply from the phone can carry photos, screenshots, PDFs and text files (up to 10 per reply, 10 MB each).

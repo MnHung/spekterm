@@ -8,7 +8,15 @@ import { startFollow } from './conversation-follow'
 import { readBriefFor } from './handoff-brief'
 import { lifecycleViewOf } from './handoff-lifecycle-view'
 import { dismissIntake } from './intake-changes'
-import { SUBMIT_KEY_DELAY_MS, hasUnconfirmedSubmission } from './intake-prefill'
+import {
+  SUBMIT_KEY,
+  SUBMIT_KEY_DELAY_MS,
+  hasUnconfirmedSubmission,
+  isSubmitted,
+  notePrefillKey,
+  prefillOf,
+  type PrefillView,
+} from './intake-prefill'
 import { listView } from './intake-projection'
 import type { RoutingStore } from './intake-routing'
 import type { IntakeService } from './intake-service'
@@ -71,6 +79,31 @@ export interface HostDeps {
     stateOf(sessionId: string): WaitState
     unsent(sessionId: string): boolean
   }
+  /** The session's unconfirmed prefill and the note of a submit key (`intake-prefill.ts`); the real ones by default. */
+  prefills?: {
+    of(sessionId: string): PrefillView | null
+    noteKey(sessionId: string): void
+  }
+  /** Resolves `true` once the agent starts working (`isSubmitted`), `false` after `ms`; subscribed before the key. */
+  started?: (sessionId: string, ms: number) => Promise<boolean>
+}
+
+/** How long a device's submit waits to see the agent start before answering `sent` (`remote-prefill-send` D3). */
+export const SUBMIT_CONFIRM_WINDOW_MS = 3_000
+
+function agentStarted(sessionId: string, ms: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      off()
+      resolve(false)
+    }, ms)
+    const off = subscribeWait(sessionId, (snapshot) => {
+      if (!isSubmitted(snapshot.state)) return
+      clearTimeout(timer)
+      off()
+      resolve(true)
+    })
+  })
 }
 
 const RENDERER_CODES: readonly ErrorCode[] = ['NOT_FOUND', 'CREATE_FAILED', 'FOLDER_REQUIRED', 'NO_WINDOW', 'TIMEOUT', 'BAD_PARAMS']
@@ -124,6 +157,10 @@ function backgroundField(sessionId: string): Pick<SessionView, 'background'> {
   return background.length > 0 ? { background } : {}
 }
 
+function prefillField(prefill: SessionView['prefill'] | null): Pick<SessionView, 'prefill'> {
+  return prefill ? { prefill } : {}
+}
+
 export function createRemoteHost(deps: HostDeps): RemoteHost {
   const delay = deps.delay ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
 
@@ -133,6 +170,19 @@ export function createRemoteHost(deps: HostDeps): RemoteHost {
   }
 
   const record = (sessionId: string) => deps.sessions.view().find((entry) => entry.session.id === sessionId)?.session
+  const prefills = deps.prefills ?? { of: prefillOf, noteKey: notePrefillKey }
+
+  /**
+   * The fill a device may see and submit (`remote-prefill-send` D2): the desktop shows it as not sent, and its item
+   * is still listed for this session — after the desktop's "clear" the client could no longer show the body.
+   */
+  const listedPrefill = (sessionId: string): NonNullable<SessionView['prefill']> | null => {
+    const view = prefills.of(sessionId)
+    if (!view || !view.offered || !view.intake) return null
+    const item = deps.intake.store.get(view.intake.adapter, view.intake.id)
+    if (!item || item.state !== 'accepted' || item.sessionId !== sessionId || item.settledAt !== undefined) return null
+    return { id: view.id, text: view.text, intake: { ...view.intake }, edited: view.edited }
+  }
 
   return {
     sessionList(): SessionList {
@@ -157,6 +207,7 @@ export function createRemoteHost(deps: HostDeps): RemoteHost {
           ...(live.has(session.id) && deps.offers.offered(session.id) ? { closeOffered: true as const } : {}),
           // Only while it runs, as the offer: a list kept past a process end never reaches a device (D3).
           ...(target === 'claude' && live.has(session.id) ? backgroundField(session.id) : {}),
+          ...(target === 'claude' && live.has(session.id) ? prefillField(listedPrefill(session.id)) : {}),
         }
       })
       return { window: true, folders: folderViews(deps.folders), sessions }
@@ -212,7 +263,7 @@ export function createRemoteHost(deps: HostDeps): RemoteHost {
             }
       return sendReply(
         {
-          waitStateOf,
+          waitStateOf: (deps.waits ?? REAL_WAITS).stateOf,
           write: (id, data) => {
             const terminal = service()
             if (!terminal || terminal.sizeOf(id) === null) return false
@@ -221,12 +272,51 @@ export function createRemoteHost(deps: HostDeps): RemoteHost {
           },
           delay,
           submitDelayMs: SUBMIT_KEY_DELAY_MS,
+          // Any unconfirmed fill, listed or not, edited or not (`remote-prefill-send` D5).
+          prefillPending: (id) => {
+            const view = prefills.of(id)
+            if (!view) return null
+            const listed = listedPrefill(id)
+            return { ...(listed ? { prefillId: listed.id } : {}), edited: view.edited }
+          },
         },
         watching,
         sessionId,
         text,
         take,
       )
+    },
+
+    async submitPrefill(sessionId, prefillId) {
+      if (deps.window() === null) throw new RemoteError('NO_WINDOW', 'the desktop has no window open')
+      const terminal = service()
+      if (!record(sessionId) || !terminal || terminal.sizeOf(sessionId) === null) {
+        throw new RemoteError('NOT_FOUND', `session ${sessionId} has no running process`)
+      }
+      const waits = deps.waits ?? REAL_WAITS
+      // In the session's queue, so no reply or answer is written between these checks and the key (D3).
+      return runQueued(sessionId, async () => {
+        const listed = listedPrefill(sessionId)
+        if (!listed || listed.id !== prefillId) throw new RemoteError('PREFILL_GONE', 'that filled-in prompt is not waiting to be sent')
+        if (listed.edited) throw new RemoteError('PREFILL_EDITED', 'something was typed into the session; send it at the desktop')
+        // The periodic drain can be 400 ms behind a choice. The refresh can also remove the fill (a start), so the
+        // state is read first: a choice is then answered as one, and the fill read again after.
+        waits.refresh(sessionId)
+        const state = waits.stateOf(sessionId)
+        if (state !== 'ready') {
+          throw new RemoteError('WAIT_STATE', `the agent cannot take the prompt now (${state})`, { state })
+        }
+        if (listedPrefill(sessionId)?.id !== prefillId) throw new RemoteError('PREFILL_GONE', 'that filled-in prompt is not waiting to be sent')
+        const now = service()
+        if (!now || now.sizeOf(sessionId) === null) throw new RemoteError('NOT_FOUND', `session ${sessionId} has no running process`)
+        // Watched before the key, so a start drained right after it is not missed.
+        const started = (deps.started ?? agentStarted)(sessionId, SUBMIT_CONFIRM_WINDOW_MS)
+        now.write(sessionId, SUBMIT_KEY)
+        // At once: the device's own key is not typing over the prompt, so a key that did not take can be sent again.
+        prefills.noteKey(sessionId)
+        // The settle is `watchSubmission`'s, as for the desktop's Enter; this only says whether a start was seen.
+        return { outcome: (await started) ? ('confirmed' as const) : ('sent' as const) }
+      })
     },
 
     answer(watching, sessionId, promptId, decision, selections) {

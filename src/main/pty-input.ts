@@ -16,6 +16,11 @@
  */
 
 const lastKeystroke = new Map<string, number>()
+/**
+ * How many keystrokes each session received (`remote-prefill-send` D4). A count, not a time: a key in the same
+ * millisecond as the desktop's own write is still told apart, and no clock step can hide one.
+ */
+const keystrokeCount = new Map<string, number>()
 const listeners = new Set<(sessionId: string) => void>()
 
 export type WriteOrigin = 'answer'
@@ -23,14 +28,17 @@ export type WriteOrigin = 'answer'
 /**
  * Focus and mouse reports, plus xterm.js's answers to the queries the agent sends at startup (measured, CLI 2.1.301,
  * `docs/lessons/transcript.md` "Turn boundaries"): DA1 (`CSI ? 1 ; 2 c`), DA2 (`CSI > … c`), XTVERSION
- * (`DCS > | xterm.js(…) ST`) and the kitty keyboard flags (`CSI ? <flags> u`). Without them a session nobody typed
+ * (`DCS > | xterm.js(…) ST`) and the kitty keyboard flags (`CSI ? <flags> u`); since CLI 2.1.303 also the private mode
+ * reports (DECRPM, `CSI ? <mode> ; <state> $ y`) to its DECRQM queries of synchronized output (2026) and SGR-pixel mouse
+ * (1016), one of which can arrive after the agent is ready (measured in the app, `remote-prefill-send`). Without them
+ * a session nobody typed
  * into would count as typed into right after its start, and a turn would never be over (`agent-session-control`).
  * None of the answers is a key's encoding: keys never start `CSI ?` or `CSI >`, and a DCS is never a key.
  * The cursor-position answer (`CSI <row> ; <col> R`) is left out on purpose: it is also a modified F3, and the agent
  * was not seen asking for it.
  */
 // eslint-disable-next-line no-control-regex
-const REPORT = /^(?:\x1b\[[IO]|\x1b\[M[\s\S]{3}|\x1b\[<\d+;\d+;\d+[Mm]|\x1b\[\?[\d;]*c|\x1b\[>[\d;]*c|\x1bP>\|[^\x1b]*\x1b\\|\x1b\[\?\d+u)+$/
+const REPORT = /^(?:\x1b\[[IO]|\x1b\[M[\s\S]{3}|\x1b\[<\d+;\d+;\d+[Mm]|\x1b\[\?[\d;]*c|\x1b\[>[\d;]*c|\x1bP>\|[^\x1b]*\x1b\\|\x1b\[\?\d+u|\x1b\[\?\d+;\d+\$y)+$/
 
 /** Whether `data` is only the terminal's own focus or mouse reports. */
 export function isTerminalReport(data: string): boolean {
@@ -41,6 +49,7 @@ export function isTerminalReport(data: string): boolean {
 export function noteWrite(sessionId: string, data: string, origin?: WriteOrigin, now: number = Date.now()): void {
   if (origin === 'answer' || data === '' || isTerminalReport(data)) return
   lastKeystroke.set(sessionId, now)
+  keystrokeCount.set(sessionId, (keystrokeCount.get(sessionId) ?? 0) + 1)
   for (const listener of listeners) {
     try {
       listener(sessionId)
@@ -55,6 +64,11 @@ export function lastKeystrokeAt(sessionId: string): number | null {
   return lastKeystroke.get(sessionId) ?? null
 }
 
+/** How many keystrokes the session received so far; only differences between two reads mean anything. */
+export function keystrokeSeq(sessionId: string): number {
+  return keystrokeCount.get(sessionId) ?? 0
+}
+
 /** Sees every keystroke, after it is recorded. */
 export function onKeystroke(listener: (sessionId: string) => void): () => void {
   listeners.add(listener)
@@ -63,4 +77,5 @@ export function onKeystroke(listener: (sessionId: string) => void): () => void {
 
 export function forgetInput(sessionId: string): void {
   lastKeystroke.delete(sessionId)
+  keystrokeCount.delete(sessionId)
 }

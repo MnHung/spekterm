@@ -247,3 +247,29 @@ test('sessions.keep needs a session id and goes to the host', async () => {
   assert.equal((await call(session, conn, 'sessions.keep', { sessionId: 3 })).e?.code, 'BAD_PARAMS')
   assert.deepEqual(asked, ['s1'])
 })
+
+test('sessions.submitPrefill needs a session and a fill id, goes to the host, and its errors keep their codes', async () => {
+  const asked: [string, string][] = []
+  const host = {
+    submitPrefill: async (sessionId: string, prefillId: string) => {
+      asked.push([sessionId, prefillId])
+      if (prefillId === 'stale') throw new RemoteError('PREFILL_GONE', 'not waiting')
+      return { outcome: 'confirmed' as const }
+    },
+  } as Partial<RemoteHost> as RemoteHost
+  const conn = connection()
+  const session = openRemoteSession(host, conn)
+  assert.ok(operationNames().includes('sessions.submitPrefill'), 'listed in the authentication answer’s operations')
+  assert.deepEqual((await call(session, conn, 'sessions.submitPrefill', { sessionId: 's1', prefillId: 'p1' })).r, { outcome: 'confirmed' })
+  assert.equal((await call(session, conn, 'sessions.submitPrefill', { sessionId: 's1', prefillId: 'stale' })).e?.code, 'PREFILL_GONE')
+  for (const p of [{}, { sessionId: 's1' }, { prefillId: 'p1' }, { sessionId: 's1', prefillId: '' }, { sessionId: 's1', prefillId: 3 }]) {
+    assert.equal((await call(session, conn, 'sessions.submitPrefill', p)).e?.code, 'BAD_PARAMS', JSON.stringify(p))
+  }
+  assert.deepEqual(asked, [['s1', 'p1'], ['s1', 'stale']])
+})
+
+test('with no window, sessions.submitPrefill answers NO_WINDOW', async () => {
+  const conn = connection()
+  const session = openRemoteSession(noWindowHost(), conn)
+  assert.equal((await call(session, conn, 'sessions.submitPrefill', { sessionId: 's1', prefillId: 'p1' })).e?.code, 'NO_WINDOW')
+})

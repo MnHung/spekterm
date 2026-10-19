@@ -722,8 +722,8 @@ export const MUTATIONS = [
     name: 'submit-joined',
     file: 'src/main/intake-prefill.ts',
     command: 'test',
-    from: `    if (mode === 'submit') setTimeout(() => deps.write(sessionId, SUBMIT_KEY), SUBMIT_KEY_DELAY_MS)`,
-    to: `    if (mode === 'submit') deps.write(sessionId, SUBMIT_KEY)`,
+    from: `      }, SUBMIT_KEY_DELAY_MS)`,
+    to: `      }, 0)`,
     expectRed: 'schedulePrefill 以送出模式寫入時，就緒後寫下的內容以送出字元結尾',
     why: '**送出字元緊跟著文字寫。** 長文字一次抵達被 agent 當成貼上，緊跟在後的 `\\r` 被併進貼上成為換行 ——\n'
       + '> 文字停在輸入框、沒有送出（dogfood 實際踩到，CLI 2.1.283）。',

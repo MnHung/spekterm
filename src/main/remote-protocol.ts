@@ -51,6 +51,11 @@ export interface SessionView {
    * running agent session with at least one, in the agent's order.
    */
   background?: BackgroundTask[]
+  /**
+   * The prompt the desktop filled in and shows as not sent (`remote-prefill-send` D2): only on a running agent
+   * session, while its item is still listed for it. `edited`: the input box may hold more than `text`.
+   */
+  prefill?: { id: string; text: string; intake: { adapter: string; id: string }; edited: boolean }
 }
 
 export interface SessionList {
@@ -95,6 +100,8 @@ export interface RemoteHost {
     text: string,
     attachments: readonly string[],
   ): Promise<{ outcome: ReplyOutcome; text: string }>
+  /** Writes only the submit key for the session's listed fill (`remote-prefill-send` D3). */
+  submitPrefill(sessionId: string, prefillId: string): Promise<{ outcome: 'confirmed' | 'sent' }>
   /** One chunk of an attachment upload (`remote-attachments.ts`). */
   putAttachment(sessionId: string, p: PutParams): PutResult
   /** Answers the watched session's open prompt (`remote-answer.ts`). */
@@ -224,6 +231,8 @@ export const OPERATIONS: Record<string, Operation> = {
   'sessions.close': (state, p) => state.host.perform({ kind: 'close', sessionId: str(p, 'sessionId'), force: force(p) }),
 
   'sessions.keep': (state, p) => state.host.keep(str(p, 'sessionId')),
+
+  'sessions.submitPrefill': (state, p) => state.host.submitPrefill(str(p, 'sessionId'), str(p, 'prefillId')),
 
   'conversation.watch': (state, p) => {
     const sessionId = str(p, 'sessionId')

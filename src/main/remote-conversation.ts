@@ -59,6 +59,19 @@ export interface ReplyDeps {
   write: (sessionId: string, data: string) => boolean
   delay: (ms: number) => Promise<void>
   submitDelayMs: number
+  /**
+   * The session holds a filled-in prompt the desktop has not seen submitted (`remote-prefill-send` D5): a reply
+   * would be typed after it and submitted with it. `prefillId` when a device can see it.
+   */
+  prefillPending?: (sessionId: string) => { prefillId?: string; edited: boolean } | null
+}
+
+function prefillRefusal(pending: { prefillId?: string; edited: boolean }): RemoteError {
+  return new RemoteError(
+    'PREFILL_PENDING',
+    'a filled-in prompt waits to be sent in this session; send it first (sessions.submitPrefill) or at the desktop',
+    { ...pending },
+  )
 }
 
 const SENDABLE: readonly WaitState[] = ['ready', 'busy']
@@ -103,6 +116,8 @@ export function sendReply(
   if (!SENDABLE.includes(state)) {
     return Promise.reject(new RemoteError('WAIT_STATE', `the agent cannot take a reply now (${state}); answer a prompt with conversation.answer`, { state }))
   }
+  const pendingFill = deps.prefillPending?.(sessionId)
+  if (pendingFill) return Promise.reject(prefillRefusal(pendingFill))
   let attachments: ReplyAttachments | undefined
   try {
     attachments = takeAttachments?.()
@@ -119,6 +134,12 @@ export function sendReply(
       attachments?.release()
       throw new RemoteError('WAIT_STATE', `the agent cannot take a reply now (${now})`, { state: now })
     }
+    // A prompt may have been filled in while an earlier reply was being written.
+    const filledMeanwhile = deps.prefillPending?.(sessionId)
+    if (filledMeanwhile) {
+      attachments?.release()
+      throw prefillRefusal(filledMeanwhile)
+    }
     if (!deps.write(sessionId, full)) {
       attachments?.release()
       throw new RemoteError('NOT_FOUND', 'the session has no running process')
@@ -126,6 +147,8 @@ export function sendReply(
     attachments?.commit()
     await deps.delay(deps.submitDelayMs)
     if (!SENDABLE.includes(deps.waitStateOf(sessionId))) return { outcome: 'filled-not-submitted' as const, text: full }
+    // A prompt filled in during the delay sits in the box with the reply: the key would submit both.
+    if (deps.prefillPending?.(sessionId)) return { outcome: 'filled-not-submitted' as const, text: full }
     deps.write(sessionId, '\r')
     return { outcome: 'submitted' as const, text: full }
   })
