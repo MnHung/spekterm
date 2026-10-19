@@ -20,7 +20,8 @@ The application SHALL raise an attention event when:
   on a choice: a second prompt can follow an answered one within one observation, and the state then never
   leaves waiting on a choice;
 - a handoff-created session's report is adopted, at the same moment the desktop's completion notification is raised;
-- a new item arrives in the inbox, a handoff's arrival included, as on the desktop.
+- a new item arrives in the inbox, a handoff's arrival included, as on the desktop. A scheduled handoff
+  arrives when it opens, not when it is scheduled (`scheduled-handoff`), as the desktop's notification does.
 
 Each event SHALL carry its position in the attention stream, its kind, its time, the session or inbox item
 it concerns, the folder's name when there is one (an inbox item may have no resolved folder), a title and,
@@ -57,6 +58,11 @@ it never receives an event twice.
 
 - **WHEN** a new item arrives in the inbox
 - **THEN** watching clients receive an attention event of the intake kind for that item
+
+#### Scenario: A scheduled handoff raises its intake event when it opens
+
+- **WHEN** a client watches the attention stream, a handoff scheduled for two minutes from now is read, and later its time comes
+- **THEN** the client receives no intake event when it is read, and one intake event for it when it opens
 
 ### Requirement: An event about the session the user is looking at is marked suppressed
 

@@ -70,7 +70,7 @@ as it is today.
 
 - **WHEN** an agent writes a rename command whose name exceeds the title's length limit
 - **THEN** no session is renamed, and the refusal is visible to the user (see "A refused or failed command is
-  visible to the user, and the agent is not told")
+  visible to the user, and its receipt states the refusal")
 
 #### Scenario: A command cannot claim another source
 
@@ -418,7 +418,7 @@ it is the user's own close.
 - **WHEN** the user is typing in session D, and the agent in P hibernates its child C, which is not displayed
 - **THEN** D is still displayed, and keyboard focus is still in D
 
-### Requirement: A refused or failed command is visible to the user, and the agent is not told
+### Requirement: A refused or failed command is visible to the user, and its receipt states the refusal
 
 A command that is refused (unknown target, a target the source may not act on, an invalid or overlong field) or
 that the interface cannot carry out (the session gone in between, an error) SHALL be visible to the user the way a
@@ -439,10 +439,12 @@ waited for its target's turn SHALL be just as visible.
 
 The same command file read more than once SHALL be acted on once.
 
-**The agent SHALL NOT receive the outcome.** As with handoffs, there is no reply channel, and this gap SHALL be
-stated to the agent rather than hidden (see `agent-handoff-source`). What the agent can observe is its relations
-file: a closed descendant is absent from it, a hibernated one is listed as not running, and a renamed one shows
-its new label.
+**The agent learns a refusal from the command file's receipt** (`handoff-receipt`), written when the file is read:
+the code, a reason, and whether the refusal is permanent. **It SHALL NOT be told what became of an accepted
+command**: a command that fails after it waited, or is dropped, reaches the user only, and the receipt still says
+it was accepted. This SHALL be stated to the agent rather than hidden (see `agent-handoff-source`). What the agent
+can observe is its relations file: a closed descendant is absent from it, a hibernated one is listed as not
+running, and a renamed one shows its new label.
 
 #### Scenario: A refusal produces a notification and an inbox trace
 
@@ -466,3 +468,8 @@ its new label.
 
 - **WHEN** the agent in P closes its ready child C
 - **THEN** P's relations file no longer lists C
+
+#### Scenario: A refused command's receipt states the refusal
+
+- **WHEN** the agent in C writes a close command targeting its parent P as `close.json`
+- **THEN** C's receipt `close.json` states `rejected`, permanent, with the code for a target C may not act on

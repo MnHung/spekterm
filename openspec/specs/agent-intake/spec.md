@@ -599,6 +599,11 @@ prompt SHALL 指出**界線之內的內容就是那件要做的事**，SHALL NOT
 
 routing 解析不出目標 folder 的項目 SHALL 計入 —— 它仍然是一件待處理的事，而它恰恰更需要注意。
 
+**A scheduled handoff that has not been opened yet SHALL NOT count** (`scheduled-handoff`): nothing about it
+waits for the user, and a badge that counts it would stay lit for days. Once its one automatic opening has been
+attempted and it is still pending, it is an ordinary pending item and SHALL count. The count and the inbox SHALL still come from one evaluation:
+the inbox lists scheduled handoffs apart from the pending items the count describes.
+
 **被拒絕的投遞其彙整計數 SHALL NOT 計入本標示** —— 兩者是不同的東西，其可見性仍由收件匣之內
 的彙整呈現承擔（見「投遞以檔案落點為契約，且落點的內容是不受信任的」）。
 
@@ -652,6 +657,18 @@ routing 解析不出目標 folder 的項目 SHALL 計入 —— 它仍然是一�
 - **WHEN** 使用者檢視活動列的收件匣入口
 - **THEN** 該入口上不存在任何計數標示
 - **AND** 打開收件匣後，那些拒絕以彙整的形式呈現
+
+#### Scenario: A scheduled handoff that is not due is not counted
+
+- **GIVEN** the inbox has one pending item and one handoff scheduled for tomorrow
+- **WHEN** the user looks at the activity bar's inbox entry
+- **THEN** the count is `1`
+
+#### Scenario: A due handoff that did not open is counted
+
+- **GIVEN** a scheduled handoff whose time came but whose session could not be created
+- **WHEN** the user looks at the activity bar's inbox entry
+- **THEN** that handoff is counted
 
 ### Requirement: 新項目到達時發出作業系統通知，且合併與總量皆有界
 
@@ -986,6 +1003,11 @@ SHALL NOT 取自來源專屬的原始內容。
 
 **已存在於落盤狀態中**的待處理項目 SHALL NOT 因應用程式啟動而被重新通知。
 
+**A scheduled handoff arrives when it opens, not when it is read** (`scheduled-handoff`). Its notification
+SHALL be raised at the moment it opens — while the application runs, or at the start after its time passed —
+and SHALL NOT be raised when it is scheduled. A scheduled handoff that is still waiting in the persisted state
+is not an arrival at start.
+
 > **兩半必須一起寫下。** 只寫後半的話，一個「啟動後一段時間內一律不發通知」的實作會滿足它，
 > 而使用者在最常見的那條路徑上（關著時被提及 → 開機時回補進來）**一則通知都收不到** ——
 > 沒有任何一條斷言會紅。只寫前半的話，每次開機會把收件匣裡積著的東西重新通知一遍。
@@ -1005,6 +1027,17 @@ SHALL NOT 取自來源專屬的原始內容。
 - **WHEN** 應用程式啟動
 - **THEN** 不發出任何作業系統通知
 - **AND** 活動列的收件匣入口呈現計數 `3`
+
+#### Scenario: Scheduling raises no notification, opening does
+
+- **WHEN** a handoff scheduled for two minutes from now is read, and later its time comes
+- **THEN** no notification is raised when it is read, and one is raised when it opens
+
+#### Scenario: A waiting scheduled handoff is not notified at start
+
+- **GIVEN** a handoff scheduled for tomorrow is in the persisted state
+- **WHEN** the application starts
+- **THEN** no operating-system notification is raised for it
 
 ### Requirement: 通知不可用時靜默降級，而其不可用偵測不到
 

@@ -24,7 +24,7 @@ workspace 的 folder 清單變動時的重寫。後者若漏掉它，agent 的�
 非由交接建立的 session SHALL NOT 被告知完成報告。
 
 告知的約束 SHALL 與實際生效的判定同源，SHALL NOT 為另行撰寫的數字（理由同 `agent-handoff-source`
-的自我介紹：投遞者沒有回饋管道，一個未被告知的約束就是一條死路）。
+的自我介紹：the receipt reports a refusal only after the fact, so an unstated constraint still costs a refused report）。
 
 #### Scenario: 子 session 的自我介紹含完成報告的說明
 
