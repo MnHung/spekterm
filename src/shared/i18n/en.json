@@ -671,6 +671,13 @@
     "chooseFolder": "Folder to open this in",
     "choosePlaceholder": "Choose a folder…",
     "chosenFolderGone": "The folder you chose is no longer in the workspace",
+    "opening": "This handoff is being opened in a new session already",
+    "scheduledLabel": "Scheduled",
+    "scheduledItemLabel": "Scheduled handoff: {{title}}",
+    "scheduledFor": "Opens {{time}}",
+    "opensInFolder": "in {{name}}",
+    "runNow": "Run now",
+    "cancelScheduled": "Cancel",
     "clearOpened": "Clear from inbox",
     "unresolved": "Cannot work out which folder this belongs to",
     "unresolvedFolderGone": "The folder this rule points to is no longer in the workspace",
@@ -698,7 +705,8 @@
       "CONTROL_NOT_ALLOWED": "named a session it did not hand off",
       "CONTROL_FAILED": "the session could not be acted on",
       "CONTROL_NO_WINDOW": "no window was open to act on the session",
-      "CONTROL_UNAVAILABLE": "could not wait for the session's turn to end — agent event reporting is off"
+      "CONTROL_UNAVAILABLE": "could not wait for the session's turn to end — agent event reporting is off",
+      "SCHEDULE_INVALID": "named a time that is not allowed"
     },
     "rules": {
       "label": "Routing rules",

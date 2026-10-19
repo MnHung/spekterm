@@ -40,6 +40,12 @@ export interface IntakeView {
    */
   folderId?: string
   unresolved?: 'NO_MATCH' | 'FOLDER_GONE'
+  /**
+   * When a scheduled handoff opens (`scheduled-handoff`). **Only while it is scheduled** — pending and not yet
+   * fired (design D1) — so an accepted record whose time is still ahead, or one whose opening was attempted, does
+   * not carry it. A device reads a past value as due.
+   */
+  scheduledAt?: number
 }
 
 export function project(
@@ -67,7 +73,13 @@ export function project(
 
   const intake = { id: record.id, verified: content.verified, authored: content.authored, receivedAt: content.receivedAt }
   const body = bodyOf(intake)
-  const withBody = { ...base, body, bodyLength: body.length }
+  const scheduledAt = content.verified.scheduledAt
+  const withBody = {
+    ...base,
+    body,
+    bodyLength: body.length,
+    ...(record.state === 'pending' && scheduledAt !== undefined && record.firedAt === undefined ? { scheduledAt } : {}),
+  }
   if (record.state !== 'pending') return withBody
 
   // **解析失敗時不帶 `folderId`** —— `RoutingResult` 的失敗分支帶著「指向哪個不可用的

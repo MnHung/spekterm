@@ -26,6 +26,31 @@ agent in your own session, not by a third party. Its first prompt is sent as soo
 ready. Rarely, the CLI does not take the submit key; the session then shows **A prompt is waiting to be
 sent**, and you press `Enter` yourself — spekterm does not send it twice.
 
+## Handing work off to a later time
+
+A change often takes days to finish: the last steps wait for a deploy, data to pile up, or a review. Ask the
+agent to hand the rest off to a later time:
+
+> Hand the verification off to this repo for tomorrow at 9.
+
+The agent adds the time to the handoff. spekterm checks the handoff at once (a target that does not exist,
+a body too long, or a time it cannot use is refused right away, while the agent is still there), then keeps
+it in the inbox under **Scheduled**, and opens its session when the time comes — always a new session, in
+the same way as a handoff that opens immediately.
+
+- **It runs only while spekterm runs.** If spekterm is closed at that time, the handoff opens at the next
+  start, without asking. The new agent is told both when the handoff was meant to start and when it
+  actually did, so it can judge what changed in between.
+- **A scheduled handoff waits quietly**: no notification and no count on the inbox entry until it opens.
+  Then it notifies you like any arriving handoff.
+- **Run now** opens it at once; **Cancel** drops it. A paired phone can do both.
+- The time must carry a time zone, and can be at most 30 days ahead. A time that has already passed opens at
+  once.
+
+Each handoff opens by itself **at most once**. If that opening does not lead to a working session (its
+folder was removed, or the session could not start), it stays in the inbox as an ordinary item for you to
+accept; spekterm does not try again.
+
 ## Following a handed-off session
 
 - The new session's tab is named after the handoff's title. **Open handoff brief** shows the handoff text
@@ -84,8 +109,9 @@ ones those sessions handed off in turn. Ask in plain words:
   session is refused, and you see the refusal as a notification and an entry in the inbox.
 - Nothing moves on screen: the rail selection and your keyboard focus stay where they are.
 
-As with handoffs, the agent is not told whether a command was carried out. For a session it handed off,
-it can see the result in its relations list (gone, not running, or renamed).
+The agent's receipt for a command (see below) says whether it was accepted or refused, not whether it was
+carried out. For a session it handed off, it can see the result in its relations list (gone, not running,
+or renamed).
 
 ## When a handoff fails
 
@@ -94,8 +120,17 @@ your workspace (or a name shared by two folders), or writes a body too long to r
 notification and keeps an entry with the reason in the inbox — also after a restart — until you clear
 it.
 
-The agent itself does not learn whether its handoff was delivered; there is no reply channel. If a
-handoff matters, check that the session opened.
+## Receipts: what the agent learns
+
+For every file an agent writes to spekterm — a handoff, a completion report, or a command — spekterm writes
+a **receipt** the agent can read: **accepted**, **scheduled** (with the time), **duplicate**, **rejected**
+(with the reason, and whether trying again can help), or **held** (not processed yet; it is read again).
+So an agent can say "the handoff was accepted" instead of "I wrote it", and an agent about to be closed
+learns of a refusal while it can still fix it.
+
+A receipt is what spekterm did when it read the file. It does not say that the new session finished the work —
+that is the child's own report. And a handoff that is accepted is checked once more when it opens: if its
+folder was removed by then, you see the failure, not the agent.
 
 ## What a handoff is not
 

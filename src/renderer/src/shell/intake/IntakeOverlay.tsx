@@ -5,6 +5,7 @@ import { runAccept } from './accept-flow'
 import { useTranslation } from 'react-i18next'
 
 import { formatDateTime, relativeTime } from '@shared/i18n/locale'
+import { isScheduled, isWaitingForUser } from '@shared/intake/scheduled'
 import type { IntakeView } from '../../../../main/ipc/intake'
 import { useSessions } from '../terminal/sessions'
 import type { WorkspaceFolder } from '../types'
@@ -148,13 +149,17 @@ export function IntakeOverlay({
               // 「這條規則指向的…」那句講的是規則，對這裡是錯的。
               outcome.reason === 'FOLDER_GONE'
               ? t('intake.chosenFolderGone')
-              : t('intake.unresolved'),
+              : outcome.reason === 'opening'
+                ? t('intake.opening')
+                : t('intake.unresolved'),
       )
     },
     [close, sessions, t],
   )
 
-  const items = snapshot.items.filter((item) => item.state === 'pending')
+  // Waiting for the user, and waiting for their time (`scheduled-handoff`): the same predicates as the badge.
+  const items = snapshot.items.filter(isWaitingForUser)
+  const scheduled = snapshot.items.filter(isScheduled).sort((a, b) => (a.scheduledAt ?? 0) - (b.scheduledAt ?? 0))
   const liveSessions = sessions.all()
   const knownFolderIds = new Set(folders.map((folder) => folder.id))
   /**
@@ -309,10 +314,22 @@ export function IntakeOverlay({
 
         {tab === 'rules' ? (
           <RulesEditor />
-        ) : items.length === 0 && opened.length === 0 ? (
+        ) : items.length === 0 && opened.length === 0 && scheduled.length === 0 ? (
           <p className="text-2xs text-ink-faint">{t('intake.empty')}</p>
         ) : (
           <>
+            {scheduled.length > 0 ? (
+              <ul aria-label={t('intake.scheduledLabel')} className="mb-4 flex flex-col gap-1">
+                {scheduled.map((item) => (
+                  <ScheduledCard
+                    key={itemKey(item)}
+                    item={item}
+                    folderName={folders.find((folder) => folder.id === item.folderId)?.name}
+                    onChanged={reload}
+                  />
+                ))}
+              </ul>
+            ) : null}
             <ul className="flex flex-col gap-3">
               {items.map((item) => (
                 <IntakeCard
@@ -427,6 +444,59 @@ function OccurredAt({ at }: { at: number }): React.JSX.Element | null {
 
 /** 完整的日期與時刻 —— 格式隨使用者選擇的語言（`formatDateTime` 經 `@shared/i18n/locale`）。 */
 const OCCURRED_FORMAT: Intl.DateTimeFormatOptions = { dateStyle: 'medium', timeStyle: 'short' }
+
+/**
+ * A handoff waiting for its time (`scheduled-handoff`): when it opens, from where, into which folder, and its full
+ * body as plain text — the user can only judge Run now or Cancel by reading what will run. Earliest first (the
+ * caller sorts). Run now opens it through the opener, as a due handoff opens; Cancel is the inbox's ignore.
+ */
+function ScheduledCard({
+  item,
+  folderName,
+  onChanged,
+}: {
+  item: IntakeView
+  folderName: string | undefined
+  onChanged: () => void
+}): React.JSX.Element {
+  const { t } = useTranslation()
+  const at = new Date(item.scheduledAt ?? 0)
+  return (
+    <li
+      aria-label={t('intake.scheduledItemLabel', { title: item.title })}
+      className="flex flex-col gap-1 rounded border border-hairline px-3 py-1.5"
+    >
+      <div className="flex items-baseline gap-2 whitespace-nowrap">
+        <time dateTime={at.toISOString()} className="text-2xs text-ink">
+          {t('intake.scheduledFor', { time: formatDateTime(at, OCCURRED_FORMAT) })}
+        </time>
+        <span className="text-2xs text-ink-faint">{t('intake.fromOrigin', { origin: item.originLabel })}</span>
+        {folderName ? <span className="text-2xs text-ink-dim">{t('intake.opensInFolder', { name: folderName })}</span> : null}
+        <span className="flex-1" />
+        <button
+          type="button"
+          aria-label={t('intake.cancelScheduled')}
+          onClick={() => void window.workspace.intake.dismiss(item.id, item.adapter).then(onChanged)}
+          className="cursor-pointer rounded px-2 py-0.5 text-2xs text-ink-dim hover:bg-hairline/40 focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        >
+          {t('intake.cancelScheduled')}
+        </button>
+        <button
+          type="button"
+          aria-label={t('intake.runNow')}
+          onClick={() => void window.workspace.intake.runNow(item.id, item.adapter).then(onChanged)}
+          className="cursor-pointer rounded bg-accent/10 px-2 py-0.5 text-2xs text-accent focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        >
+          {t('intake.runNow')}
+        </button>
+      </div>
+      {showTitleSeparately(item.title, item.body) ? <span className="break-words text-2xs text-ink">{item.title}</span> : null}
+      {/* Plain text, whole, scrolled rather than cut — the same rule as the opened items' body. */}
+      <p className="max-h-64 overflow-y-auto whitespace-pre-wrap break-words text-2xs text-ink-faint">{item.body}</p>
+      <p className="text-2xs text-ink-faint">{t('intake.bodyLength', { count: item.bodyLength })}</p>
+    </li>
+  )
+}
 
 function IntakeCard({
   item,

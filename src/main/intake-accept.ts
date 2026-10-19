@@ -6,7 +6,7 @@ import type { IntakeRecord } from './intake-store'
  */
 export type IntakeAcceptResult =
   | { ok: true; folderId: string; existingSessionId?: string; ticket?: string }
-  | { ok: false; reason: 'unknown' | 'prefillUnavailable' | 'FOLDER_GONE' }
+  | { ok: false; reason: 'unknown' | 'prefillUnavailable' | 'FOLDER_GONE' | 'opening' }
 
 /**
  * 接受一則 intake 的判定 —— **在哪個 folder 建立，由使用者確認的那一個決定**。
@@ -29,9 +29,16 @@ export function decideAccept(input: {
   chosenFolderId: unknown
   knownFolderIds: ReadonlySet<string>
   eventsEnabled: boolean
+  /**
+   * A session is being opened for this record now: an opening request or another accept holds its ticket
+   * (`TicketStore.isLive`). Accepting it too would open a second session (`scheduled-handoff`, design D3).
+   */
+  opening?: boolean
 }): IntakeAcceptResult {
   const { record, chosenFolderId, knownFolderIds, eventsEnabled } = input
   if (!record?.content) return { ok: false, reason: 'unknown' }
+  // Not `firedAt`: a record pending again after a prefill timeout must still be accepted, reusing its session.
+  if (input.opening) return { ok: false, reason: 'opening' }
 
   // **事件回報關閉時，預填永遠不會發生 —— 於是在建立 session 之前就告知。**
   // 少了這條，使用者得到一個空的 session、一則已離開待處理清單的工作項目，以及零錯誤訊息。

@@ -771,3 +771,66 @@ describe('the periodic re-read', () => {
     assert.equal(fs.existsSync(file), false)
   })
 })
+
+describe('onOutcome runs before the file is removed (handoff-receipt)', () => {
+  async function run(h: Harness, options: Partial<IntakeSourceOptions>): Promise<IntakeSource> {
+    const source = new IntakeSource({ root: h.inbox, adapter: 'file', service: h.service, watch: silentWatcher, ...options })
+    sources.push(source)
+    await source.start()
+    return source
+  }
+
+  it('the deliver path: the file is still there when the hook runs', async () => {
+    const h = harness()
+    const file = drop(h.inbox, 'a.json', payload())
+    const seen: { existed: boolean; ok: boolean }[] = []
+    await run(h, { onOutcome: (f, outcome) => void seen.push({ existed: fs.existsSync(f), ok: 'ok' in outcome && outcome.ok }) })
+    assert.deepEqual(seen, [{ existed: true, ok: true }])
+    assert.equal(fs.existsSync(file), false)
+  })
+
+  it('the oversize path', async () => {
+    const h = harness()
+    const file = drop(h.inbox, 'big.json', 'x'.repeat(MAX_DELIVERY_BYTES + 1))
+    const seen: { existed: boolean; code?: string }[] = []
+    await run(h, {
+      onOutcome: (f, outcome) => void seen.push({ existed: fs.existsSync(f), code: 'code' in outcome ? outcome.code : undefined }),
+    })
+    assert.deepEqual(seen, [{ existed: true, code: 'TOO_LARGE' }])
+    assert.equal(fs.existsSync(file), false)
+  })
+
+  it('a delivery that throws is told as failed, and the file stays', async () => {
+    const h = harness()
+    const file = drop(h.inbox, 'a.json', payload())
+    const seen: unknown[] = []
+    await run(h, {
+      deliver: async () => {
+        throw new Error('boom')
+      },
+      onOutcome: (_f, outcome) => void seen.push(outcome),
+    })
+    assert.deepEqual(seen, [{ failed: true }])
+    assert.equal(fs.existsSync(file), true)
+  })
+
+  it('a hook that throws still lets the file be processed and removed', async () => {
+    const h = harness()
+    const file = drop(h.inbox, 'a.json', payload())
+    await run(h, {
+      onOutcome: () => {
+        throw new Error('disk full')
+      },
+    })
+    assert.equal(fs.existsSync(file), false)
+    assert.equal(h.store.list().length, 1)
+  })
+
+  it('no call for a dot-prefixed file', async () => {
+    const h = harness()
+    drop(h.inbox, '.partial.json', payload())
+    const seen: string[] = []
+    await run(h, { onOutcome: (f) => void seen.push(f) })
+    assert.deepEqual(seen, [])
+  })
+})

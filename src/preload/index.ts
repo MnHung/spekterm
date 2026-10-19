@@ -641,6 +641,9 @@ const workspaceApi = {
       ipcRenderer.invoke('workspace:intake:attach', id, adapter, sessionId),
     dismiss: (id: string, adapter: string): Promise<{ ok: boolean }> =>
       ipcRenderer.invoke('workspace:intake:dismiss', id, adapter),
+    /** Open a scheduled handoff now (`scheduled-handoff`'s Run now). */
+    runNow: (id: string, adapter: string): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('workspace:intake:runNow', id, adapter),
     /** 把一則已開好的項目從收件匣清除。不刪紀錄、不碰它的 session。 */
     settle: (id: string, adapter: string): Promise<{ ok: boolean }> =>
       ipcRenderer.invoke('workspace:intake:settle', id, adapter),

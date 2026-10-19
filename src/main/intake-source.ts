@@ -81,6 +81,9 @@ const MAX_RESCAN_INTERVAL_MS = 60_000
 
 export type WatcherFactory = (options: CreateWatcherOptions) => FSWatcher
 
+/** What came of reading one file: a delivery's outcome, or a delivery that threw. */
+export type SourceOutcome = DeliverOutcome | { failed: true }
+
 export function inboxRoot(userDataPath: string): string {
   return path.join(userDataPath, 'intake-inbox')
 }
@@ -160,6 +163,13 @@ export interface IntakeSourceOptions {
    * —— 把接線放在 adapter 的 `deliver` 裡，`TOO_LARGE` 就結構上通知不出來。
    */
   notifyFailures?: boolean
+  /**
+   * Told what came of every file read, **before** the file is removed (`handoff-receipt`): the deliver path, the
+   * oversize path, and a delivery that threw (`{ failed: true }`). Awaited; **its own failure is logged and
+   * processing goes on** — a receipt that cannot be written must not hold a delivery back. Not called for a
+   * dot-prefixed file, which is not read.
+   */
+  onOutcome?: (file: string, outcome: SourceOutcome) => Promise<void> | void
   /** **Tests only.** Replaces the watcher, to reproduce one that reports nothing. */
   watch?: WatcherFactory
   /** **Tests only.** Told when each periodic re-read starts and ends. */
@@ -182,6 +192,7 @@ export class IntakeSource {
   readonly #notifyFailures: boolean
   readonly #watch: WatcherFactory
   readonly #onRescan?: (phase: 'start' | 'end') => void
+  readonly #onOutcome?: (file: string, outcome: SourceOutcome) => Promise<void> | void
   readonly #rescanIntervalMs: number
   /**
    * Files being handled right now, and the handling. `scan()` awaits an entry instead of skipping
@@ -207,6 +218,7 @@ export class IntakeSource {
     notifyFailures = false,
     watch = createWatcher,
     onRescan,
+    onOutcome,
     rescanIntervalMs = RESCAN_INTERVAL_MS,
   }: IntakeSourceOptions) {
     if (!Number.isFinite(rescanIntervalMs) || rescanIntervalMs <= 0 || rescanIntervalMs > MAX_RESCAN_INTERVAL_MS) {
@@ -221,7 +233,18 @@ export class IntakeSource {
     this.#notifyFailures = notifyFailures
     this.#watch = watch
     this.#onRescan = onRescan
+    this.#onOutcome = onOutcome
     this.#rescanIntervalMs = rescanIntervalMs
+  }
+
+  /** Tell `onOutcome`, never throwing: a failed receipt is logged and the file is still processed. */
+  async #told(file: string, outcome: SourceOutcome): Promise<void> {
+    if (!this.#onOutcome) return
+    try {
+      await this.#onOutcome(file, outcome)
+    } catch (error) {
+      console.error(`[intake] outcome hook failed for ${file}: ${String(error)}`)
+    }
   }
 
   /**
@@ -417,9 +440,9 @@ export class IntakeSource {
     if ('tooLarge' in read) {
       // 永久性拒絕：大小不會自己變小。拒絕的**呈現**仍經 service，於是它與其餘拒絕
       // 共用同一份合併與上限（「面向使用者的拒絕與警示 SHALL 有界」）。
-      this.#reportIfPermanent(
-        this.#service.rejectOversize(path.basename(file), { adapter: this.#adapter }),
-      )
+      const oversize = this.#service.rejectOversize(path.basename(file), { adapter: this.#adapter })
+      this.#reportIfPermanent(oversize)
+      await this.#told(file, oversize)
       await this.#remove(file, read.state)
       this.#onProcessed?.(file, true)
       return
@@ -432,6 +455,7 @@ export class IntakeSource {
       outcome = await this.#deliver(read.contents, file, read.state)
     } catch (error) {
       console.error(`[intake] delivery failed ${file}: ${String(error)}`)
+      await this.#told(file, { failed: true })
       // Recorded, so the re-read does not retry it in this process: the store changes memory
       // before it saves, so a retry could meet its own half-applied first attempt and be taken
       // for a same-content duplicate — consumed silently. It is retried at the next start (as
@@ -440,6 +464,7 @@ export class IntakeSource {
       return
     }
     this.#reportIfPermanent(outcome)
+    await this.#told(file, outcome)
     if (outcome.consume) await this.#remove(file, read.state)
     // Left behind **and visible** (today: the inbox is full) ⇒ recorded, so the re-read does not
     // count its trace again. Left behind with nothing visible (unparseable, capability off) ⇒ not

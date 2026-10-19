@@ -17,7 +17,7 @@ import { sessionToReuse } from './reuse-session'
 
 export type AcceptFlowOutcome =
   | { ok: true; sessionId: string }
-  | { ok: false; reason: 'unknown' | 'prefillUnavailable' | 'FOLDER_GONE' }
+  | { ok: false; reason: 'unknown' | 'prefillUnavailable' | 'FOLDER_GONE' | 'opening' }
   | { ok: false; reason: 'createFailed'; message: string }
 
 export interface AcceptFlowDeps {

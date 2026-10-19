@@ -97,6 +97,8 @@ export function RemoteRequests(): null {
             else if (outcome.reason === 'createFailed') reply({ ok: false, code: 'CREATE_FAILED', message: outcome.message })
             else if (outcome.reason === 'prefillUnavailable') {
               reply({ ok: false, code: 'CREATE_FAILED', message: 'agent events are off, so the prompt cannot be filled in' })
+            } else if (outcome.reason === 'opening') {
+              reply({ ok: false, code: 'CREATE_FAILED', message: 'this handoff is being opened already' })
             } else reply({ ok: false, code: 'NOT_FOUND', message: outcome.reason === 'FOLDER_GONE' ? 'the folder is gone' : 'no such item' })
           } catch (error) {
             reply({ ok: false, code: 'CREATE_FAILED', message: String(error) })

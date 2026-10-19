@@ -3,7 +3,7 @@ import { type WebContents, ipcMain } from 'electron'
 import { bodyOf } from '../intake-schema'
 import { buildContext, buildPrompt, createNonce, writeContext } from '../intake-context'
 import { decideAccept, type IntakeAcceptResult } from '../intake-accept'
-import { ticketFor } from '../handoff-ticket'
+import { handoffTickets, ticketFor } from '../handoff-ticket'
 import { cancelPrefill, prefillModeFor, schedulePrefill, watchSubmission } from '../intake-prefill'
 import {
   isAuthoredCriterion,
@@ -78,6 +78,8 @@ export const INTAKE_CHANNELS = {
   autoAccept: 'workspace:intake:autoAccept',
   /** 主行程 → renderer：把焦點移到某個 session（使用者觸發了一則已建立 session 的通知）。 */
   focusSession: 'workspace:intake:focusSession',
+  /** renderer → main: open a scheduled handoff now (`scheduled-handoff`'s Run now, `HandoffOpener.runNow`). */
+  runNow: 'workspace:intake:runNow',
 } as const
 
 export interface RuleView extends RoutingRule {
@@ -169,6 +171,15 @@ export interface IntakeHandlerDeps {
   registerAutoAccept?: (request: (adapter: string, id: string, folderId: string) => void) => void
   /** 把「把焦點移到某個 session」交出去，供通知被觸發時呼叫。 */
   registerFocusSession?: (focus: (sessionId: string) => void) => void
+  /**
+   * Hands out the ids of the live windows that list the inbox — half of the handoff opener's "a window can
+   * receive" (`scheduled-handoff`, design D3); the restore gate is the other half.
+   */
+  registerReceivers?: (receivers: () => number[]) => void
+  /** A window listed the inbox for the first time: it can now receive an opening request. */
+  onNewReceiver?: (contentsId: number) => void
+  /** Run now (`HandoffOpener.runNow`). Unprovided ⇒ refused. */
+  runNow?: (adapter: string, id: string) => boolean
 }
 
 export function registerIntakeHandlers(deps: IntakeHandlerDeps): void {
@@ -189,7 +200,9 @@ export function registerIntakeHandlers(deps: IntakeHandlerDeps): void {
   service.subscribe(broadcast)
 
   ipcMain.handle(INTAKE_CHANNELS.list, (event) => {
+    const isNew = !senders.has(event.sender)
     senders.add(event.sender)
+    if (isNew) deps.onNewReceiver?.(event.sender.id)
     const config = routing.get()
     const ids = knownIds()
     return {
@@ -228,8 +241,26 @@ export function registerIntakeHandlers(deps: IntakeHandlerDeps): void {
     }
   }
 
+  deps.registerReceivers?.(() => {
+    const ids: number[] = []
+    for (const sender of senders) {
+      if (sender.isDestroyed()) senders.delete(sender)
+      else ids.push(sender.id)
+    }
+    return ids
+  })
+
+  const markFired = (adapter: string, id: string): void => {
+    service.store.markFired(adapter, id)
+  }
+
   deps.registerAutoAccept?.((adapter, id, folderId) => {
-    send(INTAKE_CHANNELS.autoAccept, adapter, id, folderId, ticketFor(service.store.get(adapter, id), folderId))
+    send(INTAKE_CHANNELS.autoAccept, adapter, id, folderId, ticketFor(service.store.get(adapter, id), folderId, handoffTickets, markFired))
+  })
+
+  ipcMain.handle(INTAKE_CHANNELS.runNow, (_event, id: unknown, adapter: unknown) => {
+    if (typeof id !== 'string' || typeof adapter !== 'string') return { ok: false }
+    return { ok: deps.runNow?.(adapter, id) ?? false }
   })
   deps.registerFocusSession?.((sessionId) => {
     send(INTAKE_CHANNELS.focusSession, sessionId)
@@ -301,12 +332,14 @@ export function registerIntakeHandlers(deps: IntakeHandlerDeps): void {
       const record = service.store.get(adapter, id)
       const decision = decideAccept({
         record,
+        opening: handoffTickets.isLive(adapter, id),
         chosenFolderId: folderId,
         knownFolderIds: knownIds(),
         eventsEnabled: agentEventsEnabled(),
       })
       if (!decision.ok) return decision
-      const ticket = ticketFor(record, decision.folderId)
+      // The user's accept is the handoff's one automatic opening too: the opener must not open it afterwards.
+      const ticket = ticketFor(record, decision.folderId, handoffTickets, markFired)
       return ticket ? { ...decision, ticket } : decision
     },
   )
@@ -325,6 +358,7 @@ export function registerIntakeHandlers(deps: IntakeHandlerDeps): void {
       }
       const record = service.store.get(adapter, id)
       if (!record?.content) return { ok: false, reason: 'unknown' }
+      handoffTickets.release(adapter, id)
 
       const intake = {
         id: record.id,
@@ -333,7 +367,12 @@ export function registerIntakeHandlers(deps: IntakeHandlerDeps): void {
         receivedAt: record.content.receivedAt,
       }
       const nonce = createNonce()
-      const target = await writeContext(contextRoot, record.id, buildContext(bodyOf(intake), nonce))
+      const scheduledAt = record.content.verified.scheduledAt
+      const target = await writeContext(
+        contextRoot,
+        record.id,
+        buildContext(bodyOf(intake), nonce, scheduledAt === undefined ? undefined : { scheduledAt, startedAt: Date.now() }),
+      )
       const firstPartyBody = record.content.verified.firstPartyBody === true
       const prompt = buildPrompt(target, nonce, firstPartyBody)
       // **沿用既有 session 由主行程判定**（record 上已經記著的那一個），不採信 renderer 的說法。

@@ -151,8 +151,13 @@ OpenSpec 結構的側欄，讓使用者不必另外開 IDE 就能一邊駕駛 ag
 **macOS (Apple Silicon) is packaged too** (`macos-dmg-packaging`): `npm run dist:mac` on a Mac, from a release
 commit only, ad-hoc signed (not notarized). **尚未開始**：Windows 產物、Intel Mac、Developer ID 簽章與公證、自動更新（Phase 6 其餘）。
 **交接已交付**（agent → 另一個 repo，以及母、子、兄弟之間經 Claude Code 本機訊息功能的往來）；
-**以工具而非寫檔投遞**（MCP）仍未做 —— 代價是 agent **收不到投遞的結果**，而那條缺口
-明文寫在 `agent-handoff-source` 的規格裡。
+**以工具而非寫檔投遞**（MCP）仍未做；**the agent learns each file's outcome from a receipt** spekterm writes
+beside its outbox (`handoff-receipt`: accepted / scheduled / duplicate / rejected / held, written before the file
+is removed). **A handoff may name a later time** (`scheduled-handoff`, `"at"`): it waits in the inbox and opens
+when due, or at the next start. **Every automatic opening goes through `HandoffOpener`**, which waits for a window
+that has restored and lists the inbox, and opens each handoff **at most once, ever** (`firedAt`, persisted
+first) — an open request no window receives is lost. The introduction must stay under the CLI's 10,000-character
+`additionalContext` threshold; past it the agent keeps only a 2 KB preview (`docs/lessons/handoff.md` §16).
 **session 常駐**（讓 pty 活過 app 的生命）已排入路線圖但**刻意不做** —— 見 `docs/PRD.md` §11 的
 tmux 與自寫 daemon 取捨。**不要把「重建」誤當成「常駐」**：關掉 app，pty 一定會死（master fd
 必須有人持有），跑到一半的 build 或 dev server 救不回來。

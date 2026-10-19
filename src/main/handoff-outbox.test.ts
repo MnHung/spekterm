@@ -5,6 +5,7 @@ import path from 'node:path'
 import test, { after } from 'node:test'
 
 import { configureHandoff, outboxDir, prepareOutbox, resetHandoffState } from './handoff-outbox'
+import { testOpener } from './handoff-opener.testkit'
 import { HandoffService } from './handoff-service'
 import { IntakeService } from './intake-service'
 import { IntakeStore } from './intake-store'
@@ -41,12 +42,14 @@ function harness(): Harness {
   const store = new IntakeStore(path.join(base, 'intake.json'))
   const service = new IntakeService({ store, archiveRoot: archive })
   const accepted: { id: string; folderId: string }[] = []
+  const candidates = (): { id: string; name: string; path: string }[] => [{ id: 'f2', name: 'beta', path: '/repos/beta' }]
+  const opener = testOpener(service, candidates, (_adapter, id, folderId) => accepted.push({ id, folderId }))
   const handoff = new HandoffService({
     service,
     sourceOf: (sessionId) => ({ folderId: 'f1', label: `session ${sessionId}` }),
-    candidates: () => [{ id: 'f2', name: 'beta', path: '/repos/beta' }],
+    candidates,
     agentEventsEnabled: () => true,
-    requestAutoAccept: (_adapter, id, folderId) => accepted.push({ id, folderId }),
+    onDelivered: () => opener.tick(),
   })
   services.push(handoff)
   return { store, handoff, accepted, dir: (sessionId) => outboxDir(sessionId) }

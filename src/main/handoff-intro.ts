@@ -3,7 +3,8 @@ import path from 'node:path'
 
 import { MAX_FIELD_LENGTH, MAX_FIRST_PARTY_BODY_LENGTH } from './intake-schema'
 import { MAX_DELIVERY_BYTES } from './intake-source'
-import { MAX_REPORT_LENGTH } from './handoff-delivery'
+import { MAX_REPORT_LENGTH, MAX_SCHEDULE_AHEAD_DAYS } from './handoff-delivery'
+import { receiptsDir } from './handoff-outbox'
 import type { WorkspaceFolder } from './workspace-store'
 
 /**
@@ -40,6 +41,8 @@ export const INTRO_ENV = 'SPEKTERM_HANDOFF_INTRO'
 
 /** 告知 agent 投遞落點的環境變數。 */
 export const OUTBOX_ENV = 'SPEKTERM_HANDOFF_DIR'
+/** Where the agent reads the receipt for each file it writes (`handoff-receipt`). */
+export const RECEIPTS_ENV = 'SPEKTERM_HANDOFF_RECEIPTS'
 
 /** 告知 agent 關係檔位置的環境變數（`session-lineage`）。 */
 export const RELATIONS_ENV = 'SPEKTERM_HANDOFF_RELATIONS'
@@ -49,6 +52,8 @@ export interface IntroInput {
   folders: readonly Pick<WorkspaceFolder, 'name' | 'path'>[]
   /** 這個 session 的投遞落點。 */
   outbox: string
+  /** This session's receipts directory (`handoff-receipt`). Absent: derived from the outbox's session id. */
+  receipts?: string
   /** 這個 session 的固定名字（`agent-peer-name`）。沒有時不提名字那一句。 */
   name?: string
   /** 這個 session 的關係檔。沒有時不提關係那一段。 */
@@ -63,12 +68,38 @@ export interface IntroInput {
 }
 
 /**
+ * The introduction's hard limit, in characters (`agent-handoff-source`, `scheduled-handoff` design D10).
+ *
+ * Measured with Claude Code 2.1.303, in `-p` and interactive mode alike: 10,000 characters reach the agent whole;
+ * 10,001 are replaced by a file pointer and a preview of the first ~2,000 characters — the agent then keeps only
+ * the opening, and every rule after it is gone at once (`docs/lessons/handoff.md` §16). A workspace whose full
+ * list would cross this limit gets a shortened list instead (`introText`).
+ */
+export const INTRO_HARD_LIMIT = 9_000
+
+/**
  * 組出要放進 agent 脈絡的那段文字。
  *
  * **目標可以是名稱或絕對路徑，而這件事一定要講** —— 顯示名稱取自路徑的最後一段，同名是真實
- * 可達的，而歧義對 agent 是一條死路：它收不到任何回饋，不會自己想到換一種寫法。
+ * 可達的，而歧義對 agent 是一條死路：它不會自己想到換一種寫法。
+ *
+ * **The list is cut, never the rules**: over `INTRO_HARD_LIMIT`, the repos that fit are listed in workspace
+ * order, with how many were left out. Losing the list's tail costs some targets; crossing the CLI's threshold
+ * costs the whole introduction.
  */
-export function introText({ folders, outbox, name, relations, reportable }: IntroInput): string {
+export function introText(input: IntroInput): string {
+  const full = composeIntro(input, input.folders.length)
+  if (full.length <= INTRO_HARD_LIMIT) return full
+  let shown = input.folders.length
+  let text = full
+  while (shown > 0 && text.length > INTRO_HARD_LIMIT) {
+    shown -= 1
+    text = composeIntro(input, shown)
+  }
+  return text
+}
+
+function composeIntro({ folders, outbox, receipts, name, relations, reportable }: IntroInput, shown: number): string {
   /**
    * **數字由實際生效的常數推導，不寫死。**
    *
@@ -77,47 +108,47 @@ export function introText({ folders, outbox, name, relations, reportable }: Intr
    * 這件事已經以最壞的形式發生過一次：長度上限從未被告知，一則超過它的交接被消費、
    * 沒有留下痕跡，而來源 agent 回報「已寫出」。
    *
-   * 守衛見 `scripts/handoff-intro-source.test.mjs`：這三個數字不得以字面值出現在本檔案。
+   * 守衛見 `scripts/handoff-intro-source.test.mjs`：這些數字不得以字面值出現在本檔案。
    */
   const deliveryKb = Math.floor(MAX_DELIVERY_BYTES / 1024)
+  const receiptsPath = receipts ?? receiptsDir(path.basename(outbox))
   const lines = [
     'You are running inside spekterm, a desktop workspace that hosts this terminal session.',
     '',
-    'You can hand work off to another repo in this workspace. Write a JSON file into:',
+    'You can hand work off to another repo in this workspace. Write a JSON file into your outbox:',
     `  ${outbox}`,
-    'The file must end in .json. Write it atomically: write to a temporary name that does NOT end',
-    'in .json (for example foo.json.partial, or a name starting with a dot), then rename it into',
-    'place. A half-written .json file will be read and rejected.',
+    'The file must end in .json; give each delivery a new file name.',
+    'Write it atomically: write to a temporary name that does NOT end in .json (or one starting with a dot), then rename it into place.',
+    'A half-written .json file is read and rejected.',
     '',
     'Shape:',
-    '  {"target": "<repo name or absolute path>", "title": "<one line>", "body": "<the handoff>"}',
+    '  {"target": "<repo name or absolute path>", "title": "<one line>", "body": "<the handoff>", "at": "<optional>"}',
     '',
     'Limits - a delivery that breaks any of these is rejected:',
     `  title: at most ${MAX_FIELD_LENGTH} characters.`,
-    `  body:  at most ${MAX_FIRST_PARTY_BODY_LENGTH} characters. This is not a reading budget; it is the`,
-    '         point past which the agent receiving the handoff cannot read the whole thing in one go,',
-    '         so the end of it would silently never reach them.',
+    `  body:  at most ${MAX_FIRST_PARTY_BODY_LENGTH} characters: past that, the receiving agent cannot read all of it, and the end silently never reaches them.`,
     `  whole file: at most ${deliveryKb} KB.`,
-    '  If the work needs more than that, write the detail to a file in the target repo and point',
-    '  to it from the body.',
+    '  If the work needs more, write the detail to a file in the target repo and point to it from the body.',
+    `  at: leave it out to open the handoff now. To open it later, an ISO 8601 time with an offset (2027-01-15T09:00:00+01:00, or Z). No offset, a date that does not exist, or more than ${MAX_SCHEDULE_AHEAD_DAYS} days ahead is rejected; a time not later than now opens at once.`,
+    '      A scheduled handoff opens only while spekterm runs: if its time passed while spekterm was closed, it opens at the next start. It always opens a new session.',
     '',
-    'The target must match one of the repos below exactly (case-insensitive) by name, or by its',
-    'absolute path. Names are not unique; if two repos share a name, use the absolute path.',
-    'Partial or fuzzy matches are rejected.',
+    'The target must match one of the repos below exactly (case-insensitive) by name, or by its absolute path.',
+    'Names are not unique; if two repos share a name, use the absolute path. Partial or fuzzy matches are rejected.',
     '',
-    'Repos in this workspace:',
-    ...(folders.length > 0
-      ? folders.map((folder) => `  ${folder.name}  ${folder.path}`)
-      : ['  (none)']),
+    ...repoLines(folders, shown),
     '',
-    'When a handoff is accepted, spekterm opens a new agent session in the target repo with the',
-    'body prepared, and sends its first prompt as soon as that agent is ready. It starts working',
-    'without waiting for the user.',
+    'When a handoff is accepted, spekterm opens a new agent session in the target repo with the body prepared, and sends its first prompt as soon as that agent is ready. It starts working without waiting for the user.',
     '',
-    'A handoff can be rejected: an unknown target, a body over the limit, a file over the limit.',
-    'When that happens the user sees it in their inbox, but YOU are not told - there is no reply channel.',
-    'A rejected handoff looks exactly like a successful one from where you stand.',
-    'Say that you wrote the handoff, not that it was delivered.',
+    'For every file you write into your outbox, spekterm writes a receipt with the same name into:',
+    `  ${receiptsPath}`,
+    'A file gone from your outbox means its receipt exists. Its "status" is one of:',
+    '  accepted  - a handoff: its session is being opened; a report: taken; a command: accepted to be carried out.',
+    '  scheduled - a handoff that opens at "at".',
+    '  duplicate - the same content was received before; nothing new happened.',
+    '  rejected  - refused; "code" and "reason" say why. "permanent": false means it can succeed once something changes.',
+    '  held      - not processed yet; the file stays and is read again ("reason" says when).',
+    'A rejected handoff is also shown to the user in their inbox. An accepted handoff is checked again when it opens; a failure then reaches the user, not the receipt.',
+    'Until you have read the receipt, say that you wrote the handoff, not that it was delivered.',
     ...peerLines(name, relations),
     ...commandLines(Boolean(relations)),
     ...(reportable ? reportLines() : []),
@@ -126,55 +157,66 @@ export function introText({ folders, outbox, name, relations, reportable }: Intr
 }
 
 /**
+ * The repo list, grouped by parent directory (`agent-handoff-source`): each directory once, then the names in it,
+ * one per line. **The listed name is derived from the path here**, not taken from the folder's `name`, so the
+ * grouping cannot drift from the paths if a display name is ever added. A folder at the root has no last segment
+ * and is listed by its path.
+ */
+function repoLines(folders: IntroInput['folders'], shown: number): string[] {
+  if (folders.length === 0) return ['Repos in this workspace:', '  (none)']
+  const groups = new Map<string, string[]>()
+  for (const folder of folders.slice(0, shown)) {
+    const dir = path.dirname(folder.path)
+    const names = groups.get(dir) ?? []
+    names.push(path.basename(folder.path) || folder.path)
+    groups.set(dir, names)
+  }
+  const lines = ['Repos in this workspace, by directory. A repo\'s absolute path is its directory, "/", and its name:']
+  for (const [dir, names] of groups) lines.push(`  ${dir}`, ...names.map((repo) => `    ${repo}`))
+  const left = folders.length - shown
+  if (left > 0) lines.push(`  (${left} more not listed, to keep this introduction whole)`)
+  return lines
+}
+
+/**
  * The session commands (`agent-session-control`). **Told to every agent session**: every agent can act on itself.
  *
  * The limit is derived from the constant the judgement uses (`scripts/handoff-intro-source.test.mjs` forbids the
- * literal): an agent with no reply channel cannot learn an unstated constraint.
+ * literal): an unstated constraint costs a refused command.
  */
 function commandLines(hasRelations: boolean): string[] {
   return [
     '',
-    'You can also ask spekterm to close, hibernate or rename a session. Write one of these into your outbox',
-    'above, with the same atomic-write rules:',
+    'You can also ask spekterm to close, hibernate or rename a session: write one of these into your outbox, by the same rules:',
     '  {"kind": "close"}',
     '  {"kind": "hibernate"}',
     '  {"kind": "rename", "name": "<new label>"}',
-    'With no "target" it acts on your own session. Add "target": "<name>" to act on a session you handed',
     hasRelations
-      ? 'off, or one they handed off: use a name from the "children" tree of your relations file. Your parent,'
-      : 'off, or one they handed off, by its name. Your parent,',
-    'your siblings and any other session are refused.',
-    'Close ends the session and removes it. Hibernate ends its process but keeps it, dormant, until the user',
-    'wakes it. Both wait until the target finishes its current turn, so make a command on your own session your',
-    'last action. Closing your own session does not close it: once your reply ends, the user is offered to close',
-    'or keep it, and it stays open until they choose. If the user types into the target before a command is',
-    'carried out, it is dropped. Close and hibernate of a running session need agent event reporting to be on.',
-    `Rename takes effect at once and changes only the label. "name" is at most ${MAX_FIELD_LENGTH} characters, on one`,
-    'line; an empty name gives naming back to the terminal title. No name used for messaging changes.',
-    'You are not told whether a command was carried out. For a session you handed off, your relations file',
-    'shows the result: a closed one is gone, a hibernated one has "running": false, a renamed one shows the new',
-    '"title".',
+      ? 'With no "target" it acts on your own session. Add "target": "<name>" to act on a session you handed off, or one they handed off: use a name from the "children" tree of your relations file.'
+      : 'With no "target" it acts on your own session. Add "target": "<name>" to act on a session you handed off, or one they handed off, by its name.',
+    'Your parent, your siblings and any other session are refused.',
+    'Close ends the session and removes it. Hibernate ends its process but keeps it, dormant, until the user wakes it.',
+    'Both wait until the target finishes its current turn, so make a command on your own session your last action.',
+    'Closing your own session does not close it: once your reply ends, the user is offered to close or keep it, and it stays open until they choose.',
+    'If the user types into the target before a command is carried out, it is dropped. Close and hibernate of a running session need agent event reporting to be on.',
+    `Rename takes effect at once and changes only the label. "name" is at most ${MAX_FIELD_LENGTH} characters, on one line; an empty name gives naming back to the terminal title. No name used for messaging changes.`,
+    'A command\'s receipt says it was accepted, not that it was carried out. For a session you handed off, your relations file shows the result: a closed one is gone, a hibernated one has "running": false, a renamed one shows the new "title".',
   ]
 }
 
 /**
  * 子 session 的完成回報（`handoff-completion`）。**只對由交接建立的 session 說。**
  *
- * 上限由常數推導（`scripts/handoff-intro-source.test.mjs` 擋字面值）—— 投遞者沒有回饋管道，
- * 一個未被告知的約束就是一條死路。
+ * 上限由常數推導（`scripts/handoff-intro-source.test.mjs` 擋字面值）—— 一個未被告知的約束
+ * 就是一次被拒的回報。
  */
 function reportLines(): string[] {
   return [
     '',
-    'This session was opened by a handoff. Each time you finish something your parent session or the',
-    'user asked of you, report it:',
-    '  1. Write a JSON file into your outbox above, with the same atomic-write rules:',
-    '       {"kind": "report", "summary": "<what you did and how it turned out>"}',
-    `     summary: at most ${MAX_REPORT_LENGTH} characters, and not empty. A longer or empty summary is`,
-    '     rejected, not shortened. Put details in a file in this repo and point to it from the summary.',
-    '  2. Then read your relations file. If your parent has "running": true, send it the same summary',
-    '     with SendMessage. If it is not running, or you have no parent any more, do not; spekterm',
-    '     keeps your report and your parent can read it from its relations file.',
+    'This session was opened by a handoff. Each time you finish something your parent session or the user asked of you, report it:',
+    '  1. Write into your outbox, by the same rules: {"kind": "report", "summary": "<what you did and how it turned out>"}',
+    `     summary: at most ${MAX_REPORT_LENGTH} characters, and not empty; a longer or empty one is rejected, not shortened. Put details in a file in this repo and point to it.`,
+    '  2. Then read your relations file. If your parent has "running": true, send it the same summary with SendMessage. If not, or you have no parent any more, do not: spekterm keeps your report for it.',
     'A report tells the user this piece of work is done. Report again after each later request you finish.',
   ]
 }
@@ -196,23 +238,14 @@ function peerLines(name: string | undefined, relations: string | undefined): str
     ...(name ? [`Your name for Claude Code's local session messaging is: ${name}`] : []),
     ...(relations
       ? [
-          'Sessions related to you by handoff - your parent, your children, and your siblings (other',
-          'sessions your parent handed off) - are listed, with their current names and whether they are',
-          'running, in:',
+          'Your parent, your children and your siblings (other sessions your parent handed off) are listed, with their current names and whether they are running, in:',
           `  ${relations}`,
-          'Read it when you need them. It is kept up to date, including sessions created after you started.',
-          'If this session was opened by a handoff, it has a parent.',
-          "To contact one of them, use Claude Code's own session messaging (ListAgents / SendMessage),",
-          'addressed by the name in that file. spekterm does not carry the message.',
-                    'A session listed with "running": false is hibernated: it still exists, but it has no process and',
-          'cannot receive messages. It comes back when the user wakes it; spekterm will not start it for',
-          'you, and you must not try to wake it yourself. A message can also go unanswered - if you need a',
-          'reply, ask for one.',
-          'Each child and sibling in that file also has a "state" (working, waiting, done, or idle) and,',
-          'once it has reported finishing its work, a "summary".',
-          'Children nest: a child lists the sessions it handed off under its own "children", and so on at',
-          'every depth. A descendant marked "parentGone": true lost its direct parent (closed, or its repo',
-          'left the workspace) and is listed under its nearest ancestor that still exists.',
+          'It is kept up to date, including sessions created after you started. If this session was opened by a handoff, it has a parent.',
+          "To contact one, use Claude Code's own session messaging (ListAgents / SendMessage), addressed by the name in that file; spekterm does not carry the message.",
+          'A session listed with "running": false is hibernated: it still exists but cannot receive messages. It comes back when the user wakes it; spekterm will not start it for you, and you must not try to wake it yourself.',
+          'A message can also go unanswered - if you need a reply, ask for one.',
+          'Each child and sibling also has a "state" (working, waiting, done, or idle) and, once it has reported finishing its work, a "summary".',
+          'Children nest: a child lists the sessions it handed off under its own "children", at every depth. A descendant marked "parentGone": true lost its direct parent (closed, or its repo left the workspace) and is listed under its nearest ancestor that still exists.',
         ]
       : []),
   ]

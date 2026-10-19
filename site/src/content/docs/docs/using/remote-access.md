@@ -106,7 +106,8 @@ cannot connect, and it is told nothing.
 ## Notifications
 
 The phone learns that an agent waits for you, waits on a choice, finished a handoff, or that a new inbox item
-arrived **only over its own connection** to spekterm. To notify you in the background, the app keeps that
+arrived **only over its own connection** to spekterm. A scheduled handoff arrives when it opens, not when it was
+scheduled; until then the phone lists it apart with its time, and can run it now or cancel it. To notify you in the background, the app keeps that
 connection open, which uses some battery. When the connection drops and comes back, spekterm sends what the
 phone missed — the last 24 hours, up to 200 events — or tells it that it may have missed some. Nothing is told
 about the session you are looking at on your computer right now.

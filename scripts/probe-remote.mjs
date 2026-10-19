@@ -1200,6 +1200,77 @@ async function runIntakeHandoff(_mode, _config, context) {
 }
 
 /**
+ * scheduled-handoff on a device: a scheduled handoff is listed with `scheduledAt`, raises no `intake` event while it
+ * waits and one when it opens, `inbox.accept` opens it now and `inbox.ignore` cancels it. The due one is scheduled
+ * a little ahead, so this section waits for the desktop's 30-second opener once.
+ */
+async function runScheduled(_mode, _config, context) {
+  const repos = makeRepos()
+  const profile = seedProfile(repos, { remote: { enabled: true, port: LISTEN_A } })
+  const { app, stub } = await start(context, profile, { readyDelaySeconds: 1 })
+  const { client } = await phone(app)
+  const watched = await call(client, 'attention.watch')
+  check(results, 'prerequisite: the attention stream is watched', watched.ok === true, JSON.stringify(watched.e ?? ''))
+
+  const parent = await remoteCreate(client, 'f', 'claude')
+  const outbox = await pollFor({
+    read: () => {
+      try {
+        return readdirSync(join(profile, 'handoff', 'outbox')).includes(parent.r.sessionId) ? join(profile, 'handoff', 'outbox', parent.r.sessionId) : null
+      } catch {
+        return null
+      }
+    },
+    settled: Boolean,
+    timeoutMs: 20_000,
+    label: 'the parent outbox',
+  })
+  const write = (name, payload) => {
+    writeFileSync(join(outbox, `${name}.partial`), JSON.stringify(payload))
+    renameSync(join(outbox, `${name}.partial`), join(outbox, name))
+  }
+  const tomorrow = new Date(Date.now() + 24 * 3600_000).toISOString()
+  const childrenOf = () => persistedSessions(profile).filter((s) => s.lineage?.parentId === parent.r.sessionId)
+
+  write('later.json', { target: repos.names.g, title: 'SCHED-LATER', body: 'later work', at: tomorrow })
+  write('cancel.json', { target: repos.names.g, title: 'SCHED-CANCEL', body: 'never mind', at: tomorrow })
+  const listed = await pollFor({
+    read: async () => (await call(client, 'inbox.list')).r.items.filter((i) => typeof i.scheduledAt === 'number'),
+    settled: (items) => items.length === 2,
+    timeoutMs: 20_000,
+    label: 'two scheduled items',
+  })
+  const later = listed.find((i) => i.title === 'SCHED-LATER')
+  check(results, 'a scheduled handoff is listed with scheduledAt, pending, and no session is created', later?.scheduledAt === Date.parse(tomorrow) && later?.state === 'pending' && childrenOf().length === 0, JSON.stringify(later))
+  check(results, 'no intake event is raised while it waits', !client.eventsOf('attention').some((e) => e.d.kind === 'intake'), JSON.stringify(client.eventsOf('attention').map((e) => e.d.kind)))
+
+  const cancel = listed.find((i) => i.title === 'SCHED-CANCEL')
+  await call(client, 'inbox.ignore', { adapter: cancel.adapter, id: cancel.id })
+  const afterIgnore = (await call(client, 'inbox.list')).r.items.some((i) => i.id === cancel.id)
+  check(results, 'inbox.ignore cancels a scheduled handoff', !afterIgnore, '')
+
+  const runFrom = client.events.length
+  const accepted = await call(client, 'inbox.accept', { adapter: later.adapter, id: later.id, folderId: later.folderId })
+  const opened = await pollFor({ read: () => childrenOf().length, settled: (n) => n === 1, timeoutMs: 20_000, label: 'the run-now child' })
+  const changed = await client.waitEvent('inbox.changed', { from: runFrom, match: (d) => d.items.some((i) => i.id === later.id && i.scheduledAt === undefined), timeoutMs: 10_000, label: 'the list without scheduledAt' })
+  check(results, 'inbox.accept on a scheduled handoff opens it now, and the list loses scheduledAt', accepted.ok === true && opened === 1 && Boolean(changed), JSON.stringify(accepted.e ?? ''))
+
+  // Due shortly: the desktop's opener opens it within its 30-second tick, and only then raises the intake event.
+  const dueAt = new Date(Date.now() + 15_000).toISOString()
+  write('due.json', { target: repos.names.g, title: 'SCHED-DUE', body: 'due soon', at: dueAt })
+  const waiting = await pollFor({ read: async () => (await call(client, 'inbox.list')).r.items.find((i) => i.title === 'SCHED-DUE') ?? null, settled: Boolean, timeoutMs: 20_000, label: 'the due item listed' })
+  check(results, 'the due handoff waits as scheduled before its time', typeof waiting?.scheduledAt === 'number' && !client.eventsOf('attention').some((e) => e.d.kind === 'intake'), JSON.stringify(waiting))
+  const dueFrom = client.events.length
+  const event = await client.waitEvent('attention', { match: (d) => d.kind === 'intake' && d.intake?.id === waiting.id, timeoutMs: 75_000, label: 'the intake event when it opens' })
+  const dueChanged = await client.waitEvent('inbox.changed', { from: dueFrom, match: (d) => d.items.some((i) => i.id === waiting.id && i.scheduledAt === undefined), timeoutMs: 15_000, label: 'the list after it opened' })
+  check(results, 'opening at its time sends connected clients the list without scheduledAt', Boolean(dueChanged), '')
+  const children = await pollFor({ read: () => childrenOf().length, settled: (n) => n === 2, timeoutMs: 20_000, label: 'the due child' })
+  check(results, 'a scheduled handoff raises its intake event when it opens, and opens a new session', Boolean(event) && children === 2 && Date.now() >= Date.parse(dueAt), `children=${children}`)
+  void stub
+  await app.close()
+}
+
+/**
  * remote-protocol: accepting again after the prefill timed out reuses the earlier session. The stub agent
  * becomes ready only after the 30 s prefill limit, so the item returns to pending while its session lives.
  * The only step of this probe that costs half a minute.
@@ -2493,6 +2564,7 @@ const SECTIONS = [
   { name: 'runTerminal', run: runTerminal },
   { name: 'runIntakeHandoff', run: runIntakeHandoff },
   { name: 'runReaccept', run: runReaccept },
+  { name: 'runScheduled', run: runScheduled },
   { name: 'runOpenSpec', run: runOpenSpec },
   { name: 'runAttention', run: runAttention },
   { name: 'runHibernation', run: runHibernation },

@@ -51,6 +51,8 @@ export interface DeliverOutcome {
   notify: boolean
   detail?: string
   record?: IntakeRecord
+  /** An accepted delivery that changed nothing: a completion report adopted before (`handoff-receipt`). */
+  duplicate?: boolean
   /**
    * 這次拒絕的診斷欄位 —— **由 adapter 填入**。
    *
@@ -207,6 +209,15 @@ export class IntakeService {
 
   #emitArrival(record: IntakeRecord): void {
     for (const listener of this.#arrivals) listener(record)
+  }
+
+  /**
+   * Announces a scheduled handoff when it opens (`scheduled-handoff`, design D4). **Unguarded**: the arrival
+   * listeners skip a scheduled record that has not fired (`whenAnnounced` in `index.ts`), and the opener calls
+   * this only after setting `firedAt`.
+   */
+  announceArrival(record: IntakeRecord): void {
+    this.#emitArrival(record)
   }
 
   /**
@@ -411,7 +422,12 @@ export class IntakeService {
       return { ok: false, code: 'DUPLICATE', consume: true, notify: true }
     }
 
-    const record = this.#store.add(intake)
+    // A handoff gets `opensAt` (`scheduled-handoff`, design D1): its scheduled time, or now. `HandoffOpener` opens
+    // a record only when it has one, so a record pending from before this version is never opened by itself.
+    const record = this.#store.add(
+      intake,
+      provenance?.autoOpen ? { opensAt: intake.verified.scheduledAt ?? intake.receivedAt } : undefined,
+    )
     this.#emit()
     // **到達 —— 唯一的發出點。** 它在成功新增紀錄之後，因此六條非成功的返回路徑
     // （上面每一個 early return）都不會走到這裡。

@@ -52,6 +52,18 @@ interface IntakeKey {
    * 放在去重鍵這一半，因為它是狀態不是內容 —— 內容可以過期，這個不行。
    */
   settledAt?: number
+  /**
+   * When `HandoffOpener` may open this handoff (`scheduled-handoff`, design D1): its scheduled time, or the time
+   * it was read. **Absent ⇒ never opened automatically** — every record from before this field existed.
+   * Optional and in this half for the reason `settledAt` gives.
+   */
+  opensAt?: number
+  /**
+   * When an automatic opening was attempted, or the user accepted it. **Set at most once and never cleared**: a
+   * handoff is opened automatically at most once, ever — a record pending again after a prefill timeout would
+   * otherwise open another session at every start.
+   */
+  firedAt?: number
 }
 
 /** 可過期的那一半。 */
@@ -183,7 +195,9 @@ export function parseIntakeFile(raw: string): PersistedIntake | null {
       digest: e.digest,
       ...(typeof e.sessionId === 'string' ? { sessionId: e.sessionId } : {}),
       ...(typeof e.settledAt === 'number' ? { settledAt: e.settledAt } : {}),
-      content: isContent(content) ? withSafeSource(content) : null,
+      ...(isInstant(e.opensAt) ? { opensAt: e.opensAt } : {}),
+      ...(isInstant(e.firedAt) ? { firedAt: e.firedAt } : {}),
+      content: isContent(content) ? withSafeSchedule(withSafeSource(content)) : null,
     })
   }
   return { version: INTAKE_VERSION, entries: kept, notices: parseNotices((data as Record<string, unknown>).notices) }
@@ -226,6 +240,26 @@ function withSafeSource(content: IntakeContent): IntakeContent {
   const { source: _drop, ...rest } = content.verified
   const source = parseHandoffSource(raw)
   return { ...content, verified: source ? { ...rest, source } : rest }
+}
+
+function isInstant(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value)
+}
+
+/**
+ * The schedule's two verified fields are **read** (by the opener and every view), so each is kept only with its
+ * type — the same reason `withSafeSource` gives. A record that loses one is an ordinary item.
+ */
+function withSafeSchedule(content: IntakeContent): IntakeContent {
+  const { scheduledAt, targetText, ...rest } = content.verified
+  return {
+    ...content,
+    verified: {
+      ...rest,
+      ...(isInstant(scheduledAt) ? { scheduledAt } : {}),
+      ...(typeof targetText === 'string' ? { targetText } : {}),
+    },
+  }
 }
 
 function isContent(value: unknown): value is IntakeContent {
@@ -309,12 +343,13 @@ export class IntakeStore {
   }
 
   /** 收下一則新的 intake。呼叫端已確認它不是重複。 */
-  add(intake: Intake): IntakeRecord {
+  add(intake: Intake, key?: { opensAt?: number }): IntakeRecord {
     const record: IntakeRecord = {
       adapter: intake.verified.adapter,
       id: intake.id,
       state: 'pending',
       digest: digestOf(intake.authored, intake.verified),
+      ...(key?.opensAt !== undefined ? { opensAt: key.opensAt } : {}),
       content: {
         verified: intake.verified,
         authored: intake.authored,
@@ -336,6 +371,20 @@ export class IntakeStore {
     // 他正要送出的本文。
     if (state === 'accepted') delete record.settledAt
     this.save()
+  }
+
+  /**
+   * Marks a handoff's one automatic opening as used (`scheduled-handoff`, design D3): the opener's attempt, or the
+   * user's accept. **Saved at once**: an accept whose session creation then fails is followed by no `attach`, so
+   * nothing else would save it, and after a restart the opener would open a handoff the user had accepted.
+   * Only for a record that has `opensAt`; set once.
+   */
+  markFired(adapter: string, id: string, at: number = Date.now()): boolean {
+    const record = this.#entries.get(intakeKeyOf(adapter, id))
+    if (!record || record.opensAt === undefined || record.firedAt !== undefined) return false
+    record.firedAt = at
+    this.save()
+    return true
   }
 
   /**

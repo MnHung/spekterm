@@ -33,6 +33,12 @@ interface Entry extends TicketClaim {
 
 export class TicketStore {
   readonly #entries = new Map<string, Entry>()
+  /**
+   * Records whose ticket was used to create a session that has not attached yet, until `release` or expiry. With
+   * the unused tickets they make "this handoff is being opened" (`scheduled-handoff`, design D3): an accept in
+   * between must not create a second session.
+   */
+  readonly #claimed = new Map<string, number>()
   readonly #now: () => number
 
   constructor(now: () => number = Date.now) {
@@ -58,13 +64,30 @@ export class TicketStore {
     if (!entry) return null
     this.#entries.delete(token)
     if (spawnTarget !== 'claude' || folderId !== entry.folderId) return null
+    this.#claimed.set(claimKey(entry.adapter, entry.id), entry.expiresAt)
     return { adapter: entry.adapter, id: entry.id, folderId: entry.folderId }
+  }
+
+  /** Whether a session is being opened for this record: an unexpired ticket, or one used and not yet attached. */
+  isLive(adapter: string, id: string): boolean {
+    this.#sweep()
+    if (this.#claimed.has(claimKey(adapter, id))) return true
+    for (const entry of this.#entries.values()) if (entry.adapter === adapter && entry.id === id) return true
+    return false
+  }
+
+  /** The record's session attached (`intake:attach`): it is no longer being opened. */
+  release(adapter: string, id: string): void {
+    this.#claimed.delete(claimKey(adapter, id))
   }
 
   #sweep(): void {
     const now = this.#now()
     for (const [token, entry] of this.#entries) {
       if (entry.expiresAt <= now) this.#entries.delete(token)
+    }
+    for (const [key, expiresAt] of this.#claimed) {
+      if (expiresAt <= now) this.#claimed.delete(key)
     }
   }
 }
@@ -73,6 +96,10 @@ export class TicketStore {
  * 這個行程的憑證。簽發在 `ipc/intake.ts`、消費在 `ipc/terminal.ts` —— 兩者都只經由它。
  */
 export const handoffTickets = new TicketStore()
+
+function claimKey(adapter: string, id: string): string {
+  return `${adapter}\u0000${id}`
+}
 
 /**
  * 由憑證綁定的 record 取出它記下的來源。**由主行程啟動時接上**（`index.ts`）—— 這個模組不認識
@@ -108,13 +135,20 @@ export function lineageFromTicket(token: unknown, folderId: string | null, spawn
  *
  * **只對帶來源、且仍待處理的 record 簽發** —— 一則已接受或已了結的交接不該再長出子 session；
  * 沒有來源（外部 producer、舊版留下的交接）則根本沒有關係可寫。
+ *
+ * **Issuing marks the handoff's one automatic opening as used** (`markFired`, saved at once) — the opener's
+ * request and the user's accept alike — and **one live ticket per record**: none while one is unexpired or used
+ * and not yet attached (`scheduled-handoff`, design D3).
  */
 export function ticketFor(
   record: IntakeRecord | undefined,
   folderId: string,
   tickets: TicketStore = handoffTickets,
+  markFired?: (adapter: string, id: string) => void,
 ): string | undefined {
+  if (record) markFired?.(record.adapter, record.id)
   if (!record?.content?.verified.source || record.state !== 'pending') return undefined
+  if (tickets.isLive(record.adapter, record.id)) return undefined
   return tickets.issue({ adapter: record.adapter, id: record.id, folderId })
 }
 

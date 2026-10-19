@@ -2681,6 +2681,219 @@ async function runHandoffRestored(_mode, _modeConfig, context) {
   )
 }
 
+// ── scheduled-handoff ──────────────────────────────────────────────────────────
+
+/** A session's receipt on disk (`handoff-receipt`), or null. */
+function receiptOf(profile, sessionId, name) {
+  const file = join(profile, 'handoff', 'receipts', sessionId, name)
+  try {
+    return JSON.parse(readFileSync(file, 'utf8'))
+  } catch {
+    return null
+  }
+}
+
+function scheduledItem(title) {
+  return label('intake.scheduledItemLabel', { title })
+}
+
+/** Click a button, by its dictionary label, inside a scheduled item; true when the button was there. */
+function scheduledClick(title, keyPath) {
+  return `(() => {
+    const row = document.querySelector(${JSON.stringify(scheduledItem(title))})
+    const button = row?.querySelector(${JSON.stringify(label(keyPath))})
+    if (!button) return false
+    button.click()
+    return true
+  })()`
+}
+
+/**
+ * scheduled-handoff while the app runs: waiting without a session, a notification or a badge; Run now and Cancel
+ * in the inbox; opening when due without moving focus, with one notification; receipts for every outcome.
+ */
+async function runScheduled(_mode, _modeConfig, context) {
+  const { profile, folders } = seedProfile()
+  seedRouting(profile, { fallbackFolderId: folders[0].id })
+  const configDir = mkTemp('spekterm-intake-config-')
+  const marker = `spek-intake-${process.pid}-${Date.now()}`
+  const stub = makeStubAgent(mkTemp, configDir, { readyDelaySeconds: 2, busySeconds: 1 })
+  drop(profile, 'source', intake({ id: 'src-1', title: 'SOURCE-TITLE' }))
+  const app = await freshApp(context, { profile, configDir, stub, marker })
+  await openInbox(app)
+  await pollFor({ read: () => app.client.evaluate(acceptExpression('SOURCE-TITLE')), settled: Boolean, timeoutMs: 20_000, label: 'source session opened' })
+  const outbox = await awaitOutbox(profile, 'the source outbox')
+  const sessionId = basename(outbox)
+  const target = basename(folders[1].path)
+  const tomorrow = new Date(Date.now() + 24 * 3600_000).toISOString()
+  const write = (name, payload) => {
+    writeFileSync(join(outbox, `${name}.partial`), typeof payload === 'string' ? payload : JSON.stringify(payload))
+    renameSync(join(outbox, `${name}.partial`), join(outbox, name))
+  }
+
+  // ── Waiting: no session, no notification, no badge ──
+  const quiet = await settledNotifications(profile, 'notifications settled before scheduling')
+  const pidsBefore = ptySessionPids(marker)
+  write('later.json', { target, title: 'SCHED-LATER', body: 'later work' , at: tomorrow })
+  const later = await pollFor({ read: () => receiptOf(profile, sessionId, 'later.json'), settled: Boolean, timeoutMs: 20_000, label: 'the scheduled receipt' })
+  check(results, 'a scheduled handoff receipt states scheduled and its time', later?.status === 'scheduled' && later?.at === tomorrow.replace(/Z$/, 'Z'), JSON.stringify(later))
+  const afterScheduling = await settledNotifications(profile, 'notifications settled after scheduling')
+  check(results, 'a scheduled handoff creates no session while it waits', ptySessionPids(marker).length === pidsBefore.length, `before=${pidsBefore.length} after=${ptySessionPids(marker).length}`)
+  check(results, 'a scheduled handoff raises no notification while it waits', afterScheduling.length === quiet.length, `new=${JSON.stringify(afterScheduling.slice(quiet.length).map((n) => n.body))}`)
+  // The source item was accepted, so the only pending item is the scheduled one: the badge must stay empty.
+  const badge = await app.client.evaluate(BADGE_TEXT)
+  check(results, 'a scheduled handoff is not counted in the badge', badge === '', JSON.stringify(badge))
+
+  // ── The inbox lists them apart, earliest first; Cancel ──
+  // Written in an order that is neither the time order nor its reverse: CANCEL (+2 days) after LATER (+1 day),
+  // then LAST (+3 days). Insertion order gives LATER, CANCEL, LAST only by luck of this layout, so LAST's arrival
+  // being newest also separates "newest first" (LAST, CANCEL, LATER).
+  write('cancel.json', { target, title: 'SCHED-CANCEL', body: 'never mind', at: new Date(Date.parse(tomorrow) + 24 * 3600_000).toISOString() })
+  write('last.json', { target, title: 'SCHED-LAST', body: 'much later', at: new Date(Date.parse(tomorrow) + 48 * 3600_000).toISOString() })
+  await openInbox(app)
+  const listed = await pollFor({
+    read: () => app.client.evaluate(`[...document.querySelectorAll(${JSON.stringify(`li[aria-label^="${prefixOf('intake.scheduledItemLabel')}"]`)})].map((li) => li.getAttribute('aria-label'))`),
+    settled: (labels) => labels.length === 3,
+    timeoutMs: 20_000,
+    label: 'three scheduled items listed',
+  })
+  check(results, 'the inbox lists scheduled handoffs in their own section', listed.length === 3, JSON.stringify(listed))
+  check(
+    results,
+    'scheduled handoffs are listed earliest first',
+    JSON.stringify(listed) === JSON.stringify(['SCHED-LATER', 'SCHED-CANCEL', 'SCHED-LAST'].map((title) => copy('intake.scheduledItemLabel', { title }))),
+    JSON.stringify(listed),
+  )
+  await pollFor({ read: () => app.client.evaluate(scheduledClick('SCHED-CANCEL', 'intake.cancelScheduled')), settled: Boolean, timeoutMs: 10_000, label: 'Cancel clicked' })
+  const cancelled = await pollFor({ read: () => app.client.evaluate(`!document.querySelector(${JSON.stringify(scheduledItem('SCHED-CANCEL'))})`), settled: Boolean, timeoutMs: 10_000, label: 'the cancelled item gone' })
+  check(results, 'Cancel removes a scheduled handoff from the inbox', cancelled === true, '')
+
+  // ── Run now ──
+  const beforeRun = ptySessionPids(marker)
+  const quietRun = await settledNotifications(profile, 'notifications settled before Run now')
+  await pollFor({ read: () => app.client.evaluate(scheduledClick('SCHED-LATER', 'intake.runNow')), settled: Boolean, timeoutMs: 10_000, label: 'Run now clicked' })
+  const ran = await newSessionCwd(marker, beforeRun, 'Run now opened a session')
+  check(results, 'Run now opens a scheduled handoff in its target folder at once', ran.cwd === folders[1].path, JSON.stringify(ran))
+  const afterRun = await settledNotifications(profile, 'notifications settled after Run now')
+  check(results, 'Run now raises the arrival notification', afterRun.slice(quietRun.length).some((n) => (n.body ?? '').includes('SCHED-LATER')), JSON.stringify(afterRun.slice(quietRun.length).map((n) => n.body)))
+  await pollFor({ read: () => app.client.evaluate(`(() => { const d = document.querySelector('[role="dialog"]${label('intake.label')}'); d?.querySelector(${JSON.stringify(label('intake.close'))})?.click(); return !document.querySelector('[role="dialog"]${label('intake.label')}') })()`), settled: Boolean, timeoutMs: 10_000, label: 'inbox closed' })
+
+  // ── Due while running: opens within a minute of its time, focus not moved, one notification ──
+  const sourceName = basename(folders[0].path)
+  await pollFor({ read: () => app.client.evaluate(`(() => { ${railRowClick(sourceName)} return ${RAIL_SELECTION} === ${JSON.stringify(sourceName)} })()`), settled: Boolean, timeoutMs: 15_000, label: 'rail on the source folder' })
+  const railBefore = await app.client.evaluate(RAIL_SELECTION)
+  const beforeDue = ptySessionPids(marker)
+  const quietDue = await settledNotifications(profile, 'notifications settled before the due handoff')
+  const dueAt = Date.now() + 20_000
+  write('due.json', { target, title: 'SCHED-DUE', body: 'due soon', at: new Date(dueAt).toISOString() })
+  await pollFor({ read: () => receiptOf(profile, sessionId, 'due.json')?.status, settled: (status) => status === 'scheduled', timeoutMs: 15_000, label: 'the due handoff scheduled' })
+  check(results, 'the due handoff waits before its time', ptySessionPids(marker).length === beforeDue.length && Date.now() < dueAt, `now-due=${Date.now() - dueAt}`)
+  const due = await pollFor({ read: () => ptySessionPids(marker).length, settled: (n) => n > beforeDue.length, timeoutMs: 90_000, label: 'the due handoff opened' })
+  const openedAt = Date.now()
+  check(results, 'a due handoff opens a new session within one minute of its time', due > beforeDue.length && openedAt >= dueAt && openedAt - dueAt <= 60_000, `opened ${Math.round((openedAt - dueAt) / 1000)}s after its time`)
+  const railAfter = await app.client.evaluate(RAIL_SELECTION)
+  check(results, 'a due handoff opening does not move the rail selection', railAfter === railBefore, `before=${railBefore} after=${railAfter}`)
+  const afterDue = await settledNotifications(profile, 'notifications settled after the due handoff')
+  const dueNotes = afterDue.slice(quietDue.length).filter((n) => (n.body ?? '').includes('SCHED-DUE'))
+  check(results, 'a due handoff raises one arrival notification when it opens', dueNotes.length === 1, JSON.stringify(afterDue.slice(quietDue.length).map((n) => n.body)))
+
+  // ── A refused handoff writes nothing into the source terminal (its outcome is in the receipt) ──
+  const sourceBytes = () => Object.values(stub.sessionInputs()).find((entry) => entry.bytes.includes('written by someone else'))?.bytes ?? null
+  const beforeMiss = sourceBytes()
+  write('quiet-miss.json', { target: '__no_such_repo__', title: 'QUIET-MISS', body: 'x' })
+  await pollFor({ read: () => receiptOf(profile, sessionId, 'quiet-miss.json'), settled: Boolean, timeoutMs: 20_000, label: 'the quiet refusal receipt' })
+  await new Promise((resolve) => setTimeout(resolve, 2_000))
+  check(results, 'a refused handoff writes nothing into the source terminal', beforeMiss !== null && sourceBytes() === beforeMiss, `found=${beforeMiss !== null} unchanged=${sourceBytes() === beforeMiss}`)
+
+  // ── Receipts for accepted, rejected and held ──
+  write('plain.json', { target, title: 'PLAIN', body: 'now' })
+  write('miss.json', { target: '__no_such_repo__', title: 'MISS', body: 'x' })
+  write('bad.json', '{ not json')
+  const all = await pollFor({
+    read: () => ({ plain: receiptOf(profile, sessionId, 'plain.json'), miss: receiptOf(profile, sessionId, 'miss.json'), bad: receiptOf(profile, sessionId, 'bad.json') }),
+    settled: (r) => Boolean(r.plain && r.miss && r.bad),
+    timeoutMs: 20_000,
+    label: 'three receipts',
+  })
+  check(results, 'an accepted handoff has an accepted receipt, and its file is gone', all.plain?.status === 'accepted' && !existsSync(join(outbox, 'plain.json')), JSON.stringify(all.plain))
+  check(results, 'a refused handoff has a rejected receipt with its code, marked permanent', all.miss?.status === 'rejected' && all.miss?.code === 'TARGET_NOT_FOUND' && all.miss?.permanent === true && !JSON.stringify(all.miss).includes('__no_such_repo__'), JSON.stringify(all.miss))
+  check(results, 'an unparseable file has a held receipt and stays in the outbox', all.bad?.status === 'held' && existsSync(join(outbox, 'bad.json')), JSON.stringify(all.bad))
+}
+
+/**
+ * scheduled-handoff at start (tasks 10.2), one launch, one folder per case:
+ * (a) a persisted pending handoff whose time passed while the app was closed opens after the window restored, and
+ *     its context states both times;
+ * (b) the same record with `firedAt` set (its one automatic opening used) does not open, and raises nothing;
+ * (c) a plain handoff file left in an outbox before start opens after the window restored.
+ */
+async function runScheduledStart(_mode, _modeConfig, context) {
+  const { profile, folders } = seedProfile()
+  seedRouting(profile, { fallbackFolderId: folders[0].id })
+  const configDir = mkTemp('spekterm-intake-config-')
+  const marker = `spek-intake-${process.pid}-${Date.now()}`
+  const stub = makeStubAgent(mkTemp, configDir, { readyDelaySeconds: 2, busySeconds: 1 })
+  const SOURCE = '5c1e9a2b-3d4f-4a6b-8c7d-9e0f1a2b3c4d'
+  const past = Date.now() - 3 * 3600_000
+  const record = (id, folder, title, extra = {}) => ({
+    adapter: 'handoff',
+    id: `${SOURCE}-${id}`,
+    state: 'pending',
+    digest: `seed-${id}`,
+    opensAt: past,
+    ...extra,
+    content: {
+      verified: {
+        adapter: 'handoff',
+        originKind: 'session',
+        originId: folders[0].id,
+        targetFolderId: folder.id,
+        firstPartyBody: true,
+        scheduledAt: past,
+        targetText: basename(folder.path),
+      },
+      authored: { title, body: `${title}-BODY`, actor: 'alpha', originLabel: 'alpha' },
+      receivedAt: past - 3600_000,
+    },
+  })
+  writeFileSync(
+    join(profile, 'intake.json'),
+    JSON.stringify({ version: 1, entries: [record('a', folders[1], 'OVERDUE-A'), record('b', folders[0], 'FIRED-B', { firedAt: past + 1000 })] }),
+  )
+  const outbox = join(outboxRootOf(profile), SOURCE)
+  mkdirSync(outbox, { recursive: true })
+  writeFileSync(join(outbox, 'c.json'), JSON.stringify({ target: basename(folders[2].path), title: 'PLAIN-C', body: 'PLAIN-C-BODY' }))
+
+  await freshApp(context, { profile, configDir, stub, marker })
+  const cwds = await pollFor({ read: () => sessionCwds(marker), settled: (list) => list.length >= 2, timeoutMs: 60_000, label: 'two sessions opened at start' })
+  await new Promise((resolve) => setTimeout(resolve, WINDOW_WAIT_MS))
+  const final = sessionCwds(marker)
+  check(results, '(a) an overdue handoff opens at start in its target folder', final.filter((cwd) => cwd === folders[1].path).length === 1, JSON.stringify(final))
+  check(results, '(c) a handoff file left in an outbox before start opens after the window restored', final.filter((cwd) => cwd === folders[2].path).length === 1, JSON.stringify(final))
+  check(results, '(b) a handoff whose automatic opening was used does not open again at start', !final.includes(folders[0].path) && final.length === cwds.length, JSON.stringify(final))
+  const notes = await settledNotifications(profile, 'notifications settled after start')
+  // Arrivals merge ("2 new handoffs"), so the body names no title: count what was announced instead. (a) and (c)
+  // announce one each; (b) announced too would make it three.
+  const single = copy('intake.notify.title')
+  const announced = notes.reduce((total, n) => {
+    if (n.title === single) return total + 1
+    const merged = notes.length > 0 ? /(\d+)/.exec(n.title ?? '') : null
+    return merged && n.title === copy('intake.notify.titleMerged', { total: Number(merged[1]) }) ? total + Number(merged[1]) : total
+  }, 0)
+  check(results, '(b) and it raises no notification', announced === 2, JSON.stringify(notes.map((n) => n.title)))
+
+  const contextRoot = join(profile, 'intake')
+  const contexts = existsSync(contextRoot) ? readdirSync(contextRoot).filter((name) => name.endsWith('.md')).map((name) => readFileSync(join(contextRoot, name), 'utf8')) : []
+  const overdue = contexts.find((text) => text.includes('OVERDUE-A-BODY')) ?? ''
+  const line = /This handoff was scheduled for (\S+)\. It started at (\S+)\./.exec(overdue)
+  check(
+    results,
+    '(a) its context states when it was scheduled for and when it started',
+    Boolean(line) && Date.parse(line[1]) === Math.floor(past / 1000) * 1000 && Date.parse(line[2]) > past,
+    line ? `${line[1]} / ${line[2]}` : overdue.slice(0, 200),
+  )
+}
+
 // ── intake-inbox-usability ─────────────────────────────────────────────────────
 
 /** 卡片上的 folder 選單。**以字典取標籤**（它同時是選擇器）。 */
@@ -4512,6 +4725,8 @@ const SECTIONS = [
   { name: 'runCompletion', run: runCompletion },
   { name: 'runHandoffRestored', run: runHandoffRestored },
   { name: 'runHandoffFailure', run: runHandoffFailure },
+  { name: 'runScheduled', run: runScheduled },
+  { name: 'runScheduledStart', run: runScheduledStart },
   { name: 'runChooseFolder', run: runChooseFolder },
   { name: 'runOpenedLifecycle', run: runOpenedLifecycle },
   { name: 'runLineage', run: runLineage },

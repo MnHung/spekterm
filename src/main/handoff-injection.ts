@@ -1,5 +1,5 @@
-import { INTRO_COMMAND, INTRO_ENV, OUTBOX_ENV, RELATIONS_ENV, writeIntroFile } from './handoff-intro'
-import { introFile, outboxDir, prepareOutbox, relationsFile } from './handoff-outbox'
+import { INTRO_COMMAND, INTRO_ENV, OUTBOX_ENV, RECEIPTS_ENV, RELATIONS_ENV, writeIntroFile } from './handoff-intro'
+import { introFile, outboxDir, prepareOutbox, receiptsDir, relationsFile } from './handoff-outbox'
 import { writeRelationsFor, type RelationsWorld } from './handoff-relations'
 import type { InjectionContribution } from './agent-injection'
 import type { WorkspaceFolder } from './workspace-store'
@@ -41,7 +41,7 @@ export function prepareHandoffInjection(
   return {
     settings: {},
     hooks: { SessionStart: [INTRO_COMMAND] },
-    env: { [INTRO_ENV]: introFile(sessionId), [OUTBOX_ENV]: outbox, [RELATIONS_ENV]: relations },
+    env: { [INTRO_ENV]: introFile(sessionId), [OUTBOX_ENV]: outbox, [RECEIPTS_ENV]: receiptsDir(sessionId), [RELATIONS_ENV]: relations },
   }
 }
 

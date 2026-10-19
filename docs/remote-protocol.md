@@ -397,9 +397,16 @@ input makes the open prompt unanswerable from a device, and text with Enter type
 ### `inbox.list`
 
 `p`: `{}` → `r`: `{ "items": [Item] }`, the desktop's inbox: `{ id, adapter, state, originKind, originId,
-originLabel, title, actor, body, bodyLength, receivedAt, occurredAt, sessionId?, folderId?, unresolved? }`.
-`folderId` is the folder routing suggests; `unresolved` says why there is none. Changes arrive as
+originLabel, title, actor, body, bodyLength, receivedAt, occurredAt, sessionId?, folderId?, unresolved?,
+scheduledAt? }`. `folderId` is the folder routing suggests; `unresolved` says why there is none. Changes arrive as
 `inbox.changed` events with the whole list.
+
+`scheduledAt` (epoch milliseconds) marks a **scheduled handoff**: an agent handed work off to a later time, and
+the desktop opens its session when that time comes (at the next start if the desktop was closed then). It is
+present only while the item waits for its time — pending, and not yet opened — so the field's presence, not a
+comparison with your clock, is what makes an item scheduled. A value in the past means the item is due and opens
+as soon as the desktop can (within about 30 seconds). When it opens, an `inbox.changed` without the field
+follows. `inbox.accept` on a scheduled item opens it now (its one automatic opening); `inbox.ignore` cancels it.
 
 ### `inbox.accept`
 
@@ -408,6 +415,8 @@ originLabel, title, actor, body, bodyLength, receivedAt, occurredAt, sessionId?,
 The desktop's accept: it reuses the session an earlier accept of the item left in that folder, or creates one
 there (quietly), and fills in the item's first prompt — unsent for a third-party body. Errors:
 `FOLDER_REQUIRED`, `NOT_FOUND`, `CREATE_FAILED`, `NO_WINDOW`, `TIMEOUT`. A failure leaves the item pending.
+`CREATE_FAILED` also answers an accept of a handoff the desktop is opening at that moment (its message says so):
+a second session is not opened.
 
 ### `inbox.ignore`
 
@@ -536,7 +545,7 @@ title, summary?, tool?, suppressed }`:
 | `waiting` | An agent finished its turn and waits for input. |
 | `choice` | An agent asks for a choice (a permission prompt); `tool` names the tool. Each prompt raises one. |
 | `handoff-done` | A handoff-created session reported completion; `summary` is the report. |
-| `intake` | A new inbox item arrived (a handoff's arrival included). |
+| `intake` | A new inbox item arrived (a handoff's arrival included). A scheduled handoff raises it **when it opens**, not when it is scheduled. |
 
 - `title`, `summary` and `tool` are already **reduced** the way the desktop reduces text for its own
   notifications: URL-shaped text replaced by a placeholder in the desktop's interface language, `<`, `>` and `&`
@@ -598,6 +607,10 @@ open (on Android, a foreground service), and reconnect with backoff when the net
 13. **Offer Close and Keep for a session marked `closeOffered`**, wherever you show that session: Close as
     `sessions.close`, Keep as `sessions.keep` (shown only when `sessions.keep` is in `operations`). Choosing Close
     there is the confirmation obligation 12 asks for; a `SESSION_BUSY` answer still goes through obligation 12.
+14. **Show items with `scheduledAt` apart from the items waiting for the user**, with their time, and do not
+    count them or notify for them while they wait (section 5, `inbox.list`). Offer Run now as `inbox.accept` and
+    Cancel as `inbox.ignore`. A client that does not know the field shows them as pending items, and accepting
+    one runs it now.
 14. **Treat OpenSpec text as untrusted** — artifact, delta and spec `content`, task `text` and section `title` are the
     repository's text. Render markdown with raw HTML shown as text, never interpreted. A relative link or image
     reference resolves to nothing (the desktop shows a relative link as text). Open an `http(s)` link only when the

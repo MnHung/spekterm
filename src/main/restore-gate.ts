@@ -9,12 +9,25 @@
 
 const open = new Set<number>()
 const waiters = new Map<number, Set<() => void>>()
+const openListeners = new Set<(contentsId: number) => void>()
 
 export function openRestoreGate(contentsId: number): void {
   if (open.has(contentsId)) return
   open.add(contentsId)
   for (const wake of waiters.get(contentsId) ?? []) wake()
   waiters.delete(contentsId)
+  for (const listener of openListeners) listener(contentsId)
+}
+
+/** Whether the window has restored its sessions now (`HandoffOpener`'s "a window can receive"). */
+export function isRestored(contentsId: number): boolean {
+  return open.has(contentsId)
+}
+
+/** Called each time a window's gate opens: the handoff opener looks again then. */
+export function onRestoreGateOpen(listener: (contentsId: number) => void): () => void {
+  openListeners.add(listener)
+  return () => openListeners.delete(listener)
 }
 
 export function closeRestoreGate(contentsId: number): void {
@@ -46,4 +59,5 @@ export function whenRestored(contentsId: number, timeoutMs: number): Promise<boo
 export function resetRestoreGates(): void {
   open.clear()
   waiters.clear()
+  openListeners.clear()
 }

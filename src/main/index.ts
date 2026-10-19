@@ -1,6 +1,6 @@
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { app, BrowserWindow, Menu, session } from 'electron'
+import { app, BrowserWindow, Menu, powerMonitor, session } from 'electron'
 import { DEFAULT_LANGUAGE, i18n, resolveInitialLanguage, setLanguage } from '@shared/i18n'
 import { applyContentSecurityPolicy } from './content-security-policy'
 import { DirtyStateStore } from './dirty-state'
@@ -30,7 +30,7 @@ import {
   setRemoteWatched,
 } from './ipc/terminal'
 import { broadcastRemoteState, registerRemoteHandlers, requestRenderer } from './ipc/remote'
-import { onIntakeChanged } from './intake-changes'
+import { notifyIntakeChanged, onIntakeChanged } from './intake-changes'
 import { OpenSpecService } from './openspec-service'
 import { AttentionLog } from './remote-attention'
 import { createRemoteHost } from './remote-host'
@@ -59,11 +59,12 @@ import { IntakeSource, inboxRoot } from './intake-source'
 import { configureHandoff, liveSessions } from './handoff-outbox'
 import { refreshIntros } from './handoff-injection'
 import { refreshRelations } from './handoff-relations'
+import { anyWindowReceives, HandoffOpener, OPENER_INTERVAL_MS, whenAnnounced } from './handoff-opener'
 import { HandoffService, registerHandoffService } from './handoff-service'
 import { HandoffCompletion } from './handoff-completion'
 import { inTurnOf, observeWaits, openRequestsOf, pokeWait, refreshWait, subscribeWait } from './agent-wait'
 import { onKeystroke } from './pty-input'
-import { whenRestored } from './restore-gate'
+import { isRestored, onRestoreGateOpen, whenRestored } from './restore-gate'
 import { SessionControl } from './session-control'
 import { cancelCommandEnd, expectCommandEnd, lastProcessChangeAt, runStartedAt } from './session-runs'
 import { sessionExists } from '../shared/lineage/existence'
@@ -506,7 +507,8 @@ void app.whenReady().then(async () => {
   const notifier = new IntakeNotifier({ backend: notifyBackend })
   // **接在到達上，不是接在「有東西變了」或 `DeliverOutcome.notify` 上** —— 後兩者會讓
   // 每一次拒絕跳一則桌面通知、每一則真正進來的都不跳（見 `intake-service.ts` 的 `onArrival`）。
-  intakeService.onArrival((record) => notifier.arrived(record))
+  // Through `whenAnnounced`: a scheduled handoff is announced when it opens, not when it is scheduled.
+  intakeService.onArrival(whenAnnounced((record) => notifier.arrived(record)))
   /**
    * **永久性失敗也要讓使用者知道** —— 「被拒絕的投遞不發通知」那條規則明文的例外，
    * 其適用範圍由 adapter 自己決定（`IntakeSource` 的 `notifyFailures`）。
@@ -519,6 +521,9 @@ void app.whenReady().then(async () => {
   let openInbox: (() => void) | null = null
   let requestAutoAccept: ((adapter: string, id: string, folderId: string) => void) | null = null
   let focusSession: ((sessionId: string) => void) | null = null
+  let receivers: () => number[] = () => []
+  // Created below, once the folder list and preferences it reads are wired; the handlers only reach it later.
+  let opener: HandoffOpener | null = null
   registerIntakeHandlers({
     service: intakeService,
     routing: routingStore,
@@ -530,6 +535,9 @@ void app.whenReady().then(async () => {
     registerOpenInbox: (open) => { openInbox = open },
     registerAutoAccept: (request) => { requestAutoAccept = request },
     registerFocusSession: (focus) => { focusSession = focus },
+    registerReceivers: (list) => { receivers = list },
+    onNewReceiver: () => opener?.tick(),
+    runNow: (adapter, id) => opener?.runNow(adapter, id) ?? false,
   })
 
   /**
@@ -675,7 +683,7 @@ void app.whenReady().then(async () => {
   onKeystroke((sessionId) => {
     if (openRequestsOf(sessionId).length > 0) pokeWait(sessionId)
   })
-  intakeService.onArrival((record) => remoteAttention.onIntake(record))
+  intakeService.onArrival(whenAnnounced((record) => remoteAttention.onIntake(record)))
   onIntakeChanged(() => remoteService.listChanged('inbox'))
   sessionStore.subscribe(() => remoteService.listChanged('sessions'))
   onPtyChange(() => remoteService.listChanged('sessions'))
@@ -833,10 +841,28 @@ void app.whenReady().then(async () => {
     // **與自我介紹的清單同源** —— 分成兩份的話，agent 手上的選項與接收端認得的選項會分岔。
     candidates: () => store.list().map((folder) => ({ id: folder.id, name: folder.name, path: folder.path })),
     agentEventsEnabled: () => preferencesStore.get().agentEvents !== false,
-    requestAutoAccept: (adapter, id, folderId) => requestAutoAccept?.(adapter, id, folderId),
+    onDelivered: () => opener?.tick(),
     acceptReport: (sessionId, summary, identity) => completion.acceptReport(sessionId, summary, identity),
     control: (sourceId, kind, contents, identity, mtimeMs) => sessionControl.deliver(sourceId, kind, contents, identity, mtimeMs),
   })
+  /**
+   * Every automatic handoff opening (`scheduled-handoff`, design D3). "A window can receive" is one window that
+   * both lists the inbox and has restored its sessions; the two come in either order, so both tick.
+   */
+  opener = new HandoffOpener({
+    service: intakeService,
+    candidates: () => store.list().map((folder) => ({ id: folder.id, name: folder.name, path: folder.path })),
+    agentEventsEnabled: () => preferencesStore.get().agentEvents !== false,
+    canReceive: () => anyWindowReceives(receivers(), isRestored),
+    requestOpen: (adapter, id, folderId) => requestAutoAccept?.(adapter, id, folderId),
+    changed: notifyIntakeChanged,
+  })
+  onRestoreGateOpen(() => opener?.tick())
+  const openerTimer = setInterval(() => opener?.tick(), OPENER_INTERVAL_MS)
+  // Wall-clock due times: after a sleep the first tick opens what fell due meanwhile.
+  powerMonitor.on('resume', () => opener?.tick())
+  app.on('will-quit', () => clearInterval(openerTimer))
+
   registerHandoffService(handoffService)
   void handoffService.start().catch((error) => {
     console.error(`[handoff] failed to start: ${String(error)}`)

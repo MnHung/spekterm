@@ -179,6 +179,12 @@ CLI 換版之後要重測。**
 **投遞者沒有回饋管道 —— 因此一個未被告知的約束就是一條死路。** 它會照著手上那份說明去寫、
 被拒絕，然後回報自己已經交出去了。這不是「它應該更小心」，而是它**沒有任何方式**得知那個約束。
 
+> **Since `scheduled-handoff` the agent gets a receipt** for every file (§17) — but that does not retire this
+> section. A receipt reports a refusal **after** it happened, and the agent writing a handoff is often about to be
+> closed: an unstated constraint still costs a refused delivery, and maybe the work. Every constraint is still
+> stated, and since the introduction was tightened, each one has its own assertion (`handoff-intro.test.ts`,
+> each checked by deleting its sentence).
+
 ### 對策不是「這次記得寫全」
 
 一份手寫的、宣稱自己完整的清單會在某一次調整之後與實際判定分岔，**而分岔不會讓任何東西
@@ -582,3 +588,55 @@ it leaves the window:
   a window would stall every handoff and report behind it. Requests run asynchronously behind a per-window restore
   gate (`restore-gate.ts`, bounded at 60 s). A failure after the file was consumed reports both halves itself:
   `reject` and, for a permanent code, `reportFailure`.
+
+## 16. The introduction's size limit: past 10,000 characters the agent keeps only the first 2 KB (`scheduled-handoff`)
+
+**Measured with Claude Code 2.1.303 (2026-10-19), Haiku, nested markers stripped (§11), the hook injected the way
+spekterm injects it (`cat` of a `hookSpecificOutput` JSON).** Re-measure on a CLI upgrade — the failure is silent.
+
+| `additionalContext` | `-p` mode | interactive (real pty) |
+|---|---|---|
+| 9,000 characters | whole | whole |
+| 10,000 characters | whole | whole |
+| 10,001 characters | replaced | replaced |
+| 300 short lines (~2,000 characters) | — | whole: no line limit |
+
+"Replaced" means the **whole** context is swapped for `Output too large (9.8KB). Full output saved to: <file>` and a
+preview of about the first 2,000 characters. The agent does not read the file by itself. For the introduction that
+leaves the opening and half the delivery rules: the repo list, the receipts, the session commands and the report
+paragraph are all gone at once — **not "the last paragraph is lost"**, which is what the first draft of the change
+assumed. The threshold is counted in string length (a binary read shows `originalSize: h.length`), so a non-ASCII
+folder name counts as one character per UTF-16 unit, not per byte.
+
+The binary also carries an 8,000-character / 200-line cut for `additionalContext`; neither applied in these runs
+(9,000 characters and 300 lines both arrived whole).
+
+What the product does about it (`handoff-intro.ts`): a budget test holds a 30-folder introduction at 8,000 characters
+(6,985 when this was written; the test prints the margin), and a run-time hard limit of 9,000 cuts the repo list — never
+the rules — for a workspace too large for the budget, saying how many repos were left out.
+
+How it was found: the change's first draft wrote "the CLI may cut it — not measured", while `docs/PRD.md` §13 had
+recorded "1 萬字, then a file and a 2,000 preview" all along. The reviewer reproduced it; the bisection is in this table.
+
+## 17. Scheduled handoffs and receipts: what fails silently here (`scheduled-handoff`)
+
+- **`Date.parse` is not a validator** (Node 22.22.0): it accepts `2026-02-30T10:00:00+08:00` (rolls over to
+  2 March), `T24:00`, a time without an offset (read as the desktop's local time), `+0800` and a space separator.
+  `parseScheduledAt` checks the form and every component first; `Date.parse` only converts.
+- **`setTimeout` overflows past 2^31−1 ms (about 24.8 days)** — inside the 30-day scheduling bound — and then fires
+  at once. Nothing schedules a timer per handoff: the opener looks every 30 seconds against the wall clock, which
+  also covers a computer that slept through the time.
+- **An open request no window receives is lost.** `intake:autoAccept` goes only to windows that listed the inbox; a
+  handoff read at startup before that used to sit in the inbox as if refused. The opener therefore waits until one
+  window both lists the inbox and has restored its sessions, and looks again when either happens (they come in
+  either order). The control group (`opens-before-window`) shows the loss.
+- **At most once, ever — persisted before anything else.** A handoff whose prefill timed out goes back to pending;
+  any rule that opens pending handoffs without a persisted mark would open another session at every start.
+  `firedAt` is saved before the request is sent, and also when a user's accept issues a ticket (an accept whose
+  session then fails to start is followed by no `attach`, which would otherwise be the next save). And while a
+  ticket is live (issued, or used and not attached yet), a second accept is refused: two sessions would open.
+- **A receipt is written before its file is removed**, on every path (delivered, oversize, thrown), so "file gone"
+  means "receipt exists". A receipt that cannot be written is logged, and the file is still processed: holding a
+  delivery back for its bookkeeping would turn a full disk into a lost handoff. Receipts are written to a
+  dot-prefixed name and renamed (a reader in another process saw 218 torn reads in the control group), and a
+  `held` receipt is rewritten only when its code changes — the 30-second re-read would otherwise churn it.

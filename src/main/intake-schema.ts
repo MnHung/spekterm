@@ -103,6 +103,13 @@ export interface IntakeVerified {
    * 於是一則降級為待處理、數天後才被接受的交接，其快照仍是**交接當下**的樣子。
    */
   source?: HandoffSource
+  /**
+   * When a scheduled handoff opens (epoch ms), **only when it was later than the read time** (`scheduled-handoff`,
+   * design D1). Decided once, at read time: no view compares it with the clock again.
+   */
+  scheduledAt?: number
+  /** The target string the handoff's agent wrote, normalized: resolved again when the handoff opens. */
+  targetText?: string
 }
 
 /** 歸屬的三態定義在 `src/shared/lineage/types.ts`（renderer 也要用）。 */
@@ -184,6 +191,15 @@ export interface DeliveryProvenance {
   firstPartyBody?: boolean
   /** 見 `IntakeVerified.source`。 */
   source?: HandoffSource
+  /** See `IntakeVerified.scheduledAt`. */
+  scheduledAt?: number
+  /** See `IntakeVerified.targetText`. */
+  targetText?: string
+  /**
+   * The record is opened by `HandoffOpener` (`scheduled-handoff`): it gets `opensAt`, the scheduled time or the
+   * read time. Not a verified field — it is the record's state, kept with the dedupe key.
+   */
+  autoOpen?: boolean
 }
 
 /** 第三方逐字撰寫的欄位 —— 投遞者完全控制其內容。 */
@@ -236,6 +252,8 @@ export type IntakeRejection =
   | 'CONTROL_NO_WINDOW'
   /** A close or hibernate of a running session while agent events are off: its turn cannot be observed. */
   | 'CONTROL_UNAVAILABLE'
+  /** A handoff's `at` breaks the scheduling rules: its form, a missing offset, a date that does not exist, the bound. */
+  | 'SCHEDULE_INVALID'
   | 'MALFORMED'
   | 'MISSING_ID'
   | 'INVALID_ID'
@@ -413,6 +431,8 @@ export function parseIntake(
         ...(provenance ? { targetFolderId: provenance.targetFolderId } : {}),
         ...(provenance?.firstPartyBody ? { firstPartyBody: true } : {}),
         ...(provenance?.source ? { source: provenance.source } : {}),
+        ...(provenance?.scheduledAt !== undefined ? { scheduledAt: provenance.scheduledAt } : {}),
+        ...(provenance?.targetText !== undefined ? { targetText: provenance.targetText } : {}),
       },
       authored,
       receivedAt: Date.now(),

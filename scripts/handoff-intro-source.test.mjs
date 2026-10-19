@@ -40,6 +40,8 @@ const GUARDED = [
   { name: 'MAX_DELIVERY_BYTES', file: 'src/main/intake-source.ts' },
   // 完成報告的摘要上限（handoff-completion）—— 子 session 的自我介紹會說出它。
   { name: 'MAX_REPORT_LENGTH', file: 'src/main/handoff-delivery.ts' },
+  // The scheduling bound (scheduled-handoff) — every introduction states it, and the example time avoids its digits.
+  { name: 'MAX_SCHEDULE_AHEAD_DAYS', file: 'src/main/handoff-delivery.ts' },
 ]
 
 function constantValue(file, name) {

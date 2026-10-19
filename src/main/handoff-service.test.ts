@@ -12,6 +12,7 @@ import { ENDED_SOURCE_ID, GLOBAL_SOURCE_ID, HandoffService, type HandoffServiceD
 import { MAX_BODY_LENGTH, MAX_FIRST_PARTY_BODY_LENGTH } from './intake-schema'
 import { IntakeService } from './intake-service'
 import { rescanLog, rescanOnce, silentWatcher } from './intake-source.testkit'
+import { testOpener } from './handoff-opener.testkit'
 import { IntakeStore } from './intake-store'
 
 interface Harness {
@@ -39,12 +40,17 @@ function harness(options: {
   const store = new IntakeStore(path.join(base, 'intake.json'))
   const service = new IntakeService({ store, archiveRoot: archive })
   const autoAccepted: { id: string; folderId: string }[] = []
+  const candidates = (): { id: string; name: string; path: string }[] =>
+    options.candidates ?? [{ id: 'f2', name: 'beta', path: '/repos/beta' }]
+  const opener = testOpener(service, candidates, (_adapter, id, folderId) => autoAccepted.push({ id, folderId }), {
+    eventsEnabled: () => options.eventsEnabled !== false,
+  })
   const handoff = new HandoffService({
     service,
     sourceOf: (sessionId) => options.sources?.[sessionId] ?? null,
-    candidates: () => options.candidates ?? [{ id: 'f2', name: 'beta', path: '/repos/beta' }],
+    candidates,
     agentEventsEnabled: () => options.eventsEnabled !== false,
-    requestAutoAccept: (_adapter, id, folderId) => autoAccepted.push({ id, folderId }),
+    onDelivered: () => opener.tick(),
     ...(options.report ? { acceptReport: options.report } : {}),
     ...(options.control ? { control: options.control } : {}),
     ...(options.sourceTesting ? { sourceTesting: options.sourceTesting } : {}),
@@ -255,12 +261,14 @@ test('交接受待處理總量上限約束 —— 豁免它等於推開一道保
   const store = new IntakeStore(path.join(base, 'intake.json'))
   const service = new IntakeService({ store, archiveRoot: archive, maxPending: 1 })
   const accepted: string[] = []
+  const candidates = (): { id: string; name: string; path: string }[] => [{ id: 'f2', name: 'beta', path: '/repos/beta' }]
+  const opener = testOpener(service, candidates, (_a, id) => accepted.push(id))
   const handoff = new HandoffService({
     service,
     sourceOf: () => ({ folderId: 'f1', label: 'alpha' }),
-    candidates: () => [{ id: 'f2', name: 'beta', path: '/repos/beta' }],
+    candidates,
     agentEventsEnabled: () => true,
-    requestAutoAccept: (_a, id) => accepted.push(id),
+    onDelivered: () => opener.tick(),
   })
   prepareOutbox('s1')
   const write = (name: string, body: string): string => {

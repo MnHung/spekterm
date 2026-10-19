@@ -15,6 +15,7 @@ import {
   writeContext,
 } from './intake-context'
 import { parseIntake } from './intake-schema'
+import { localInstant } from './agent-protocol-copy'
 
 const bases: string[] = []
 after(() => {
@@ -171,5 +172,30 @@ describe('context 檔的寫入', () => {
 
     await assert.rejects(() => writeContext(root, 'a1', buildContext('body', 'n')))
     assert.equal(fs.readFileSync(outside, 'utf8'), 'untouched')
+  })
+})
+
+describe('a scheduled handoff is told both times (scheduled-handoff, D6)', () => {
+  const scheduledAt = Date.parse('2026-10-20T09:00:00Z')
+  const startedAt = Date.parse('2026-10-20T11:30:00Z')
+
+  it('the line states both times outside the fence, and the fenced body is unchanged', () => {
+    const nonce = createNonce()
+    const body = 'finish the change'
+    const doc = buildContext(body, nonce, { scheduledAt, startedAt })
+    const line = `This handoff was scheduled for ${localInstant(scheduledAt)}. It started at ${localInstant(startedAt)}.`
+    assert.ok(doc.contents.includes(line))
+    assert.ok(doc.contents.indexOf(line) < doc.contents.indexOf(fenceOpen(nonce)))
+    assert.equal(fencedBody(doc.contents, nonce), body)
+  })
+
+  it('the times carry the desktop offset and name the same instants', () => {
+    assert.match(localInstant(scheduledAt), /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$/)
+    assert.equal(Date.parse(localInstant(scheduledAt)), scheduledAt)
+  })
+
+  it('no line for an unscheduled handoff', () => {
+    const nonce = createNonce()
+    assert.equal(buildContext('b', nonce).contents.includes('scheduled for'), false)
   })
 })

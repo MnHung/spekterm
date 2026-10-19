@@ -303,6 +303,8 @@ const PROBE_EXPRESSION = `(async () => {
           'accept',
           'attach',
           'dismiss',
+          // scheduled-handoff: Run now on a scheduled handoff.
+          'runNow',
           'settle',
           'dismissNotices',
           'dismissNotice',

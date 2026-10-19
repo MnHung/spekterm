@@ -4,7 +4,7 @@ import path from 'node:path'
 
 import { openNoFollow, resolveNewWithin } from './fs-boundary'
 import { intakeFileStem, isValidIntakeId } from './intake-id'
-import { contextHeader, firstPartyPrompt, thirdPartyPrompt } from './agent-protocol-copy'
+import { contextHeader, firstPartyPrompt, scheduleLine, thirdPartyPrompt } from './agent-protocol-copy'
 
 /**
  * 交給 agent 的那份檔案，與填進輸入處的那一行 prompt。
@@ -69,8 +69,15 @@ export interface ContextDocument {
  *
  * `body` 必須是**攝入時正規化過的那一份** —— 也就是呈現給使用者的同一個字串。
  */
-export function buildContext(body: string, nonce: string): ContextDocument {
-  const header = contextHeader(nonce)
+export function buildContext(
+  body: string,
+  nonce: string,
+  schedule?: { scheduledAt: number; startedAt: number },
+): ContextDocument {
+  // A scheduled handoff's two times are system-composed, so they sit in the header, outside the fence.
+  const header = schedule
+    ? `${contextHeader(nonce)}\n\n${scheduleLine(schedule.scheduledAt, schedule.startedAt)}`
+    : contextHeader(nonce)
   // **界線之內不增減任何字元。** `body` 原樣夾在兩個界線之間。
   const contents = `${header}\n\n${fenceOpen(nonce)}\n${body}\n${fenceClose(nonce)}\n`
   return { nonce, contents }

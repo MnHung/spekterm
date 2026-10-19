@@ -15,11 +15,67 @@ export interface HandoffPayload {
   target: string
   title: string
   body: string
+  /** The `at` the agent wrote, as written. Absent: open on arrival. Parsed by `parseScheduledAt`. */
+  at?: string
 }
 
 export type PayloadResult =
   | { ok: true; value: HandoffPayload }
-  | { ok: false; reason: 'MALFORMED' | 'FIELD_TYPE' }
+  | { ok: false; reason: 'MALFORMED' | 'FIELD_TYPE'; field?: string }
+
+/**
+ * How far ahead a handoff may be scheduled (`scheduled-handoff`). A time further out is more likely a mistyped
+ * month or year than a plan, and it would wait unnoticed. **The introduction derives its number from this
+ * constant** (`handoff-intro-source` guards literals).
+ */
+export const MAX_SCHEDULE_AHEAD_DAYS = 30
+
+const DAY_MS = 24 * 60 * 60 * 1000
+
+/**
+ * The one form `at` may take: ISO 8601 extended, seconds and a fraction optional, **an offset mandatory**.
+ * `Date.parse` alone is not the check (measured on Node 22): it accepts `2026-02-30` (rolls over to 2 March),
+ * `T24:00`, an offset-less time as local time, `+0800` and a space separator.
+ */
+const SCHEDULE_FORM = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-](\d{2}):(\d{2}))$/
+
+export type ScheduleResult =
+  | { kind: 'absent' }
+  | { kind: 'scheduled'; at: number }
+  | { kind: 'invalid'; rule: string }
+
+function daysInMonth(year: number, month: number): number {
+  if (month === 2) return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0 ? 29 : 28
+  return [4, 6, 9, 11].includes(month) ? 30 : 31
+}
+
+/**
+ * Reads `at` against **one** reading of the clock, taken once per delivery (`scheduled-handoff`, design D2): a
+ * time not later than `now` is "absent" — the handoff behaves as one without `at`, and nothing downstream
+ * compares its time again.
+ */
+export function parseScheduledAt(at: string | undefined, now: number): ScheduleResult {
+  if (at === undefined) return { kind: 'absent' }
+  const m = SCHEDULE_FORM.exec(at)
+  if (!m) {
+    return {
+      kind: 'invalid',
+      rule: /(Z|[+-]\d{2}:\d{2})$/.test(at) ? 'not YYYY-MM-DDTHH:MM[:SS] with an offset' : 'no offset (Z or ±HH:MM)',
+    }
+  }
+  const [year, month, day, hour, minute] = [m[1], m[2], m[3], m[4], m[5]].map(Number)
+  const second = m[6] === undefined ? 0 : Number(m[6])
+  if (month < 1 || month > 12) return { kind: 'invalid', rule: 'month out of range' }
+  if (day < 1 || day > daysInMonth(year, month)) return { kind: 'invalid', rule: 'day does not exist in that month' }
+  if (hour > 23) return { kind: 'invalid', rule: 'hour out of range' }
+  if (minute > 59 || second > 59) return { kind: 'invalid', rule: 'minute or second out of range' }
+  if (m[8] !== undefined && (Number(m[8]) > 23 || Number(m[9]) > 59)) return { kind: 'invalid', rule: 'offset out of range' }
+  const ms = Date.parse(at)
+  if (!Number.isFinite(ms)) return { kind: 'invalid', rule: 'not a time' }
+  if (ms <= now) return { kind: 'absent' }
+  if (ms - now > MAX_SCHEDULE_AHEAD_DAYS * DAY_MS) return { kind: 'invalid', rule: `more than ${MAX_SCHEDULE_AHEAD_DAYS} days ahead` }
+  return { kind: 'scheduled', at: ms }
+}
 
 /**
  * 完成報告的摘要上限（`handoff-completion`）。它是給人一眼看完的東西 —— 詳細的內容由 agent 經訊息
@@ -133,7 +189,9 @@ export function parseHandoffPayload(contents: string): PayloadResult {
     return { ok: false, reason: 'FIELD_TYPE' }
   }
   const title = typeof source.title === 'string' ? source.title : ''
-  return { ok: true, value: { target, title, body } }
+  const at = source.at
+  if (at !== undefined && typeof at !== 'string') return { ok: false, reason: 'FIELD_TYPE', field: 'at' }
+  return { ok: true, value: { target, title, body, ...(at !== undefined ? { at } : {}) } }
 }
 
 /**
@@ -149,9 +207,13 @@ export function parseHandoffPayload(contents: string): PayloadResult {
  * 內容摘要同時滿足兩端：重送冪等、不同內容自然不同。摘要**取自正規化後的三個欄位而非原始
  * 位元組** —— 否則同一份內容改一個空白就變成另一則交接。
  */
-export function handoffIntakeId(sessionId: string, payload: HandoffPayload): string {
+export function handoffIntakeId(sessionId: string, payload: HandoffPayload, scheduledAt?: number): string {
+  // The schedule joins the digest only when present, so every handoff id from before scheduling is unchanged,
+  // and the same body at two times is two handoffs.
+  const fields: unknown[] = [payload.target, payload.title, payload.body]
+  if (scheduledAt !== undefined) fields.push(scheduledAt)
   const digest = createHash('sha256')
-    .update(JSON.stringify([payload.target, payload.title, payload.body]), 'utf8')
+    .update(JSON.stringify(fields), 'utf8')
     .digest('hex')
     .slice(0, DIGEST_CHARS)
   return `${sessionId}-${digest}`
@@ -170,6 +232,8 @@ export interface DeliveryInput {
   targetFolderId: string
   /** 來源 session 與它於此刻的快照（`session-lineage`）。識別碼不合法時缺席。 */
   source?: HandoffSource
+  /** When the handoff opens, if later than the read time (`parseScheduledAt`). */
+  scheduledAt?: number
 }
 
 /** 交給 `deliver()` 的兩樣東西：投遞的文字，以及接收端算出來的 provenance。 */
@@ -193,7 +257,7 @@ export function buildDelivery(input: DeliveryInput): {
     // 我們指定的 `id` 覆蓋 payload 裡任何自稱的 id。
     contents: JSON.stringify({
       ...original,
-      id: handoffIntakeId(input.sessionId, input.payload),
+      id: handoffIntakeId(input.sessionId, input.payload, input.scheduledAt),
       title: input.payload.title,
       body: input.payload.body,
       actor: input.originLabel,
@@ -205,6 +269,10 @@ export function buildDelivery(input: DeliveryInput): {
       // 不是一份要 agent 先抄一遍的第三方文字。
       firstPartyBody: true,
       ...(input.source ? { source: input.source } : {}),
+      // Kept so the target can be resolved again when the handoff opens (`handoff-opener.ts`).
+      targetText: normalizeAuthored(input.payload.target),
+      ...(input.scheduledAt !== undefined ? { scheduledAt: input.scheduledAt } : {}),
+      autoOpen: true,
     },
   }
 }

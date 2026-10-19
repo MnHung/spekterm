@@ -10,7 +10,7 @@ Each item waits until you read it. When you accept it, spekterm opens a `claude`
 confirm, with the message as context and a first prompt typed in — but **not sent**. You press `Enter`.
 
 Open the inbox with **Handoffs** on the activity bar (the column at the far left). The entry shows how
-many items are waiting.
+many items are waiting for you.
 
 ## Reviewing an item
 
@@ -29,6 +29,18 @@ reread what you accepted.
 
 Message text written by someone else is never sent to an agent on its own. You review it first, and the
 first prompt waits for your `Enter`.
+
+## Scheduled handoffs
+
+An agent can hand work off to a later time ([Handoffs](/docs/using/handoffs/#handing-work-off-to-a-later-time)).
+Until that time it is listed under **Scheduled**, earliest first, with when it opens, where it came from,
+the folder it opens in, and its full text. It is not counted on the inbox entry and raises no notification
+while it waits.
+
+- **Run now** opens it at once, as its time would have.
+- **Cancel** drops it: it never opens.
+
+A scheduled handoff counts toward the inbox's limit on waiting items, like every other item.
 
 ## Notifications
 

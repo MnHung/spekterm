@@ -673,9 +673,10 @@ session 脈絡裡送出的，彙整成一份跨數十天、跨數十個專案的
 > 啟動，母、子、兄弟之間用 **Claude Code 自己的本機訊息功能**以名字互相聯絡，spekterm 只提供
 > 「地址穩定」與「誰是誰」（關係檔）。代價是 agent 的終端標題被固定為那個名字。
 >
-> 未做：**以工具而非寫檔投遞**（MCP）—— 代價是 agent **收不到投遞的結果**（目標查無、格式不合
-> 一律不知道），那條缺口明文寫在 `agent-handoff-source` 的規格裡，失敗對**使用者**可見、
-> 對 agent 不可見。
+> 未做：**以工具而非寫檔投遞**（MCP）。Since `scheduled-handoff` the agent learns each delivery's outcome from a
+> **receipt** written beside its outbox (accepted, scheduled, duplicate, rejected with the reason, or held); a
+> failure found only when a handoff opens later still reaches the user, not the receipt. A handoff may also
+> name a **later time**, and opens when due or at the next start (spekterm does not run while closed).
 >
 > **Slack 是第一個外部 producer**（`slack-mention-intake`）：有人在 Slack 提及使用者本人時，
 > 那件事成為收件匣的一則待處理項目，帶著該提及所在討論串的內容（**上界固定於被提及的那一則**）。
@@ -776,7 +777,7 @@ session 脈絡裡送出的，彙整成一份跨數十天、跨數十個專案的
 | handoff auto-spawn 被濫用執行指令 | 信任邊界（§7.6）+ cascade 護欄 |
 | **`--name` 撞名自動改名**（Claude Code v2.1.232 起：同機已有活著的同名 session 時，新的會被加上後綴） | spekterm 自己的 session 之間已由 `decidePeerName` 避開撞名；**與 spekterm 之外的 claude session 撞名時，實際名字會與關係檔記錄的名字不同，母子訊息靜默送錯或送不到**。待確認：是否能從 SessionStart 取回實際名字 |
 | **組織可以關掉注入的 hooks**（`allowManagedHooksOnly`、`disableAllHooks`） | Team／Enterprise 使用者的對話 view 狀態、交接的自我介紹全部失效，而沒有錯誤。待評估：偵測並呈現 |
-| **`SessionStart` 的 `additionalContext` 上限 1 萬字**（超過存成檔案、只留前 2000 字預覽） | 交接自我介紹＋repo 清單隨 folder 數成長；需量測目前長度與上限的距離 |
+| **`SessionStart` 的 `additionalContext` 上限 1 萬字**（超過存成檔案、只留前 2000 字預覽） | Measured (Claude Code 2.1.303, `-p` and interactive): 10,000 characters arrive whole, 10,001 are replaced by the preview, so the agent loses every rule after the opening. The introduction groups its repo list by directory, a test holds a 30-folder introduction within 8,000 characters (6,985 at `scheduled-handoff`), and a run-time limit of 9,000 cuts the list, never the rules (`docs/lessons/handoff.md` §16) |
 
 ---
 

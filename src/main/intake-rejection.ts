@@ -59,6 +59,7 @@ export function isPermanentRejection({ code, notify }: RejectionOutcome): boolea
     case 'CONTROL_TARGET_NOT_FOUND': // The same name, resent, names the same nothing.
     case 'CONTROL_NOT_ALLOWED':
     case 'CONTROL_FAILED': // The session is gone, or the interface failed on it.
+    case 'SCHEDULE_INVALID': // The same `at`, resent, breaks the same rule.
       return true
 
     // ── 暫時：狀態或設定改變後可能成功 ──────────────────────────────────────

@@ -9,9 +9,11 @@ import {
   outboxKindOf,
   parseHandoffPayload,
   parseReport,
+  parseScheduledAt,
 } from './handoff-delivery'
 import { reportIdentity, type ReportDecision } from './handoff-completion'
-import { clearOutbox, outboxRoot, sourceSessionOf } from './handoff-outbox'
+import { clearOutbox, outboxRoot, receiptsDir, sourceSessionOf } from './handoff-outbox'
+import { receiptFor, writeReceipt } from './handoff-receipt'
 import { resolveTarget, type TargetCandidate } from './handoff-target'
 import type { DeliverOutcome, IntakeService } from './intake-service'
 import { sourceTitle, type HandoffSource as LineageSource } from './intake-schema'
@@ -72,12 +74,11 @@ export interface HandoffServiceDeps {
   candidates: () => TargetCandidate[]
   agentEventsEnabled: () => boolean
   /**
-   * 到達即接受：請 renderer 在該 folder 建立 session。
-   *
-   * **建立不由主行程做** —— session 清單的權威在 renderer（見 `ipc/intake` 檔頭），主行程自行
-   * 建立的 session 會在下一次 replace 時被抹掉，**而 pty 還活著**。
+   * A handoff was recorded: let `HandoffOpener` open what is due (`scheduled-handoff`, design D3). **Opening is
+   * not done here**: a request no window receives is lost, and the opener is the one owner that waits for a
+   * window and opens each handoff at most once.
    */
-  requestAutoAccept: (adapter: string, id: string, folderId: string) => void
+  onDelivered: () => void
   /**
    * 採納一份完成報告（`handoff-completion`）。未提供 ⇒ 報告一律被當成不認得的種類拒絕。
    * `identity` 讓同一份投遞檔被讀兩次時只採納一次。
@@ -128,6 +129,13 @@ export class HandoffService {
        * 相同 —— 而使用者會以為工作已經交出去了。
        */
       notifyFailures: true,
+      // Every file read gets a receipt before it is removed (`handoff-receipt`), so the agent can check what
+      // became of it instead of assuming.
+      onOutcome: (file, outcome) => {
+        const sessionId = sourceSessionOf(file)
+        if (!sessionId) return
+        writeReceipt(receiptsDir(sessionId), receiptFor(file, outcome, Date.now()))
+      },
       ...this.#deps.sourceTesting,
     })
     await this.#source.start()
@@ -152,6 +160,8 @@ export class HandoffService {
   /** 一份投遞檔 → 一次 `deliver()`。 */
   async deliverFile(contents: string, file: string, state?: FileState): Promise<DeliverOutcome> {
     const { service } = this.#deps
+    // One reading of the clock per delivery: whether a handoff is scheduled is decided against it, once.
+    const now = Date.now()
 
     const sessionId = sourceSessionOf(file)
     // 不在 `<root>/<sessionId>/` 正下方 ⇒ 不是一份交接。消費掉它，否則它每次掃描都再走一趟。
@@ -175,7 +185,7 @@ export class HandoffService {
       // **`MALFORMED` 不消費、也不通知** —— 可能只是寫到一半，而那種項目每次補寫都會再被讀到，
       // 逐次通知沒有上界（`agent-intake` 的例外條款明文排除它）。
       if (payload.reason === 'MALFORMED') return { ok: false, code: 'MALFORMED', consume: false, notify: false }
-      return service.reject('FIELD_TYPE', sessionId, 'target / body', { adapter: HANDOFF_ADAPTER })
+      return service.reject('FIELD_TYPE', sessionId, payload.field ?? 'target / body', { adapter: HANDOFF_ADAPTER })
     }
 
     const source = this.#deps.sourceOf(sessionId)
@@ -190,6 +200,14 @@ export class HandoffService {
      * `raw.target` 則會破壞「payload 自稱的一律不採信」的姿態。
      */
     const failure = { target: payload.value.target, origin: originLabel }
+
+    const schedule = parseScheduledAt(payload.value.at, now)
+    if (schedule.kind === 'invalid') {
+      return {
+        ...service.reject('SCHEDULE_INVALID', payload.value.target, `at: ${schedule.rule}`, { adapter: HANDOFF_ADAPTER, ...failure }),
+        failure,
+      }
+    }
 
     const target = resolveTarget(payload.value.target, this.#deps.candidates())
     if (!target.ok) {
@@ -227,6 +245,7 @@ export class HandoffService {
       originLabel,
       targetFolderId: target.folderId,
       source: lineageSourceOf(sessionId, source),
+      ...(schedule.kind === 'scheduled' ? { scheduledAt: schedule.at } : {}),
     })
 
     // **失敗的診斷欄位一律帶上** —— 共用路徑的拒絕（本文過長、識別碼不合法…）同樣要說得出
@@ -235,8 +254,8 @@ export class HandoffService {
     if (!outcome.ok || !outcome.record) return { ...outcome, failure }
 
     // **沒有上限**（`handoff-session-lifecycle`，使用者裁決）：每一則合法的交接都到達即建立
-    // session 並送出。此前這裡有一個全域的滾動窗口，超過者退回待處理。
-    this.#deps.requestAutoAccept(HANDOFF_ADAPTER, outcome.record.id, target.folderId)
+    // session 並送出 —— once a window can receive it, and a scheduled one when its time comes (the opener).
+    this.#deps.onDelivered()
     return outcome
   }
 
@@ -266,7 +285,8 @@ export class HandoffService {
     }
     const decision = accept(sessionId, report.summary, reportIdentity(file, mtimeMs, contents))
     if (decision === 'not-handoff') return service.reject('REPORT_NOT_HANDOFF', sessionId, undefined, { adapter: HANDOFF_ADAPTER })
-    return { ok: true, consume: true, notify: false }
+    // A repeated report changes nothing; its receipt says so (`handoff-receipt`).
+    return { ok: true, consume: true, notify: false, ...(decision === 'duplicate' ? { duplicate: true } : {}) }
   }
 }
 

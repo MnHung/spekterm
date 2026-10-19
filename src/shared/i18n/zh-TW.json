@@ -659,6 +659,13 @@
     "chooseFolder": "要開在哪個資料夾",
     "choosePlaceholder": "選擇資料夾…",
     "chosenFolderGone": "你選的資料夾已經不在工作區裡",
+    "opening": "這則交接已經在開新的 session 了",
+    "scheduledLabel": "已排程",
+    "scheduledItemLabel": "已排程的交接：{{title}}",
+    "scheduledFor": "{{time}} 開啟",
+    "opensInFolder": "開在 {{name}}",
+    "runNow": "立即執行",
+    "cancelScheduled": "取消",
     "clearOpened": "從收件匣清除",
     "unresolved": "判斷不出這一則屬於哪個資料夾",
     "unresolvedFolderGone": "這條規則指向的資料夾已經不在工作區裡",
@@ -685,7 +692,8 @@
       "CONTROL_NOT_ALLOWED": "指定了一個不是它交接出去的 session",
       "CONTROL_FAILED": "無法對那個 session 執行",
       "CONTROL_NO_WINDOW": "沒有開著的視窗可以對 session 執行",
-      "CONTROL_UNAVAILABLE": "無法等到那個 session 的這一輪結束 —— agent 的事件回報已關閉"
+      "CONTROL_UNAVAILABLE": "無法等到那個 session 的這一輪結束 —— agent 的事件回報已關閉",
+      "SCHEDULE_INVALID": "指定的時間不合規則"
     },
     "rules": {
       "label": "Routing 規則",

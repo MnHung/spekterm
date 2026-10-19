@@ -35,6 +35,117 @@ const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
  * 沒有指名的話，一個「因為別的理由紅了」的 mutation 會被當成通過 —— 而那正是這支腳本要防的。
  */
 export const MUTATIONS = [
+  // ── scheduled-handoff ──
+  {
+    name: 'scheduled-opens-at-once',
+    section: 'runScheduled',
+    file: 'src/main/handoff-delivery.ts',
+    from: `  if (ms <= now) return { kind: 'absent' }`,
+    to: `  if (ms > 0) return { kind: 'absent' }`,
+    expectRed: 'a scheduled handoff creates no session while it waits',
+    why: '**Ignore the time**: every handoff opens on arrival, the schedule is dropped.',
+  },
+  {
+    name: 'scheduled-announced-early',
+    section: 'runScheduled',
+    file: 'src/main/handoff-opener.ts',
+    from: `    if (record.content?.verified.scheduledAt !== undefined && record.firedAt === undefined) return`,
+    to: `    void record`,
+    expectRed: 'a scheduled handoff raises no notification while it waits',
+    why: '**Announce on scheduling** (design D4): the user is told of work that will not start for a day.',
+  },
+  {
+    name: 'scheduled-counted',
+    section: 'runScheduled',
+    file: 'src/renderer/src/shell/intake/intake-state.tsx',
+    from: `      pendingCount: snapshot.items.filter(isWaitingForUser).length,`,
+    to: `      pendingCount: snapshot.items.filter((item) => item.state === 'pending').length,`,
+    expectRed: 'a scheduled handoff is not counted in the badge',
+    why: '**Count scheduled items in the badge**: it asks for attention nothing needs yet.',
+  },
+  {
+    name: 'scheduled-section-hidden',
+    section: 'runScheduled',
+    file: 'src/renderer/src/shell/intake/IntakeOverlay.tsx',
+    from: `  const scheduled = snapshot.items.filter(isScheduled).sort((a, b) => (a.scheduledAt ?? 0) - (b.scheduledAt ?? 0))`,
+    to: `  const scheduled = snapshot.items.filter(() => false)`,
+    expectRed: 'the inbox lists scheduled handoffs in their own section',
+    why: '**No scheduled section**: a waiting handoff is invisible, and cannot be run or cancelled.',
+  },
+  {
+    name: 'scheduled-unsorted',
+    section: 'runScheduled',
+    file: 'src/renderer/src/shell/intake/IntakeOverlay.tsx',
+    from: `  const scheduled = snapshot.items.filter(isScheduled).sort((a, b) => (a.scheduledAt ?? 0) - (b.scheduledAt ?? 0))`,
+    to: `  const scheduled = snapshot.items.filter(isScheduled)`,
+    expectRed: 'scheduled handoffs are listed earliest first',
+    why: '**Keep the inbox order** (newest arrival first): the next handoff to open is not on top.',
+  },
+  {
+    name: 'scheduled-cancel-dead',
+    section: 'runScheduled',
+    file: 'src/renderer/src/shell/intake/IntakeOverlay.tsx',
+    from: `          aria-label={t('intake.cancelScheduled')}\n          onClick={() => void window.workspace.intake.dismiss(item.id, item.adapter).then(onChanged)}`,
+    to: `          aria-label={t('intake.cancelScheduled')}\n          onClick={() => void onChanged()}`,
+    expectRed: 'Cancel removes a scheduled handoff from the inbox',
+    why: '**Cancel does nothing**: the handoff still opens at its time.',
+  },
+  {
+    name: 'scheduled-run-now-dead',
+    section: 'runScheduled',
+    file: 'src/main/ipc/intake.ts',
+    from: `    return { ok: deps.runNow?.(adapter, id) ?? false }`,
+    to: `    return { ok: false }`,
+    expectRed: 'Run now opens a scheduled handoff in its target folder at once',
+    why: '**Run now does nothing**: the user waits for a time they wanted to skip.',
+  },
+  {
+    name: 'scheduled-no-interval',
+    section: 'runScheduled',
+    file: 'src/main/index.ts',
+    from: `  const openerTimer = setInterval(() => opener?.tick(), OPENER_INTERVAL_MS)`,
+    to: `  const openerTimer = setInterval(() => {}, OPENER_INTERVAL_MS)`,
+    expectRed: 'a due handoff opens a new session within one minute of its time',
+    why: '**No periodic look**: a handoff falls due and nothing opens it until the next delivery or start.',
+  },
+  {
+    name: 'receipts-not-written',
+    section: 'runScheduled',
+    file: 'src/main/handoff-service.ts',
+    from: `        writeReceipt(receiptsDir(sessionId), receiptFor(file, outcome, Date.now()))`,
+    to: `        void receiptFor`,
+    expectRed: 'an accepted handoff has an accepted receipt, and its file is gone',
+    why: '**No receipts**: the agent is back to not knowing what became of its file.',
+  },
+  {
+    name: 'fired-opens-again',
+    section: 'runScheduledStart',
+    // Forgetting it on load, not skipping the check: the opener checks firedAt twice (isDue and markFired), so
+    // removing one check alone stays green — the first version of this mutation did exactly that.
+    file: 'src/main/intake-store.ts',
+    from: `      ...(isInstant(e.firedAt) ? { firedAt: e.firedAt } : {}),`,
+    to: ``,
+    expectRed: '(b) a handoff whose automatic opening was used does not open again at start',
+    why: '**Forget the one automatic opening**: a handoff whose prefill timed out opens another session at every start.',
+  },
+  {
+    name: 'opens-before-window',
+    section: 'runScheduledStart',
+    file: 'src/main/index.ts',
+    from: `    canReceive: () => anyWindowReceives(receivers(), isRestored),`,
+    to: `    canReceive: () => true,`,
+    expectRed: '(c) a handoff file left in an outbox before start opens after the window restored',
+    why: '**Open without a window**: a handoff read at start sends its open request to no one, and is lost.',
+  },
+  {
+    name: 'schedule-line-missing',
+    section: 'runScheduledStart',
+    file: 'src/main/ipc/intake.ts',
+    from: `        buildContext(bodyOf(intake), nonce, scheduledAt === undefined ? undefined : { scheduledAt, startedAt: Date.now() }),`,
+    to: `        buildContext(bodyOf(intake), nonce),`,
+    expectRed: '(a) its context states when it was scheduled for and when it started',
+    why: '**Not told the times**: a handoff opened days late acts as if no time had passed.',
+  },
   // ── agent-session-control ──
   {
     name: 'control-self-close-not-offered',
@@ -317,12 +428,14 @@ export const MUTATIONS = [
   },
   {
     name: 'handoff-stays-pending',
-    file: 'src/main/handoff-service.ts',
+    file: 'src/main/handoff-opener.ts',
     section: 'runHandoff',
     // 上限已於 handoff-session-lifecycle 移除 —— 此前這個 mutation 下手在上限的判斷上，
-    // 現在直接拿掉到達即接受本身（那是這條斷言唯一要驗的事）。
-    from: `    this.#deps.requestAutoAccept(HANDOFF_ADAPTER, outcome.record.id, target.folderId)`,
-    to: `    void this.#deps.requestAutoAccept`,
+    // 現在直接拿掉到達即接受本身（那是這條斷言唯一要驗的事）。Since scheduled-handoff every opening goes
+    // through the opener, so the request is removed there: removing only the tick after delivery would leave the
+    // 30-second tick to open it, and the assertion would stay green.
+    from: `    this.#deps.requestOpen(record.adapter, record.id, target.folderId)`,
+    to: `    void this.#deps.requestOpen`,
     expectRed: '交接於到達時直接建立 session（使用者未執行任何接受動作）',
     why: '**拿掉自動接受。** 交接退回成一則普通的待處理項目 —— 使用者剛親口交辦的事，他得再同意一次。',
   },
@@ -362,8 +475,8 @@ export const MUTATIONS = [
     name: 'oversize-not-reported',
     file: 'src/main/intake-source.ts',
     section: 'runHandoffFailure',
-    from: `      this.#reportIfPermanent(\n        this.#service.rejectOversize(path.basename(file), { adapter: this.#adapter }),\n      )`,
-    to: `      this.#service.rejectOversize(path.basename(file), { adapter: this.#adapter })`,
+    from: `      this.#reportIfPermanent(oversize)`,
+    to: `      void oversize`,
     expectRed: 'TOO_LARGE：共用攝入路徑上的永久性失敗同樣發出通知',
     why: '**把通知接回 adapter 的 `deliver`。** 超過檔案大小上限的投遞在 `readBounded` 就被擋下\n'
       + '> 並消費掉，它**永遠不會走到** `deliver` —— 於是 `TOO_LARGE` 結構上通知不出來，\n'
@@ -760,8 +873,8 @@ export const MUTATIONS = [
     name: 'source-unvalidated-on-load',
     file: 'src/main/intake-store.ts',
     command: 'test',
-    from: `      content: isContent(content) ? withSafeSource(content) : null,`,
-    to: `      content: isContent(content) ? content : null,`,
+    from: `      content: isContent(content) ? withSafeSchedule(withSafeSource(content)) : null,`,
+    to: `      content: isContent(content) ? withSafeSchedule(content) : null,`,
     expectRed: '載入時丟棄不合法的來源（識別碼不是 UUID），record 保留',
     why: '**載入收件匣時不驗來源。** 一個不合法的識別碼會被寫進子 session，在記憶體裡活到重啟才被 `parseSessionEntry` 丟掉 —— 關係靜默消失。',
   },

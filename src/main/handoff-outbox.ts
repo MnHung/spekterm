@@ -55,6 +55,14 @@ export function relationsFile(sessionId: string): string {
   return dir ? path.join(dir, `${sessionId}.json`) : ''
 }
 
+/**
+ * A session's receipts directory (`handoff-receipt`): beside the outbox, never in it — a receipt is a `.json`
+ * file and would be read as a delivery there.
+ */
+export function receiptsDir(sessionId: string): string {
+  return handoffRootPath ? path.join(handoffRootPath, 'receipts', sessionId) : ''
+}
+
 /** 某個 session 的自我介紹檔。**在 outbox 之外** —— 放進去會被當成一份投遞。 */
 export function introFile(sessionId: string): string {
   return handoffRootPath ? path.join(handoffRootPath, 'intro', `${sessionId}.json`) : ''
@@ -138,7 +146,7 @@ export function liveSessions(): string[] {
  */
 export function clearOutbox(sessionId: string): void {
   live.delete(sessionId)
-  for (const target of [outboxDir(sessionId), introFile(sessionId)]) {
+  for (const target of [outboxDir(sessionId), introFile(sessionId), receiptsDir(sessionId)]) {
     if (!target) continue
     try {
       fs.rmSync(target, { recursive: true, force: true })

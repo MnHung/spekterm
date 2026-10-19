@@ -7,7 +7,7 @@ import test from 'node:test'
 import { composeInjection } from './agent-injection'
 import { prepareEventInjection, configureAgentEvents } from './agent-events'
 import { prepareHandoffInjection, refreshIntros } from './handoff-injection'
-import { configureHandoff, introFile, outboxDir, resetHandoffState } from './handoff-outbox'
+import { configureHandoff, introFile, outboxDir, receiptsDir, resetHandoffState } from './handoff-outbox'
 
 const folders = [{ name: 'alpha', path: '/repos/alpha' }]
 
@@ -72,8 +72,9 @@ test('清單變動時重寫活著的 session 的自我介紹', () => {
 
   refreshIntros(['s1'], [...folders, { name: 'beta', path: '/repos/beta' }], () => undefined)
 
-  assert.ok(introContext('s1').includes('beta'))
-  assert.ok(introContext('s1').includes('/repos/beta'))
+  // The list is grouped by directory: `/repos` once, then `beta` on a line of its own.
+  assert.match(introContext('s1'), /^ {4}beta$/m)
+  assert.match(introContext('s1'), /^ {2}\/repos$/m)
 })
 
 test('上一輪未被消費的投遞不會在重建時被清掉', () => {
@@ -121,7 +122,15 @@ test('folder 清單變動後重寫的自我介紹仍含完成報告的說明', (
     (id) => id === 's1',
   )
   assert.ok(introContext('s1').includes('"kind": "report"'), '完成報告那一段仍在')
-  assert.ok(introContext('s1').includes('/repos/beta'), '前置：真的重寫了（新 folder 在）')
+  assert.match(introContext('s1'), /^ {4}beta$/m, '前置：真的重寫了（新 folder 在）')
+})
+
+test('the introduction written at spawn names the receipts directory (handoff-receipt)', () => {
+  setup()
+  prepareHandoffInjection('s1', folders)
+  assert.ok(introContext('s1').includes(receiptsDir('s1')))
+  refreshIntros(['s1'], folders, () => undefined)
+  assert.ok(introContext('s1').includes(receiptsDir('s1')), 'and still after a rewrite')
 })
 
 test('注入的環境變數含關係檔位置', () => {
