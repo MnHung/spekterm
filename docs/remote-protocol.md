@@ -78,7 +78,7 @@ Stable strings; branch on them, show `message` only as a detail.
 | `NO_WINDOW` | The desktop has no window (macOS after closing it); session actions cannot be carried out. |
 | `NO_CONVERSATION` | The session has no conversation (a shell). |
 | `NOT_WATCHING` | A reply to a conversation this connection is not watching. |
-| `WAIT_STATE` | The agent cannot take a reply now; `detail.state` is the wait state. |
+| `WAIT_STATE` | The agent cannot take a reply, or a filled-in prompt's submit, now; `detail.state` is the wait state. |
 | `FOLDER_REQUIRED` | Accepting an inbox item needs the folder the user chose. |
 | `CREATE_FAILED` | The desktop could not carry out a session action (create, wake, hibernate, close); `message` says why. |
 | `TIMEOUT` | The desktop's interface did not answer within 15 seconds. |
@@ -88,6 +88,9 @@ Stable strings; branch on them, show `message` only as a detail.
 | `TOO_MANY` | A session already holds the most attachments not sent yet (`detail.limit`). |
 | `UNSUPPORTED_TYPE` | An uploaded file is not an image (PNG, JPEG, GIF, WebP), a PDF or UTF-8 text. |
 | `SESSION_BUSY` | Hibernating or closing a session that is not idle, without `force`. Nothing happened. `detail.reason` says why (section 5, `sessions.hibernate`). |
+| `PREFILL_GONE` | No filled-in prompt with that id waits in the session now: it was sent, its item was cleared, the session ended, or it was never filled in (section 5, `sessions.submitPrefill`). |
+| `PREFILL_EDITED` | Something was typed into the session around its filled-in prompt; only the desktop can show what its input box holds. Send it there. |
+| `PREFILL_PENDING` | A reply to a session that holds a filled-in prompt nobody has sent; it would be sent together with it. `detail.prefillId` names the prompt when the session list shows it, `detail.edited` as there (section 5, `conversation.send`). |
 | `INTERNAL` | Anything else. |
 
 ### Close codes
@@ -121,7 +124,7 @@ has not authenticated.
 
 `operations`: the operations this desktop accepts, other than `hello` and `pair`. Show a control only when its
 operation is listed: an older desktop does not have `sessions.rename`, `sessions.hibernate`, `sessions.close`,
-`attachments.put`, `conversation.answer` or `openspec.watch`, and answers them `UNKNOWN_OPERATION`. Protocol version 1 grows only by new fields,
+`attachments.put`, `conversation.answer`, `openspec.watch` or `sessions.submitPrefill`, and answers them `UNKNOWN_OPERATION`. Protocol version 1 grows only by new fields,
 operations, event values and error codes (section 9, obligation 7).
 
 ### `pair`
@@ -146,7 +149,7 @@ under a name the desktop chooses (`attachments.put`). No operation takes a path 
 `p`: `{}` → `r`: `{ "window": bool, "folders": [Folder], "sessions": [Session] }`
 
 - `Folder`: `{ id, name, branch: string|null, pinned: bool, hasOpenSpec: bool }`, in rail order.
-- `Session`: `{ id, folderId: string|null (null = the global item), target: "claude"|"shell", label, running: bool, wait?, seen?, lifecycle?, lineage?, closeOffered?, background? }`
+- `Session`: `{ id, folderId: string|null (null = the global item), target: "claude"|"shell", label, running: bool, wait?, seen?, lifecycle?, lineage?, closeOffered?, background?, prefill? }`
   - `wait` (agent sessions): `"ready"` (waiting for input), `"busy"`, `"awaiting-choice"` (a permission prompt), `"unknown"`.
   - `seen` (present, `true` or `false`, exactly while `wait` is `"ready"`; absent otherwise): whether someone has
     looked at the session since its agent's last turn ended. Looking is the session displayed in the desktop's
@@ -184,6 +187,21 @@ under a name the desktop chooses (`attachments.put`). No operation takes a path 
       whitespace become one space, at most 200 characters. It is the agent's (or its CLI's) own text and may contain
       paths and URLs: show it as plain text (obligation 15).
     - `id`: the agent's task id, stable while the task runs. Use it to keep a row in place across lists.
+  - `prefill` (a running agent session only; absent otherwise): `{ id, text, intake: { adapter, id }, edited: bool }`,
+    the first prompt of an accepted inbox item that the desktop filled into the agent's input box and that **nobody
+    has sent yet** — the desktop shows it as "not sent". Send it with `sessions.submitPrefill` (obligation 16).
+    - Present exactly while the desktop shows that label and the item is still in `inbox.list` for this session.
+      A third-party item's prompt is listed from the moment it is written (the desktop never sends it). An agent's
+      handoff is sent by the desktop itself; it is listed only if that did not take (no start seen within about ten
+      seconds). It goes when the agent starts working (whoever pressed Enter), when the user clears the item on the
+      desktop, and when the session's process ends. A desktop older than the field never sends it.
+    - `id` names this one fill; a later fill of the same session has another.
+    - `text` is exactly what was written into the input box. It names a file on the desktop that holds the item's
+      body: show it as plain text. The body itself is the item's (`inbox.list`).
+    - `intake` is the item it came from.
+    - `edited: true` — something was typed into the session after the prompt was filled in, or before it since the
+      session's process started, so the input box may hold more than `text`. Show it as one to finish at the
+      desktop; `sessions.submitPrefill` refuses it.
 - With no window, `window` is `false` and `sessions` is empty.
 - Changes arrive as `sessions.changed` events carrying the whole list.
 
@@ -249,6 +267,34 @@ the offer is withdrawn, the desktop stops showing it, and the session keeps runn
 Quietly, as every session operation. A session with no offer answers with no effect. The mark leaves the list in
 `sessions.changed`. Errors: `NOT_FOUND`, `NO_WINDOW`, `TIMEOUT`, `CREATE_FAILED`, `BAD_PARAMS` (no `sessionId`).
 
+### `sessions.submitPrefill`
+
+`p`: `{ "sessionId", "prefillId" }` → `r`: `{ "outcome": "confirmed" | "sent" }`
+
+Sends the session's filled-in prompt (`Session.prefill`, `prefillId` = its `id`) by writing **only the submit key**,
+as if the user pressed Enter at the desktop. Show the user what it sends first (obligation 16). The checks, in
+order; each refusal writes nothing:
+
+| Check | Error |
+|---|---|
+| `sessionId` and `prefillId` are non-empty strings | `BAD_PARAMS` |
+| the desktop has a window | `NO_WINDOW` |
+| the session exists and runs | `NOT_FOUND` |
+| its listed `prefill` exists and has that `id` | `PREFILL_GONE` |
+| it is not `edited` | `PREFILL_EDITED` |
+| the agent waits for input, read again from its events now | `WAIT_STATE` (`detail.state`) |
+
+- **A choice usually answers `PREFILL_GONE`, not `WAIT_STATE`**: the desktop reads an agent that asks for a choice as
+  having started on the prompt, so the prompt is no longer listed. `WAIT_STATE` answers a choice the desktop sees
+  only at that moment, and a working or unknown agent. Either way nothing is written: never submit into a choice.
+- The checks and the key are queued with the session's replies and answers, one at a time.
+- **Outcomes**: `confirmed` — the agent started working within 3 seconds. `sent` — the key was written and no start
+  was seen yet; the prompt stays listed, and sending again is allowed.
+- What follows is the desktop's own: the item leaves the inbox, the desktop's "not sent" label goes, and the session
+  list loses `prefill` (`sessions.changed`).
+
+Errors: `BAD_PARAMS`, `NO_WINDOW`, `NOT_FOUND`, `PREFILL_GONE`, `PREFILL_EDITED`, `WAIT_STATE`.
+
 ### `conversation.watch`
 
 `p`: `{ "sessionId", "afterUuid"? }` → `r`: `{ "sessionId" }`, then events:
@@ -304,6 +350,12 @@ One connection watches at most one conversation; watching another ends the previ
 
 - Only for the watched conversation (`NOT_WATCHING`), only while `wait` is `ready` or `busy` (`WAIT_STATE`
   otherwise — answer a prompt with `conversation.answer`).
+- **Refused with `PREFILL_PENDING` while the session holds a filled-in prompt nobody has sent** — listed or not,
+  `edited` or not — because the reply would be typed after it and sent with it. Send the prompt first
+  (`sessions.submitPrefill`), or finish at the desktop. Checked again when the reply's turn comes and just before
+  the submit key; a prompt filled in meanwhile withholds the key (`filled-not-submitted`). A session whose prompt
+  the user deleted at the desktop without sending anything stays refused until its agent next starts working or its
+  process ends; `terminal.input`, or `sessions.hibernate` with `force` and then `sessions.wake`, gets past it.
 - `attachments`: up to 10 complete, unsent attachments of that session (`BAD_PARAMS` beyond; `NOT_FOUND` for
   one that is not complete, not that session's, or already sent — nothing is written). `text` may then be
   empty. The desktop appends one sentence naming each file's full path, inside the sentence, in backticks:
@@ -413,7 +465,15 @@ follows. `inbox.accept` on a scheduled item opens it now (its one automatic open
 `p`: `{ "adapter", "id", "folderId" }` → `r`: `{ "sessionId" }`
 
 The desktop's accept: it reuses the session an earlier accept of the item left in that folder, or creates one
-there (quietly), and fills in the item's first prompt — unsent for a third-party body. Errors:
+there (quietly), and fills in the item's first prompt once the agent is ready (usually after this answer).
+
+- **A third-party body's prompt is left unsent**, as on the desktop, where the user presses Enter. It then appears
+  as the session's `prefill` (`sessions.changed`), and a device sends it with `sessions.submitPrefill` after showing
+  the user the item's body and the prompt (obligation 16). There is no parameter that submits on accept.
+- An agent's handoff (a first-party body) is submitted by the desktop; only if that does not take does it appear as
+  `prefill`.
+
+Errors:
 `FOLDER_REQUIRED`, `NOT_FOUND`, `CREATE_FAILED`, `NO_WINDOW`, `TIMEOUT`. A failure leaves the item pending.
 `CREATE_FAILED` also answers an accept of a handoff the desktop is opening at that moment (its message says so):
 a second session is not opened.
@@ -618,3 +678,9 @@ open (on Android, a foreground service), and reconnect with backoff when the net
     monospace text.
 15. **Show a background task's `label` as plain text**, never as a link or markup, and do not open what it names:
     it is the agent's own text and may contain paths and URLs.
+16. **Send a filled-in prompt (`sessions.submitPrefill`) only on the user's explicit action for that session**,
+    after showing — on that screen or the one just before — the full body of the item `prefill.intake` names (from
+    `inbox.list`) and `prefill.text`, both as plain text. Never as part of accepting, never automatically, never from
+    a notification's action. This is the last human check before someone else's text reaches the agent, and this
+    repository cannot enforce it for a client. Show a prompt with `edited: true` as one to finish at the desktop,
+    not as a send control. After `sent`, say the desktop has not seen the agent start yet.

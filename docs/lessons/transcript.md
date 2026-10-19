@@ -606,6 +606,15 @@ answers reach the pty as writes. `isTerminalReport` (`src/main/pty-input.ts`) th
 terminal's own, alongside focus and mouse reports. Without that, a session the user never typed into would
 count as typed into after its start.
 
+**CLI 2.1.303 adds two mode queries** (measured in the app, 2026-10-19, `remote-prefill-send`): DECRQM for synchronized
+output and SGR-pixel mouse (`CSI ? 2026 $ p`, `CSI ? 1016 $ p`) around `SessionStart`, and the 2026 one again later —
+one of xterm.js's answers (DECRPM, `CSI ? 2026 ; 2 $ y`) arrived **after** the agent was ready and its prompt filled in.
+It also turns on color-scheme updates (`CSI ? 2031 h`, answered only when the theme changes) and sends `OSC 7501 ; ?`
+(xterm.js does not answer it). `isTerminalReport` now counts DECRPM as the terminal's own. **The stub agent sends
+none of these by default**: every probe was green while a real agent's fresh prompt read as typed over, which is why
+the stub has `queryModes`. A capture of a bare pty (no terminal answering) shows the queries but not the answers, and
+missed the DECRQM ones: measure inside the app, logging what `noteWrite` counts.
+
 ## Background tasks (`remote-background-tasks`, CLI 2.1.302, 2026-10-18)
 
 Measured on a real spekterm session: a background copier saved the session's event files before the drain removed

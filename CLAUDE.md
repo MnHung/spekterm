@@ -144,6 +144,11 @@ OpenSpec 結構的側欄，讓使用者不必另外開 IDE 就能一邊駕駛 ag
     state on awaiting-choice through the agent's own `Stop`. Attachments go only into
     `<userData>/remote-attachments` under desktop-chosen names; agents read it through an injected `Read` rule.
     The key plans and event orders are measured (`docs/lessons/transcript.md`): re-measure on a CLI upgrade.
+  - **A device sends an accepted item's filled-in prompt by writing only the submit key** (`sessions.submitPrefill`,
+    `remote-prefill-send`); the settle stays `watchSubmission`'s, the same path as the desktop's Enter. The listed fill
+    (`Session.prefill`) is the desktop's "not sent" label — a submitted handoff's prompt only after the fallback — with its
+    item still in the inbox; `edited` counts keystrokes (`keystrokeSeq`), never times. **Any prefill record refuses a
+    device reply** (`PREFILL_PENDING`), edited or not: the reply would be sent together with an unread third-party prompt.
 
 **以 MIT 開源**（`open-source-mit`：`LICENSE`、`CONTRIBUTING.md`、產物根目錄附本身與第三方的授權文字；
 公開前已改寫全部 git 歷史）。**Linux 打包已可用**（`npm run dist:linux` → AppImage，`npm run install:desktop` 裝進應用程式
