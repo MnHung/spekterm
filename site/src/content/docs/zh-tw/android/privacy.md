@@ -6,7 +6,8 @@ description: spekterm for Android 會傳送什麼、傳到哪裡，以及在手�
 生效日期：2026-10-20。
 
 spekterm for Android（以下稱「本 app」）是桌面工作台 spekterm 的配套 app，原始碼公開：
-[github.com/spekhq/spekterm-android](https://github.com/spekhq/spekterm-android)。
+[github.com/spekhq/spekterm-android](https://github.com/spekhq/spekterm-android)，可從
+[Google Play](https://play.google.com/store/apps/details?id=com.spekterm.android) 下載。
 
 **本 app 不會把任何資料傳給開發者或任何第三方。** 本 app 沒有帳號、沒有自己的伺服器，不含分析、廣告或當機回報功能。
 

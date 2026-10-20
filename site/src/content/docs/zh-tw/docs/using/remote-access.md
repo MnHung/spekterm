@@ -12,7 +12,8 @@ change。agent 在等你時，手機會收到通知。
 
 在你打開之前，它是**關閉**的。
 
-> **Android app 仍在開發中。** spekterm 這一端已經就緒，app 依據的協定寫在 repo 裡（`docs/remote-protocol.md`）。
+> **從 [Google Play](https://play.google.com/store/apps/details?id=com.spekterm.android) 下載 Android app。** 它的原始碼公開
+> （[spekhq/spekterm-android](https://github.com/spekhq/spekterm-android)），依據的協定寫在這個 repo 裡（`docs/remote-protocol.md`）。
 
 ## 已配對的手機能做什麼
 

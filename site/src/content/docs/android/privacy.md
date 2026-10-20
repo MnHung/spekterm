@@ -6,7 +6,8 @@ description: What spekterm for Android sends, where it sends it, and what it kee
 Effective 2026-10-20.
 
 spekterm for Android ("the app") is the companion app of spekterm, the desktop workbench. It is open source:
-[github.com/spekhq/spekterm-android](https://github.com/spekhq/spekterm-android).
+[github.com/spekhq/spekterm-android](https://github.com/spekhq/spekterm-android). It is available on
+[Google Play](https://play.google.com/store/apps/details?id=com.spekterm.android).
 
 **The app sends nothing to its developer or to any third party.** It has no account, no server of its own, no analytics,
 no advertising and no crash reporting.

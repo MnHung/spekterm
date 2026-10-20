@@ -13,8 +13,9 @@ changes. You are told when an agent waits for you.
 
 It is **off** until you turn it on.
 
-> **The Android app is in development.** spekterm's side is ready, and the protocol the app is built against
-> is in the repository (`docs/remote-protocol.md`).
+> **Get the Android app on [Google Play](https://play.google.com/store/apps/details?id=com.spekterm.android).** It is open source
+> ([spekhq/spekterm-android](https://github.com/spekhq/spekterm-android)), and the protocol it is built against is in
+> this repository (`docs/remote-protocol.md`).
 
 ## What a paired phone can do
 
