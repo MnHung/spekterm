@@ -5,14 +5,14 @@ sidebar:
   order: 1
 ---
 
-spekterm has builds for Linux on x86_64, distributed as an AppImage (one file that runs without installing
-anything system-wide), and for macOS on Apple Silicon, distributed as a disk image (`.dmg`). Windows and
-Intel Macs are not supported yet.
+spekterm has builds for two platforms: Linux on x86_64, as an AppImage (a single file that runs without
+installing anything system-wide), and macOS on Apple Silicon, as a disk image (`.dmg`). Windows and Intel
+Macs are not supported yet.
 
 ## Requirements
 
-- **Linux on x86_64.** The AppImage needs `libfuse2` to run. Ubuntu 22.04 and later no longer install it
-  by default — see [If the AppImage does not start](#if-the-appimage-does-not-start).
+- **Linux on x86_64.** The AppImage needs `libfuse2` to run, and Ubuntu 22.04 and later no longer install
+  it by default. See [If the AppImage does not start](#if-the-appimage-does-not-start).
 - **macOS 12 (Monterey) or later on a Mac with Apple Silicon.** It has been tested on macOS 13 (Ventura) and macOS 27.
   See [Install on macOS](#install-on-macos).
 - **Claude Code** for agent sessions: the `claude` command must be on your `PATH`. spekterm runs the real
@@ -109,18 +109,19 @@ xattr -dr com.apple.quarantine /Applications/Spekterm.app
 
 ### Privacy prompts that name spekterm
 
-macOS attributes to spekterm the privacy prompts caused by the programs running in its sessions. An agent
-that reads under your home directory, for example, may make macOS ask whether **Spekterm** may access your
-Calendars, Photos, Contacts, Reminders, Desktop, Documents, or Downloads. Denying them is safe, unless one
-of your repositories lives in that protected place: a repository in `Documents` needs Documents access.
+When a program running in a spekterm session triggers a macOS privacy prompt, macOS asks in spekterm's
+name. An agent that reads under your home directory, for example, may make macOS ask whether **Spekterm**
+may access your Calendars, Photos, Contacts, Reminders, Desktop, Documents, or Downloads. Denying these
+prompts is safe, unless one of your repositories lives in that protected place: a repository in
+`Documents` needs Documents access.
 
 ### What works differently on macOS
 
 - **Closing the window does not quit spekterm.** As in Terminal and iTerm2, closing the window ends every
   session (asking first if any is running) and leaves spekterm running in the Dock. Click its Dock icon to
   open the window again, with the sessions restored as dormant. While spekterm runs without a window, the
-  inbox keeps receiving and, if you set up Slack, it keeps checking for mentions every five minutes. To
-  quit, use `Cmd+Q` or **Spekterm → Quit Spekterm**; see
+  inbox keeps receiving items and, if you set up Slack, spekterm keeps checking for mentions every five
+  minutes. To quit, use `Cmd+Q` or **Spekterm → Quit Spekterm**; see
   [Terminals and sessions](/docs/using/terminals-and-sessions/#closing-and-quitting-on-macos).
 - **A minimal menu bar**: the **Spekterm** menu (About, Hide, Hide Others, Show All, Quit) and the
   **Edit** menu (Undo, Redo, Cut, Copy, Paste, Select All). There is no `Cmd+W`; close a session with

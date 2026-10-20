@@ -11,7 +11,7 @@
   "header.switchTo": "Go to {product}",
   "landing.download": "Download",
   "landing.downloadNote": "From the latest GitHub release: an AppImage for Linux, a .dmg for Macs with Apple Silicon.",
-  "landing.early": "Early and actively developed — expect rough edges.",
+  "landing.early": "Still early and under active development, so expect rough edges.",
   "landing.illustrative": "Screenshots show illustrative example content.",
   "landing.platforms": "Builds are available for Linux (x86_64) and for macOS on Apple Silicon. Windows and Intel Macs are not supported yet.",
   "social.imageAlt": "spekterm — The spec beside the agent",

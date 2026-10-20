@@ -1,12 +1,12 @@
 ---
 title: spek —— 讀懂你的 OpenSpec
-description: spek 是唯讀的 OpenSpec 內容檢視器 —— spec、change、tasks、schema 與時間軸 —— 可在瀏覽器、VS Code、JetBrains IDE 裡用，也能由 CI 產出靜態頁面。
+description: spek 是唯讀的 OpenSpec 內容檢視器，呈現 spec、change、tasks、schema 與時間軸。可以在瀏覽器、VS Code 或 JetBrains IDE 裡使用，也能由 CI 產出靜態頁面。
 template: splash
 hero:
   image:
     file: ../../../../assets/spek/spek-logomark.svg
   title: 讀懂你的 OpenSpec
-  tagline: spek 把 repository 的 openspec/ 目錄變成可以瀏覽的介面 —— spec、change 連同它們的 tasks、schema、時間軸、全文搜尋。它只讀，從不修改任何檔案。
+  tagline: spek 把 repository 的 openspec/ 目錄變成可以瀏覽的介面：spec、change 與其中的 tasks、schema、時間軸，還有全文搜尋。spek 只讀取，從不修改任何檔案。
   actions:
     - text: 試用線上 demo
       link: /spek/demo/
@@ -26,30 +26,28 @@ import timeline from '../../../../assets/screenshots/neutral/spek-timeline.png'
 <Screenshot
   wide
   src={change}
-  alt="spek 顯示一個 OpenSpec change：依 capability 分組的 delta spec，每條 requirement 的 SHALL 關鍵字都有標示，另有 proposal、design、tasks 分頁。"
-  caption="一個 change 的 delta spec，逐條 requirement 呈現，規範性關鍵字都有標示。"
+  alt="spek 顯示一個 OpenSpec change：delta spec 依 capability 分組，每條 requirement 的 SHALL 關鍵字都有標示，另有 proposal、design、tasks 分頁。"
+  caption="change 的 delta spec 逐條列出 requirement，並標示規範性關鍵字。"
 />
 
 ## spec 是寫來讀的
 
-OpenSpec 把專案的 requirement 以及每一次對它的修改，都存成 `openspec/` 底下的 Markdown 檔。這個格式適合 agent 撰寫、適合 git 追蹤，卻不好讀：一個 change 就是 proposal、design、task 清單，再加上每個 capability
-一份 delta，散在十幾個檔案裡。spek 讀這個目錄並把它排好 —— 有結構、spec 與 change 互相連結，進度一眼就看得到。
+OpenSpec 把專案的 requirement 和每一次修改，都存成 `openspec/` 底下的 Markdown 檔。這種格式方便 agent 撰寫、方便 git 追蹤，讀起來卻很吃力：一個 change 包含 proposal、design、task 清單，再加上每個 capability 各一份 delta，散落在十幾個檔案裡。spek 讀取這個目錄，替你排出結構、串起 spec 與 change 之間的連結，進度一眼就看得到。
 
 ## 能瀏覽什麼
 
 <CardGrid>
   <Card title="總覽" icon="seti:info">
-    spec 與 change 的數量、task 完成率、平均生命週期，以及停滯不動的 change。
+    spec 與 change 的數量、task 完成率、平均生命週期，以及停滯的 change。
   </Card>
   <Card title="spec 與 change" icon="document">
-    spec 以資料夾樹呈現並附修訂歷史；change 分進行中與已封存，各自以分頁呈現 proposal、design、tasks
-    與 delta spec。
+    spec 以資料夾樹呈現，各自附上歷史紀錄。change 分為進行中與已封存，每個 artifact（proposal、design、tasks、delta spec）各佔一個分頁。
   </Card>
   <Card title="schema、關係圖、時間軸" icon="list-format">
-    repository 使用的工作流程 schema、spec 與 change 之間的關係，以及每個 change 的生命週期甘特圖。
+    repository 可用的工作流程 schema、spec 與 change 之間的關係，以及把每個 change 的生命週期排成甘特圖的時間軸。
   </Card>
   <Card title="所有 worktree 一次看" icon="seti:git">
-    repository 所有 git worktree 裡進行中的 change 併成一份清單 —— 為平行工作的 agent 而設計。
+    repository 所有 git worktree 裡進行中的 change，併成一份清單。專為平行工作的 agent 設計。
   </Card>
 </CardGrid>
 
@@ -62,16 +60,16 @@ OpenSpec 把專案的 requirement 以及每一次對它的修改，都存成 `op
 
 ## 四種用法
 
-四種都呈現同樣的畫面。挑一個就在你平常工作的地方用。
+四種用法呈現的畫面都一樣，挑一個放在你平常工作的地方就好。
 
 <CardGrid>
   <LinkCard title="VS Code 擴充套件" description="編輯器裡的面板與側欄。從 Visual Studio Marketplace 安裝。" href="https://marketplace.visualstudio.com/items?itemName=kewang.spek-vscode" />
   <LinkCard title="JetBrains 外掛" description="IntelliJ IDEA、WebStorm、PyCharm 等 JetBrains IDE 裡的工具視窗。從 JetBrains Marketplace 安裝。" href="https://plugins.jetbrains.com/plugin/30600-spek--openspec-viewer" />
-  <LinkCard title="網頁版" description="從原始碼啟動，在瀏覽器裡讀你電腦上的任何 repository。" href="https://github.com/spekhq/spek" />
+  <LinkCard title="網頁版" description="從原始碼啟動，在瀏覽器裡瀏覽你電腦上的任何 repository。" href="https://github.com/spekhq/spek" />
   <LinkCard title="GitHub Action" description="在 CI 裡為 repository 產出靜態 spek 頁面與狀態徽章。從 GitHub Marketplace 取得。" href="https://github.com/marketplace/actions/spek-openspec-static-site" />
 </CardGrid>
 
-各自怎麼安裝與使用：[安裝 spek](/zh-tw/spek/docs/getting-started/install/)。
+各種用法的安裝與使用方式：[安裝 spek](/zh-tw/spek/docs/getting-started/install/)。
 
 <Screenshot
   wide
@@ -82,7 +80,7 @@ OpenSpec 把專案的 requirement 以及每一次對它的修改，都存成 `op
 
 ## spek 與 spekterm
 
-spek 的引擎也替 [spekterm](/zh-tw/) 讀 OpenSpec：spekterm 的側欄用 spek 的核心套件（`@spekjs/core`）掃描 spec 與 change，也畫 spek 的關係圖與時間軸（`@spekjs/ui`）。spek 讓你在平常工作的地方讀 spec；spekterm 是在 spec 旁邊跑 Claude Code session 的桌面工作台。兩者誰也不需要誰。
+spek 的引擎也替 [spekterm](/zh-tw/) 讀取 OpenSpec。spekterm 的側欄以 spek 的核心套件（`@spekjs/core`）掃描 spec 與 change，並繪製 spek 的關係圖與時間軸（`@spekjs/ui`）。spek 讓你在平常工作的地方讀 spec；spekterm 則是在 spec 旁邊跑 Claude Code session 的桌面工作台。兩者互不依賴。
 
 <CardGrid>
   <LinkCard title="認識 spekterm" description="在同一個視窗裡為每個 repository 跑 Claude Code session，OpenSpec change 就在終端機旁邊。" href="/zh-tw/" />
@@ -90,4 +88,4 @@ spek 的引擎也替 [spekterm](/zh-tw/) 讀 OpenSpec：spekterm 的側欄用 sp
 
 ## 開放原始碼
 
-spek 以 MIT 授權釋出，原始碼在 [GitHub](https://github.com/spekhq/spek)。它沒有帳號、沒有遙測、沒有分析；[資料與網路](/zh-tw/spek/docs/reference/data-and-network/) 逐項列出每種用法會連到哪裡。
+spek 以 MIT 授權釋出，原始碼在 [GitHub](https://github.com/spekhq/spek)。spek 本身沒有帳號、沒有遙測，也沒有分析。[資料與網路](/zh-tw/spek/docs/reference/data-and-network/) 逐項列出每種用法會連到哪裡。

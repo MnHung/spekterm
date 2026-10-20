@@ -10,40 +10,41 @@ and **Timeline**, plus search.
 
 ## Overview
 
-The dashboard counts specs, active changes, and archived changes, and shows task completion, the average
-lifecycle of archived changes, and how many active changes have gone stale (no movement for over 30 days).
-Below that: the active changes with their task progress, and the recently archived ones.
+The dashboard counts specs, active changes, and archived changes. It also shows task completion, the
+average lifecycle of archived changes, and how many active changes are stale (created more than 30 days
+ago). Below that come the active changes with their task progress, then the recently archived ones.
 
 ## Specs
 
-Every spec as a folder tree, nested as `openspec/specs/` is on disk, with a filter. A spec opens as an
-outline: requirements and scenarios fold in place, and the normative keywords (SHALL, MUST) and the
-scenario steps (WHEN, GIVEN, THEN, AND) are highlighted. Each spec also shows its revision history from
-git.
+Every spec appears in a folder tree, nested as `openspec/specs/` is on disk, with a filter. A spec opens
+as an outline: requirements and scenarios fold in place, and the normative keywords (SHALL, MUST) and the
+scenario steps (WHEN, GIVEN, THEN, AND) are highlighted. Each spec also has a history: the changes that
+touched it, newest first.
 
 ## Changes
 
-Active and archived changes, each row with its creation date, archive date, and lifecycle. A change opens
-with its artifacts as tabs — proposal, design, tasks, and specs — in the order its workflow schema defines
-them or by last modified. Delta specs carry a badge for each operation (ADDED, MODIFIED, REMOVED, RENAMED);
-task lists show their checkboxes with progress per section.
+Active and archived changes. Each row shows the change's creation date and lifecycle, and an archived
+change's row also shows its archive date. A change opens with one tab per artifact it contains (proposal,
+design, tasks, specs, and so on). The tabs can be ordered by last modified, by the order the workflow schema
+defines, or A–Z. Delta specs carry a badge for each operation (ADDED, MODIFIED, REMOVED, RENAMED); task
+lists show their checkboxes, with progress per section.
 
 ## Graph
 
-How specs and changes relate: each change is linked to the specs its deltas touch.
+How specs and changes relate: each change links to the specs its deltas touch.
 
 ## Schemas
 
-Every workflow schema the repository can use, with where it comes from and the artifacts it defines. A
-schema opens as a flow: each artifact in dependency order, the file it produces, what it needs before it can
-be written, and its instructions. The repository's default schema is marked, and each schema links to the
-active changes using it.
+Every workflow schema the repository can use, with its source and the artifacts it defines. A schema
+opens as a flow that lists each artifact in dependency order, with the file it produces, what it needs
+before it can be written, and its instructions. The repository's default schema is marked, and each schema
+links to the active changes that use it.
 
 ## Timeline
 
-Every change's lifecycle as a horizontal, Gantt-style chart: archived changes as bars from creation to
-archive, active ones running to today. Changes can be grouped by spec topic, and active or archived changes
-hidden.
+Every change's lifecycle on a horizontal, Gantt-style chart: archived changes are bars from creation to
+archive, and active ones run to today. You can group changes by spec topic, and hide the active or the
+archived ones.
 
 ## Search
 

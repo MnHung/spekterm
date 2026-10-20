@@ -23,12 +23,12 @@ Or run the AppImage without FUSE:
 ## `claude` is not found when spekterm is started from the desktop menu
 
 A program started from the desktop menu (or, on macOS, from the Dock or Finder) does not inherit your
-terminal's environment. spekterm reads your
-login shell's environment once when it starts, and uses its `PATH` to find `claude`. So:
+terminal's environment. spekterm reads your login shell's environment once when it starts, and uses its
+`PATH` to find `claude`. So:
 
-- make sure the directory that contains `claude` is added to `PATH` in your shell's startup files (for
-  zsh, `.zshrc` or `.zprofile`);
-- **restart spekterm** after changing them — the environment is read once at startup, so opening a new
+- make sure your shell's startup files add the directory that contains `claude` to `PATH` (for zsh,
+  `.zshrc` or `.zprofile`);
+- **restart spekterm** after changing them. The environment is read once at startup, so opening a new
   session is not enough. On macOS, closing the window does not quit spekterm: quit it with `Cmd+Q`.
 
 ## A change to my shell environment does not show up
@@ -38,8 +38,8 @@ macOS, `Cmd+Q`; closing the window is not enough).
 
 ## The side panel or the file tree stops updating
 
-On Linux, your inotify watch limit is probably too low (the error, `ENOSPC`, only shows up on spekterm's standard
-error output). Check it:
+On Linux, the likely cause is an inotify watch limit that is too low. The error, `ENOSPC`, shows up only in
+spekterm's standard error output. Check the limit:
 
 ```bash
 cat /proc/sys/fs/inotify/max_user_watches
@@ -75,10 +75,10 @@ xattr -dr com.apple.quarantine /Applications/Spekterm.app
 
 ## macOS asks whether Spekterm may access my Calendars, Photos, or Documents
 
-macOS attributes to spekterm the privacy prompts caused by the programs running in its sessions — for
-example, an agent reading under your home directory may trigger prompts for Calendars, Photos, Contacts,
-Reminders, Desktop, Documents, or Downloads. Denying them is safe, unless one of your repositories lives
-in that protected place: a repository in `Documents` needs Documents access. You can change your answer
+When a program running in a spekterm session causes a privacy prompt, macOS shows the prompt in
+spekterm's name. For example, an agent reading files under your home directory may trigger prompts for
+Calendars, Photos, Contacts, Reminders, Desktop, Documents, or Downloads. Denying them is safe, unless one
+of your repositories is in that protected location: a repository in `Documents` needs Documents access. You can change your answer
 later in **System Settings → Privacy & Security**.
 
 ## macOS asks again for permissions after an update

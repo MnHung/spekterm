@@ -6,7 +6,7 @@ sidebar:
 ---
 
 Open **Settings** from the activity bar on the far left. Settings lists its sections on the left and shows
-one of them at a time; it opens on the section you used last.
+one at a time. It opens on the section you used last.
 
 **A change applies when you make it.** There is no Save button:
 
@@ -15,12 +15,12 @@ one of them at a time; it opens on the section you used last.
   **Enter** or leave the field. **Esc** in a field puts the saved value back.
 - If a change cannot be saved, a message appears under the field and the field shows the saved value again.
 
-Two values wait for their own button or **Enter** and are never applied by leaving the field: a Slack token
-(so that half a pasted token is never stored) and the remote access port (changing it disconnects connected
+Two values apply only with their own button or **Enter**, never when you leave the field: a Slack token (so
+that half a pasted token is never stored) and the remote access port (changing it disconnects connected
 devices).
 
-**Restore defaults** at the bottom of the Terminal and Agents & sessions sections puts that section back,
-after asking. It does not change the other sections or the language.
+The Terminal and Agents & sessions sections end with **Restore defaults**. It asks first, then puts that
+section back to its defaults. It does not change the other sections or the language.
 
 ## General
 
@@ -32,29 +32,29 @@ stays in English.
 - **Font family** — any monospace font installed on your system; empty means the system default. On
   macOS the list offers only the system's default monospace font.
 - **Font size** and **Line height** — empty means the default.
-- **Preview** — shows a sample in the chosen font, including characters that are easy to confuse. It follows
-  what you type before the value applies.
+- **Preview** — shows a sample in the chosen font, including characters that are easy to confuse. It updates
+  as you type, before the value applies.
 - **GPU acceleration** — draws the terminal on the GPU. Turn it off if the terminal renders incorrectly on
   your machine.
 
 ## Agents & sessions
 
 - **Show agent status in the status bar** — asks `claude` to report its model, context usage, and cost to
-  spekterm, which shows them in the status bar. Your own Claude Code status line keeps working. It applies to
-  sessions started after you change it.
-- **Hibernate idle sessions** — ends the process of a session that has been idle for the chosen time (Off,
-  4 hours, 24 hours (the default), 3 days, or 7 days) and keeps the session in the workspace so you can wake
-  it later. The session on screen, an agent that is working, and a shell that is running a job are never
-  hibernated. On macOS, idle shells are never hibernated automatically. See
+  spekterm, which shows them in the status bar. Your own Claude Code status line keeps working. The setting
+  applies to sessions started after you change it.
+- **Hibernate idle sessions** — when a session has been idle for the chosen time, ends its process and keeps
+  the session in the workspace so you can wake it later. The choices are Off, 4 hours, 24 hours (the
+  default), 3 days, and 7 days. The session on screen, an agent that is working, and a shell that is running
+  a job are never hibernated. On macOS, idle shells are never hibernated automatically. See
   [Terminals and sessions](/docs/using/terminals-and-sessions/).
-- **Agent sessions show** — the terminal or the conversation view, for every agent session. It is the same
-  choice as the switch beside an agent session's tabs. See [Conversation view](/docs/using/conversation-view/).
+- **Agent sessions show** — whether every agent session shows the terminal or the conversation view. It is
+  the same choice as the switch beside an agent session's tabs. See [Conversation view](/docs/using/conversation-view/).
 
 ## Integrations
 
 The Slack connection: tokens, the look-back window, and the API endpoint. See
-[Inbox and Slack](/docs/using/inbox-and-slack/). The routing rules that decide where a mention opens stay in
-the inbox.
+[Inbox and Slack](/docs/using/inbox-and-slack/). The routing rules, which decide where a mention opens, stay
+in the inbox.
 
 ## Remote access
 

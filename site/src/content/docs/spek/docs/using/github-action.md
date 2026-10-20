@@ -5,9 +5,9 @@ sidebar:
   order: 3
 ---
 
-The [spek action](https://github.com/marketplace/actions/spek-openspec-static-site) builds a single,
-self-contained HTML page of your repository's OpenSpec — the same views as the other forms, with the
-content embedded — in your own GitHub Actions. It can also write status badges.
+The [spek action](https://github.com/marketplace/actions/spek-openspec-static-site) runs in your own GitHub
+Actions and builds a single, self-contained HTML page of your repository's OpenSpec. The page has the same
+views as the other forms, with the content embedded in it. The action can also write status badges.
 
 ## Basic use
 
@@ -75,15 +75,15 @@ jobs:
 | `html-path` | The page's absolute path |
 | `badges-path` | The badges directory's absolute path |
 
-`spekhq/spek@v1` picks the action; `spek-version` picks the spek source it builds the page with, and that
-defaults to spek's main branch. To build with a fixed release, set `spek-version` to one of the tags on
-[spek's releases page](https://github.com/spekhq/spek/releases).
+`spekhq/spek@v1` selects the action. `spek-version` selects the spek source the action builds the page
+with, and defaults to spek's main branch. To build with a fixed release, set `spek-version` to one of the
+tags on [spek's releases page](https://github.com/spekhq/spek/releases).
 
 ## Badges
 
-With `generate-badges: true` the action also writes three SVG badges next to the page — the number of
-specs, open changes, and task progress. They are drawn by the action itself; no badge service is called.
-Deploy them with the page and reference them from your README:
+With `generate-badges: true`, the action also writes three SVG badges next to the page: the number of
+specs, the number of open changes, and task progress. The action draws them itself and calls no badge
+service. Deploy them with the page and reference them from your README:
 
 ```markdown
 ![Specs](https://your-user.github.io/your-repo/badges/specs.svg)
@@ -93,6 +93,6 @@ Deploy them with the page and reference them from your README:
 
 ## What runs
 
-The action runs in your workflow: it checks out spek's source at `spek-version`, installs spek's
+The action runs in your workflow. It checks out spek's source at `spek-version`, installs spek's
 dependencies and the OpenSpec CLI from npm, and builds the page with the CLI's usage statistics turned off.
 See [Data and network](/spek/docs/reference/data-and-network/).

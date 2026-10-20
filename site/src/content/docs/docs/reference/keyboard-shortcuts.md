@@ -5,9 +5,9 @@ sidebar:
   order: 1
 ---
 
-spekterm's shortcuts work wherever the focus is — in a terminal, in the editor, or in the side panel —
-unless a dialog or a menu is open. The terminal almost always has the focus, so spekterm catches its keys
-before the terminal does, and a key it uses never reaches the program running in the terminal.
+spekterm's shortcuts work wherever the focus is: in a terminal, in the editor, or in the side panel. They
+do nothing while a dialog or a menu is open. The terminal almost always has the focus, so spekterm catches
+these keys before the terminal does. A key spekterm uses never reaches the program running in the terminal.
 
 ## Sessions and the rail
 
@@ -17,8 +17,8 @@ before the terminal does, and a key it uses never reaches the program running in
 | `Ctrl+↓` / `Ctrl+↑` | Next / previous rail item, including the global item (wraps around). On macOS, see [On macOS](#on-macos) |
 | `Ctrl+T` | Open the new-session menu (fully usable from the keyboard) |
 | `Ctrl+Shift+W` | Close the focused session |
-| `Ctrl+Shift+H` | Hibernate the focused session — its process ends, it stays in the workspace to wake later |
-| `Shift+↓` / `Shift+↑` | Move the selected repository one place down / up the rail (crossing into or out of the pinned group pins or unpins it) |
+| `Ctrl+Shift+H` | Hibernate the focused session: its process ends, and the session stays in the workspace to wake later |
+| `Shift+↓` / `Shift+↑` | Move the selected repository one place down / up the rail. Moving it into or out of the pinned group pins or unpins it |
 | `Shift+→` / `Shift+←` | Move the focused session one place along the tab bar |
 
 ## Side panel and files
@@ -26,7 +26,7 @@ before the terminal does, and a key it uses never reaches the program running in
 | Shortcut | Action |
 | --- | --- |
 | `Ctrl+Shift+M` | Maximize / restore the side panel |
-| `Ctrl+P` | Quick open a file — only when the side panel has the focus |
+| `Ctrl+P` | Quick open a file (only when the side panel has the focus) |
 | `Ctrl+S` | Save the open file |
 | `Esc` | Close an overlay, a dialog, or a menu |
 
@@ -43,12 +43,12 @@ before the terminal does, and a key it uses never reaches the program running in
   history. Click into the side panel first to quick-open a file.
 - **`Ctrl+C` is never taken.** Stopping an agent that has gone off course must always work, whatever is
   selected on screen.
-- **`Ctrl+W` is not taken** — shells use it to delete a word. Closing a session is `Ctrl+Shift+W`.
-- **`Shift+arrow` in a text field selects text** as usual; the reorder shortcuts only apply outside text
+- **`Ctrl+W` is not taken**: shells use it to delete a word. Closing a session is `Ctrl+Shift+W`.
+- **`Shift+arrow` in a text field selects text** as usual. The reorder shortcuts apply only outside text
   fields.
 
-One known cost: Claude Code's own agents view also uses `Shift+arrow`, which spekterm takes for
-reordering.
+One known cost: Claude Code's own agents view also uses `Shift+arrow`, but in a spekterm terminal these
+keys reorder instead.
 
 ## On macOS
 
@@ -56,11 +56,11 @@ The shortcuts above are the same on macOS, with these differences:
 
 - **Copy and paste in the terminal** are `Cmd+C` and `Cmd+V`. `Ctrl+C` is still the interrupt.
 - **Save** is `Cmd+S`.
-- **`Cmd+Q`** (or **Spekterm → Quit Spekterm**) quits. When sessions are running, it asks first, the same
-  way closing the window does.
+- **`Cmd+Q`** (or **Spekterm → Quit Spekterm**) quits. If sessions are running, it asks first, as closing
+  the window does.
 - **There is no `Cmd+W`.** Close a session with `Ctrl+Shift+W`, as on Linux.
-- **`Ctrl+↑` / `Ctrl+↓`** are taken by Mission Control and App Exposé in macOS's default settings, so they
-  never reach spekterm. To use them for the rail, turn those shortcuts off in **System Settings →
+- **`Ctrl+↑` / `Ctrl+↓`** belong to Mission Control and App Exposé in macOS's default settings, so they
+  never reach spekterm. To use them on the rail, turn those shortcuts off in **System Settings →
   Keyboard → Keyboard Shortcuts → Mission Control**.
 - The menu bar is minimal: the **Spekterm** menu (About, Hide, Hide Others, Show All, Quit) and the
-  **Edit** menu (Undo, Redo, Cut, Copy, Paste, Select All), whose shortcuts work in text fields.
+  **Edit** menu (Undo, Redo, Cut, Copy, Paste, Select All). The Edit menu's shortcuts work in text fields.

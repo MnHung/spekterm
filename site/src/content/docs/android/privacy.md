@@ -14,19 +14,19 @@ no advertising and no crash reporting.
 
 ## Connections
 
-The app connects only to the computer running spekterm that you paired it with — or, while you pair, to the addresses in
-the pairing link or QR code you chose — over your local network, Tailscale, or a port you forward. The connection is
-encrypted with TLS, and the app accepts only the certificate of the desktop you paired (its fingerprint comes from the
-pairing code), so no one in between can read it — the app's developer included.
+The app connects only to the computer running spekterm that you paired it with, or, while you pair, to the addresses in
+the pairing link or QR code you chose. It connects over your local network, Tailscale, or a port you forward. The
+connection is encrypted with TLS, and the app accepts only the certificate of the desktop you paired (its fingerprint
+comes from the pairing code), so no one in between can read it, including the app's developer.
 
 ## What goes to your desktop
 
 The replies you type, your answers to an agent's questions or permission requests, and the photos, PDFs and text files you
-attach go only to that desktop. Before sending, the app copies an attachment into its own cache (converting HEIC photos to
-JPEG); the copy is deleted when the app's process ends. What happens to them there is decided by your spekterm and the
-agent tools you run on it: an AI coding agent may send them to its AI provider, under that provider's terms. The desktop
-sends the app your sessions, conversations, inbox items and OpenSpec files to show you; they are kept in memory while
-shown, not stored by the app.
+attach go only to that desktop. What happens to them there is decided by your spekterm and the agent tools you run on it:
+an AI coding agent may send them to its AI provider, under that provider's terms. Before sending, the app copies an
+attachment into its own cache (converting HEIC photos to JPEG); the copy is deleted when the app's process ends. The
+desktop sends the app your sessions, conversations, inbox items and OpenSpec files to show you. The app keeps them in
+memory while it shows them and does not store them.
 
 ## Camera
 
@@ -43,7 +43,7 @@ Unpairing deletes the credential; uninstalling the app deletes everything it sto
 
 ## Links
 
-A link in what the app shows opens in your browser or another app only when you tap it. The app itself loads no images or
+A link in the content the app shows opens in your browser or another app only when you tap it. The app itself loads no images or
 other content from the internet.
 
 ## Permissions

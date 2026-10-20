@@ -1,12 +1,12 @@
 ---
 title: 規格就在 agent 旁邊
-description: 一個桌面工作台：每個 repository 各自跑 Claude Code session，並把它正在做的 OpenSpec change 放在終端機旁邊。
+description: 一個桌面工作台：為每個 repository 跑 Claude Code session，並把 session 正在做的 OpenSpec change 放在終端機旁邊。
 template: splash
 hero:
   image:
     file: ../../../assets/logo.svg
   title: 規格就在 agent 旁邊
-  tagline: spekterm 在一個視窗裡為你的每個 repository 跑 Claude Code session，並把每個 session 正在做的 OpenSpec change —— proposal、design、tasks、specs —— 放在終端機旁邊。
+  tagline: spekterm 把你所有 repository 的 Claude Code session 收進同一個視窗，並在終端機旁邊顯示每個 session 正在做的 OpenSpec change：proposal、design、tasks 與 specs。
   actions:
     - text: 下載
       link: https://github.com/spekhq/spekterm/releases/latest
@@ -30,38 +30,36 @@ import handoff from '../../../assets/screenshots/zh-TW/handoff.png'
 <Screenshot
   wide
   src={hero}
-  alt="spekterm 的 Claude Code session 以對話檢視呈現，旁邊的側欄顯示 agent 正在做的 OpenSpec change 的 tasks。"
-  caption="Claude Code session 與它正在做的 change 並排：agent 打勾的同時，tasks 跟著更新。"
+  alt="spekterm 以對話檢視呈現一個 Claude Code session；旁邊的側欄列出 agent 手上那個 OpenSpec change 的 tasks。"
+  caption="Claude Code session 與它正在做的 change 並排：agent 每勾掉一項，tasks 就跟著更新。"
 />
 
-## 不只是四個終端機分頁加一個編輯器
+## 不再是四個終端機分頁加一個編輯器
 
-同時在幾個 repository 裡跑 agent，通常就是一疊終端機分頁，外加一個只為了看規格才切過去的編輯器。spekterm
-把每個 repository 的 session 收進同一個視窗，並讓規格留在你看得到的地方：側欄懂 OpenSpec，會顯示 agent
-正在做的 change，並隨著 agent 寫進磁碟的內容即時更新。
+同時在幾個 repository 裡跑 agent，通常就得開一疊終端機分頁，外加一個只為了看規格才切過去的編輯器。spekterm 把每個 repository 的 session 收進同一個視窗，規格也一直留在眼前。它的側欄懂 OpenSpec：會顯示 agent 正在做的 change，並隨著 agent 寫入磁碟即時更新。
 
 ## 懂 OpenSpec 的側欄
 
 <CardGrid>
   <Card title="這個 change" icon="document">
-    change 的 proposal、design、tasks、specs 分頁呈現，附 task 進度。它跟著你正在看的 session 走。
+    以分頁呈現 change 的 proposal、design、tasks 與 specs，並附上 task 進度。側欄會跟著你正在看的 session 切換。
   </Card>
   <Card title="瀏覽、關係圖、時間軸" icon="list-format">
-    repository 裡所有的 spec 與 change、它們之間的關係，以及每個 change 何時推進。
+    repository 裡所有的 spec 與 change、它們之間的關係，以及每個 change 隨時間的進展。
   </Card>
   <Card title="涵蓋 worktree" icon="seti:git">
-    repository 的 git worktree 裡的 change，會與主要工作目錄的 change 一起列出。
+    repository 各個 git worktree 裡的 change，會和主工作目錄的 change 列在一起。
   </Card>
   <Card title="一鍵續寫" icon="rocket">
-    直接從 change 上，用 OpenSpec 的 continue 指令把下一份 artifact 交給 agent。
+    直接在 change 上送出 OpenSpec 的 continue 指令，讓 agent 寫出下一份 artifact。
   </Card>
 </CardGrid>
 
 <Screenshot
   wide
   src={graph}
-  alt="側欄放大蓋過主畫面，以關係圖呈現 repository 的每個 spec，以及動過它的進行中與已封存的 change。"
-  caption="把側欄放大，就看得到每個 spec 與 change 之間的關係。"
+  alt="側欄放大蓋過主畫面，以關係圖呈現 repository 的每個 spec，以及動過它的進行中與已封存 change。"
+  caption="把側欄放大，就能看到每個 spec 與 change 之間的關係。"
 />
 
 ## 不會隨手消失的 session
@@ -73,32 +71,30 @@ import handoff from '../../../assets/screenshots/zh-TW/handoff.png'
   caption="真正的終端機，每個 repository 可以開好幾個，旁邊就是 change 的 proposal。"
 />
 
-- **真正的終端機** —— `claude` 與你的 login shell 跑在真正的 pty 裡，每個 repository 可以開好幾個，git
-  worktree 也行。
-- **重開 app 也還在** —— `claude` session 會接續原本的對話；shell 會重播先前的畫面，並回到上次的目錄（macOS 上則回到資料夾的根目錄）。
-- **用不到的就讓它休眠** —— 手動或閒置一天後，session 會結束行程、進入休眠，等你喚醒。
+- **真正的終端機** —— `claude` 與你的 login shell 跑在真正的 pty 裡。每個 repository 可以開好幾個，也能開在 git worktree 裡。
+- **重開 app 也還在** —— `claude` session 會接續原本的對話；shell 會重播先前的畫面，並回到上次的目錄（macOS 上則回到它的資料夾）。
+- **用不到的就讓它休眠** —— 可以手動休眠，閒置一天後也會自動休眠。休眠的 session 會結束行程，直到你喚醒它。
 
 ## 讀 agent 在做什麼，不只是看終端機
 
-把 agent session 切到對話檢視，就能以訊息與工具呼叫的形式閱讀整段往來。內容來自 agent 自己的紀錄與 hooks —— spekterm 從不解析終端機畫面 —— 而終端機永遠只差一下點擊。
+把 agent session 切到對話檢視，就能以訊息與工具呼叫的形式閱讀整段往來。內容來自 agent 自己的紀錄與 hooks，spekterm 從不解析終端機畫面。要回到終端機，點一下就行。
 
 ## 自己找上門的工作
 
 <Screenshot
   wide
   src={inbox}
-  alt="收件匣裡有三則待處理的 Slack 提及，各自設定在 routing 選中的 repository 開啟：api-server，來自 #frontend 的那則則是 web-app。"
-  caption="收件匣裡待處理的 Slack 提及，接受後就在對的 repository 開成 session。"
+  alt="收件匣裡有三則待處理的 Slack 提及，各自設定在 routing 選中的 repository 開啟：來自 #frontend 的那一則開在 web-app，其他開在 api-server。"
+  caption="收件匣裡待處理的 Slack 提及，接受後就會在對的 repository 開成 session。"
 />
 
-- **收件匣** —— 有人在 Slack 提及你時，那件事會進到收件匣；接受它，就會在你選的 repository 開好一個 Claude Code session，context 也備妥了。
-- **交接** —— agent 可以把工作交給另一個 repository 的 agent。spekterm 會開好那個 session，在工作回報完成之前，交接的兩端你都看得到。
-
+- **收件匣** —— 有人在 Slack 提及你，那則提及就會進到收件匣。接受之後，spekterm 會在你選的 repository 開好一個 Claude Code session，context 也已備妥。
+- **交接** —— agent 可以把工作交給另一個 repository 的 agent。spekterm 會開好新的 session；在工作回報完成之前，交接的兩端你都看得到。
 
 <Screenshot
   wide
   src={handoff}
-  alt="一個把工作交給另外兩個 session 的 session：rail 標出每一個的狀態，已完成那一個的交接單顯示它的任務與回報的結果。"
+  alt="一個把工作交給另外兩個 session 的 session：rail 標出每個 session 的狀態，已完成那一個的交接單顯示它的任務與回報的結果。"
   caption="交接的兩端：rail 上看得出誰把什麼交給了誰，交接單留著任務與結果。"
 />
 
@@ -107,36 +103,35 @@ import handoff from '../../../assets/screenshots/zh-TW/handoff.png'
 <Steps>
 
 1. **把你的 repository 加進工作區。**
-2. **在其中一個開 Claude Code session** —— 或開 shell，或兩個都開。
-3. **在側欄跟著 change 走**，agent 工作的同時，隨時都能介入。
+2. **在其中一個 repository 開 Claude Code session** —— 或開 shell，或兩個都開。
+3. agent 工作時，**在側欄跟著 change 走**，隨時都能介入。
 
 </Steps>
 
 ## 本機優先、開放原始碼
 
-spekterm 是桌面 app：你的 repository、session 與設定都留在你的電腦上。它沒有帳號、沒有遙測，也不檢查更新。它替你啟動的程式 —— `claude` CLI 與 `openspec` CLI —— 會自己連網；[資料與網路](/zh-tw/docs/reference/data-and-network/)
-逐項列出什麼連到哪裡。spekterm 以 MIT 授權釋出，原始碼在 [GitHub](https://github.com/spekhq/spekterm)。
+spekterm 是桌面 app：你的 repository、session 與設定都留在你的電腦上。它沒有帳號、沒有遙測，也不檢查更新。它替你啟動的程式，也就是 `claude` 與 `openspec` 這兩個 CLI，會自己連網；[資料與網路](/zh-tw/docs/reference/data-and-network/)逐項列出什麼連到哪裡。spekterm 以 MIT 授權釋出，原始碼在 [GitHub](https://github.com/spekhq/spekterm)。
 
 ## 以 spek 為基礎
 
 <SpekLogo />
 
-[spek](/zh-tw/spek/) 是 spekterm 的姊妹專案：同一群維護者做的開源、唯讀的 OpenSpec 內容檢視器 —— 在瀏覽器、VS Code、JetBrains IDE 裡都能用，也能由 CI 產出靜態頁面。spekterm 的側欄是站在 spek 的成果上：
+[spek](/zh-tw/spek/) 是 spekterm 的姊妹專案，出自同一群維護者：一個開源、唯讀的 OpenSpec 內容檢視器。它可以在瀏覽器、VS Code、JetBrains IDE 裡使用，也能由 CI 產出靜態頁面。spekterm 的側欄建立在 spek 的成果上：
 
-- **讀懂 OpenSpec 的引擎** —— 掃描 spec 與 change、task 進度、worktree 聚合，都來自 spek 的核心套件 `@spekjs/core`。
-- **關係圖與時間軸** —— 和 spek 畫的是同一套元件，來自它的 `@spekjs/ui` 套件。
+- **讀懂 OpenSpec 的引擎** —— 掃描 spec 與 change、計算 task 進度、聚合 worktree，都來自 spek 的核心套件 `@spekjs/core`。
+- **關係圖與時間軸** —— 與 spek 用的是同一套元件，來自它的 `@spekjs/ui` 套件。
 - **圖示** —— spekterm 的圖示就是 spek 的 S，旁邊加上一個終端機提示字元。
 
-側欄本身是 spekterm 自己做的，為終端機旁的窄欄設計。想在平常工作的地方讀 spec，用 spek；要在多個 repository 之間駕駛 agent、讓 spec 待在旁邊，用 spekterm。兩者讀的是同一批檔案，誰也不需要誰。
+側欄本身是 spekterm 自己做的，專為終端機旁的窄欄設計。想在平常工作的地方讀 spec，就用 spek；要同時指揮多個 repository 的 agent，又想讓 spec 留在手邊，就用 spekterm。兩者讀的是同一批檔案，各自都能單獨使用。
 
 <CardGrid>
-  <LinkCard title="認識 spek" description="spek 能呈現什麼，以及怎麼在編輯器、瀏覽器或 CI 裡用它。" href="/zh-tw/spek/" />
+  <LinkCard title="認識 spek" description="spek 能呈現什麼，以及怎麼在編輯器、瀏覽器或 CI 裡使用它。" href="/zh-tw/spek/" />
 </CardGrid>
 
 ## 常見問題
 
 <CardGrid>
-  <LinkCard title="這跟直接在終端機跑 Claude Code 有什麼不同？" href="/zh-tw/docs/help/faq/#這跟在終端機裡跑-claude-code-有什麼不同" />
+  <LinkCard title="這跟在終端機裡跑 Claude Code 有什麼不同？" href="/zh-tw/docs/help/faq/#這跟在終端機裡跑-claude-code-有什麼不同" />
   <LinkCard title="一定要用 OpenSpec 嗎？" href="/zh-tw/docs/help/faq/#一定要用-openspec-嗎" />
   <LinkCard title="我的程式碼會被送到哪裡嗎？" href="/zh-tw/docs/reference/data-and-network/" />
   <LinkCard title="安裝與入門" href="/zh-tw/docs/getting-started/install/" />

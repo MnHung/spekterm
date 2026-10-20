@@ -6,7 +6,7 @@ hero:
   image:
     file: ../../assets/logo.svg
   title: The spec beside the agent
-  tagline: spekterm runs Claude Code sessions for each of your repositories in one window, and shows the OpenSpec change each one is working on — proposal, design, tasks, specs — right next to the terminal.
+  tagline: "spekterm runs Claude Code sessions for all your repositories in one window. Beside each terminal, it shows the OpenSpec change that session is working on: its proposal, design, tasks, and specs."
   actions:
     - text: Download
       link: https://github.com/spekhq/spekterm/releases/latest
@@ -37,25 +37,25 @@ import handoff from '../../assets/screenshots/en/handoff.png'
 ## Not four terminal tabs and an editor
 
 Running agents across several repositories usually means a stack of terminal tabs, plus an editor you
-switch to just to read the spec. spekterm puts each repository's sessions in one window and keeps the
-spec where you can see it: the side panel understands OpenSpec, so it shows the change the agent is
-working on and follows along as the agent writes to disk.
+switch to just to read the spec. spekterm puts every repository's sessions in one window and keeps the
+spec in view. Its side panel understands OpenSpec: it shows the change the agent is working on and
+updates as the agent writes to disk.
 
 ## A side panel that knows OpenSpec
 
 <CardGrid>
   <Card title="This change" icon="document">
-    The change's proposal, design, tasks, and specs as tabs, with task progress. It follows the session
-    you are looking at.
+    The change's proposal, design, tasks, and specs in tabs, with its task progress. The panel follows
+    the session you are looking at.
   </Card>
   <Card title="Browse, Graph, Timeline" icon="list-format">
-    Every spec and change in the repository, how they relate, and when each change moved.
+    Every spec and change in the repository, how they relate, and how each change unfolded over time.
   </Card>
   <Card title="Worktrees included" icon="seti:git">
     Changes in the repository's git worktrees appear alongside the main checkout's.
   </Card>
   <Card title="Continue in one click" icon="rocket">
-    Hand the next artifact to the agent with OpenSpec's continue command, from the change itself.
+    From the change itself, send OpenSpec's continue command so the agent writes the next artifact.
   </Card>
 </CardGrid>
 
@@ -79,14 +79,14 @@ working on and follows along as the agent writes to disk.
   worktrees included.
 - **They survive a restart** — `claude` sessions resume their conversation; shells come back with the
   previous screen replayed, in their last directory (on macOS, in their folder).
-- **Hibernate what you are not using** — by hand or after a day idle, a session ends its process and waits,
-  dormant, until you wake it.
+- **Hibernate what you are not using** — by hand, or automatically after a day idle. A hibernated session
+  ends its process and stays dormant until you wake it.
 
 ## Read the agent, not just its terminal
 
-Switch an agent session to the conversation view to read the exchange as messages and tool calls. It is
-built from the agent's own transcript and hooks — spekterm never scrapes the screen — and the terminal is
-always one click away.
+Switch an agent session to the conversation view to read the exchange as messages and tool calls. The
+view is built from the agent's own transcript and hooks; spekterm never scrapes the screen. The terminal
+is always one click away.
 
 ## Work that arrives on its own
 
@@ -97,10 +97,10 @@ always one click away.
   caption="Slack mentions waiting in the inbox, each ready to open as a session in the right repository."
 />
 
-- **Inbox** — when someone mentions you in Slack, it lands in the inbox; accept it to get a Claude Code
-  session in the repository you choose, with the context filled in.
-- **Handoffs** — an agent can hand work to another repository's agent. spekterm opens the session, and
-  you see both ends of the handoff until the work is reported done.
+- **Inbox** — when someone mentions you in Slack, the mention lands in the inbox. Accept it to get a
+  Claude Code session in the repository you choose, with the context already filled in.
+- **Handoffs** — an agent can hand work to another repository's agent. spekterm opens the new session,
+  and you can follow both ends of the handoff until the work is reported done.
 
 <Screenshot
   wide
@@ -122,18 +122,18 @@ always one click away.
 ## Local-first, open source
 
 spekterm is a desktop app: your repositories, sessions, and settings stay on your machine. It has no
-account, no telemetry, and no update check. The programs it starts for you — the `claude` CLI and the
-`openspec` CLI — make their own connections; [Data and network](/docs/reference/data-and-network/) lists
-exactly what connects where. spekterm is MIT-licensed, and its source is on
+account, no telemetry, and no update check. The programs it starts for you, the `claude` and `openspec`
+CLIs, make their own connections. [Data and network](/docs/reference/data-and-network/) lists exactly
+what connects where. spekterm is MIT-licensed, and its source is on
 [GitHub](https://github.com/spekhq/spekterm).
 
 ## Built on spek
 
 <SpekLogo />
 
-[spek](/spek/) is spekterm's sibling project: an open-source, read-only viewer for OpenSpec content, from
-the same maintainers — in your browser, in VS Code, in a JetBrains IDE, or as a static page your CI builds.
-spekterm's side panel stands on spek's work:
+[spek](/spek/) is spekterm's sibling project, from the same maintainers: an open-source, read-only viewer
+for OpenSpec content. It runs in your browser, in VS Code, in a JetBrains IDE, or as a static page your CI
+builds. spekterm's side panel is built on spek's work:
 
 - **The engine that reads OpenSpec** — scanning specs and changes, task progress, and worktree
   aggregation come from spek's core package, `@spekjs/core`.

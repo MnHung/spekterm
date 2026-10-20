@@ -7,7 +7,7 @@ sidebar:
 
 ## How is this different from running Claude Code in a terminal?
 
-You still run Claude Code in a real terminal — spekterm adds what a row of terminal tabs does not have.
+You still run Claude Code in a real terminal. spekterm adds what a row of terminal tabs does not have.
 Each repository gets its own place on the rail with its sessions, and next to the terminal is a side panel
 that understands OpenSpec: it shows the change the agent is working on — its proposal, design, tasks, and
 specs — and follows along as the agent writes to disk. Sessions also survive a restart, and an agent can
@@ -40,16 +40,16 @@ list.
 
 ## How is spekterm related to spek?
 
-[spek](/spek/) is a read-only OpenSpec viewer — a web app, a VS Code extension,
-and a JetBrains plugin — from the same maintainers. spekterm uses spek's engine (`@spekjs/core`) to read
+[spek](/spek/) is a read-only OpenSpec viewer from the same maintainers. It comes as a web app, a VS Code
+extension, and a JetBrains plugin. spekterm uses spek's engine (`@spekjs/core`) to read
 OpenSpec, and spek's Graph and Timeline (`@spekjs/ui`) in its side panel. You do not need spek to use
-spekterm, or the other way around; spek is for reading specs in your editor or browser, spekterm for
+spekterm, or the other way around. spek is for reading specs in your editor or browser; spekterm is for
 running agents next to them. See [spek's documentation](/spek/docs/).
 
 ## Is spekterm affiliated with Anthropic or OpenSpec?
 
-No. spekterm is an independent open-source project. Claude Code is Anthropic's product and OpenSpec is
-its own project; spekterm only runs them.
+No. spekterm is an independent open-source project. Claude Code is Anthropic's product, and OpenSpec is
+a separate project. spekterm only runs them.
 
 ## Is it free?
 

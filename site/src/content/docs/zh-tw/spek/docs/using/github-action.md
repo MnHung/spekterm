@@ -5,7 +5,7 @@ sidebar:
   order: 3
 ---
 
-[spek action](https://github.com/marketplace/actions/spek-openspec-static-site) 在你自己的 GitHub Actions 裡，為 repository 的 OpenSpec 產出一個獨立的單一 HTML 頁面 —— 畫面和其他用法相同，內容直接嵌在頁面裡。它也可以產生狀態徽章。
+[spek action](https://github.com/marketplace/actions/spek-openspec-static-site) 在你自己的 GitHub Actions 裡執行，把 repository 的 OpenSpec 產出成一個自成一體的單一 HTML 頁面。頁面的畫面和其他用法相同，內容直接嵌在頁面裡。action 也可以產生狀態徽章。
 
 ## 基本用法
 
@@ -19,7 +19,7 @@ sidebar:
     title: "My Project - OpenSpec"
 ```
 
-沒有完整的 git 歷史時照樣能建置，只是 change 的日期會無法取得。
+沒有完整的 git 歷史也能建置成功，只是取不到 change 的日期。
 
 ## 部署到 GitHub Pages
 
@@ -73,14 +73,11 @@ jobs:
 | `html-path` | 頁面的絕對路徑 |
 | `badges-path` | 徽章目錄的絕對路徑 |
 
-`spekhq/spek@v1` 決定用哪個 action；`spek-version` 決定 action 用哪一份 spek 原始碼來建頁面，預設是 spek
-的主分支。要固定在某個 release，把 `spek-version` 設成 [spek 的 releases 頁面](https://github.com/spekhq/spek/releases)
-上的某個 tag。
+`spekhq/spek@v1` 決定用哪個 action；`spek-version` 決定 action 用哪一份 spek 原始碼建置頁面，預設是 spek 的主分支。要固定在某個 release，把 `spek-version` 設成 [spek 的 releases 頁面](https://github.com/spekhq/spek/releases) 上的某個 tag。
 
 ## 徽章
 
-設 `generate-badges: true` 時，action 會在頁面旁邊多產生三個 SVG 徽章 —— spec 數量、進行中的 change、task
-進度。徽章由 action 自己畫，不會呼叫任何徽章服務。把它們跟頁面一起部署，再從 README 引用：
+設定 `generate-badges: true` 時，action 會在頁面旁邊多產生三個 SVG 徽章：spec 數量、進行中的 change 數量，以及 task 進度。徽章由 action 自己繪製，不會呼叫任何徽章服務。把徽章跟頁面一起部署，再從 README 引用：
 
 ```markdown
 ![Specs](https://your-user.github.io/your-repo/badges/specs.svg)
@@ -90,4 +87,4 @@ jobs:
 
 ## 會執行什麼
 
-action 在你的 workflow 裡執行：在 `spek-version` 取出 spek 的原始碼，從 npm 安裝 spek 的相依套件與 OpenSpec CLI，並在關閉 CLI 使用統計的情況下建置頁面。見 [資料與網路](/zh-tw/spek/docs/reference/data-and-network/)。
+action 在你的 workflow 裡執行。它取出 `spek-version` 指定的 spek 原始碼，從 npm 安裝 spek 的相依套件與 OpenSpec CLI，再關閉 CLI 的使用統計來建置頁面。見 [資料與網路](/zh-tw/spek/docs/reference/data-and-network/)。
