@@ -27,6 +27,12 @@ an `at` later than that moment schedules it; an `at` not later than that moment 
 exactly as one without `at` — it is not a scheduled handoff, and nothing downstream compares its time again.
 A handoff without `at` SHALL behave exactly as before this capability.
 
+**With `repeat` (`recurring-handoff`), `at` is the time the recurrence starts, not the time the handoff opens**:
+the format, offset, date and bound rules above SHALL apply to it unchanged, but such a handoff SHALL NOT be a
+scheduled handoff — it is a proposal that waits for the user's approval, and nothing compares its `at` with the
+clock to open it. **Wherever this capability speaks of a handoff with a future `at`, it means one without
+`repeat`**: a proposal raises its arrival notification and counts in the badge (`recurring-handoff`).
+
 The bound SHALL be the same value the introduction states (`agent-handoff-source`), derived from one source.
 
 #### Scenario: A time with an offset in the future schedules the handoff
@@ -53,6 +59,16 @@ The bound SHALL be the same value the introduction states (`agent-handoff-source
 
 - **WHEN** an agent writes a valid handoff with `at` set to one minute ago
 - **THEN** a session is created for it on arrival, as for a handoff without `at`, and the inbox never lists it as scheduled
+
+#### Scenario: With repeat, at is the start of the recurrence
+
+- **WHEN** an agent writes a valid handoff with `repeat` and `at` set to tomorrow with an explicit offset
+- **THEN** it is not listed as a scheduled handoff, it is listed as a proposal waiting for approval, a notification is raised and it counts in the badge, and its first listed time is not earlier than tomorrow's `at`
+
+#### Scenario: With repeat, at still follows the format rules
+
+- **WHEN** an agent writes a handoff with `repeat` and an `at` that has no offset
+- **THEN** the handoff is refused as a failure visible in the inbox, and nothing is proposed
 
 ### Requirement: A scheduled handoff is checked when it arrives and waits without asking for attention
 

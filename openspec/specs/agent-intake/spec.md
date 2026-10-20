@@ -215,6 +215,11 @@ channel 判斷」同樣可靠，而前者完全由投遞者決定。
 收件匣時看得見（呈現的期間見「已開好的項目只在它的本文仍需要被看時呈現於收件匣」）。
 該關聯 SHALL 只存在 intake 這一側，SHALL NOT 寫入 session 的持久化紀錄。
 
+**One exception: an approved repeating proposal** (`recurring-handoff`) is accepted without creating a session —
+approving it schedules its occurrences, each of which records its own session. It SHALL be accepted with no
+session identifier and marked settled at the moment it is approved, so that it is not presented as an opened
+item; its identifier and digest SHALL stay for deduplication as every accepted intake's do.
+
 **已接受的 intake 另 SHALL 能被標記為「已了結」**（prompt 已送出，或使用者已清除它）。該標記
 SHALL NOT 構成第四種狀態 —— 它的狀態仍為已接受 —— 且 SHALL NOT 影響去重。以新的狀態表達它，
 會讓不認得該狀態的版本整筆丟棄那些紀錄，連同它們的去重鍵。
@@ -250,6 +255,11 @@ SHALL NOT 構成第四種狀態 —— 它的狀態仍為已接受 —— 且 SH
 
 - **WHEN** 一則已接受的 intake 被標記為已了結，應用程式其後重新啟動
 - **THEN** 該則 intake 存在且狀態為已接受
+
+#### Scenario: An approved repeating proposal is accepted without a session and survives a restart
+
+- **WHEN** the user approves a repeating proposal and the application restarts
+- **THEN** the proposal exists with state accepted, no session identifier and marked settled, it is not listed in the inbox, and the same proposal delivered again is a duplicate
 
 ### Requirement: 投遞的內容為不受信任的輸入，落盤的位置不得由它決定
 

@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import test from 'node:test'
+import { IntakeStore } from './intake-store'
 import { AttentionLog } from './remote-attention'
 import { createRemoteHost, type HostDeps } from './remote-host'
 import { RemoteError } from './remote-frames'
@@ -32,6 +36,8 @@ function noWindowHost(): RemoteHost {
     sessions: { view: () => [] },
     terminal: () => undefined,
     attention,
+    // An empty inbox: `inbox.accept` asks whether the item is a repeating proposal before it needs a window.
+    intake: { store: { get: () => undefined, list: () => [] } },
     request: () => Promise.reject(new Error('the renderer must not be asked')),
     setRemoteWatched: () => undefined,
   } as unknown as HostDeps)
@@ -318,4 +324,42 @@ test('a conversation watch sends the skill list as conversation.skills, null inc
       { sessionId: 's1', skills: [{ name: 'pdf', description: 'Read PDFs.' }] },
     ],
   )
+})
+
+test('a repeating proposal: accepting is refused before anything else and leaves it pending; ignoring declines it', async () => {
+  const base = mkdtempSync(join(tmpdir(), 'remote-proposal-'))
+  try {
+    const store = new IntakeStore(join(base, 'intake.json'))
+    const verified = { adapter: 'handoff', originKind: 'session', originId: 'f1' }
+    const authored = { title: 'weekly', body: 'review', actor: 'alpha', originLabel: 'alpha' }
+    store.add({ id: 'p1', verified: { ...verified, repeat: '0 21 * * 3' }, authored, receivedAt: 1 })
+    store.add({ id: 'o1', verified: { ...verified, repeat: '0 21 * * 3', recurrenceId: 'p0', scheduledAt: 9e12 }, authored, receivedAt: 1 }, { opensAt: 9e12 })
+    const host = createRemoteHost({
+      window: () => null,
+      folders: { list: () => [{ id: 'f1', name: 'api-server', path: '/x', status: 'ok', pinned: false, hasOpenSpec: true, branch: 'main' }] },
+      sessions: { view: () => [] },
+      terminal: () => undefined,
+      intake: { store },
+      routing: { get: () => ({ rules: [], fallbackFolderId: null }) },
+      request: () => Promise.reject(new Error('the renderer must not be asked')),
+      setRemoteWatched: () => undefined,
+    } as unknown as HostDeps)
+    const conn = connection()
+    const session = openRemoteSession(host, conn)
+    const accepted = await call(session, conn, 'inbox.accept', { adapter: 'handoff', id: 'p1', folderId: 'f1' })
+    assert.equal(accepted.e?.code, 'APPROVE_ON_DESKTOP')
+    assert.equal(store.get('handoff', 'p1')?.state, 'pending')
+    // An occurrence is not a proposal: its accept goes on to the window (none here).
+    const occurrence = await call(session, conn, 'inbox.accept', { adapter: 'handoff', id: 'o1', folderId: 'f1' })
+    assert.equal(occurrence.e?.code, 'NO_WINDOW')
+    const list = await call(session, conn, 'inbox.list')
+    const items = (list.r?.items ?? []) as { id: string; recurrence?: { role: string; repeat: string; next?: number[] } }[]
+    assert.equal(items.find((i) => i.id === 'p1')?.recurrence?.role, 'proposal')
+    assert.equal(items.find((i) => i.id === 'p1')?.recurrence?.next?.length, 3)
+    assert.equal(items.find((i) => i.id === 'o1')?.recurrence?.role, 'occurrence')
+    await call(session, conn, 'inbox.ignore', { adapter: 'handoff', id: 'p1' })
+    assert.equal(store.get('handoff', 'p1')?.state, 'dismissed')
+  } finally {
+    rmSync(base, { recursive: true, force: true })
+  }
 })

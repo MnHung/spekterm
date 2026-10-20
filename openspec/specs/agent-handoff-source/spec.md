@@ -33,6 +33,12 @@ agent session。
   the required offset, the scheduling bound, that a time not later than now opens at once, and that a
   scheduled handoff opens only while spekterm runs (at the next start when its time passed while it was
   closed);
+- **that a handoff may repeat** (see `recurring-handoff`): the field, the accepted cron syntax, that it is read
+  in the desktop's time zone and the name of that zone, that `at` with it is the start and `until` its end
+  (with the format and bound rules that apply to them), that the minute
+  must be a single value, what is not accepted (seconds, macros, `L`, `W`, `#`, `?`) and that a schedule with no
+  time within the search bound is refused, that the user approves it before anything opens, that each time opens a new session
+  until the user stops it, and that times missed while spekterm was closed run once at the next start;
 - **它自己的固定名字**（見 `agent-peer-name`），以及**如何取得它當下的母、子、兄弟 session**
   （見 `session-lineage`）—— 含對方的名字、對方此刻是否在執行，以及聯絡對方用的是 agent CLI
   自身的訊息功能、以對方的名字定址。
@@ -161,6 +167,16 @@ never reads the receipt. 它會照著自己手上那份說明去寫，被拒絕�
 
 - **WHEN** the introduction states the scheduling bound as N days
 - **THEN** a handoff scheduled N days minus one minute ahead is scheduled, and one scheduled N days plus one minute ahead is refused
+
+#### Scenario: The introduction states the repeat field and the user's approval
+
+- **WHEN** the text injected into an agent's context is examined
+- **THEN** it states the `repeat` field with its five cron fields, the desktop's time zone by name, that the minute must be a single value, that the user approves a repeating handoff before it opens, and that missed times run once at the next start
+
+#### Scenario: The stated time zone is the one the schedule is read in
+
+- **WHEN** the desktop's time zone is Asia/Taipei and an agent proposes `0 21 * * 3`
+- **THEN** the introduction names Asia/Taipei, and the proposal's next times are Wednesdays at 21:00 Taipei time
 
 ### Requirement: 投遞落點為每個 session 各一，且來源身分由落點推導而非投遞內容
 

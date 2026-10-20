@@ -9,7 +9,12 @@ export function testOpener(
   service: HandoffOpenerDeps['service'],
   candidates: () => TargetCandidate[],
   onOpen: (adapter: string, id: string, folderId: string) => void,
-  options: { eventsEnabled?: () => boolean; canReceive?: () => boolean; now?: () => number } = {},
+  options: {
+    eventsEnabled?: () => boolean
+    canReceive?: () => boolean
+    now?: () => number
+    keeper?: HandoffOpenerDeps['keeper']
+  } = {},
 ): HandoffOpener {
   return new HandoffOpener({
     service,
@@ -19,5 +24,6 @@ export function testOpener(
     requestOpen: onOpen,
     changed: () => {},
     ...(options.now ? { now: options.now } : {}),
+    ...(options.keeper ? { keeper: options.keeper } : {}),
   })
 }

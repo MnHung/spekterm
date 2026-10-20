@@ -38,6 +38,34 @@ export function scheduleLine(scheduledAt: number, startedAt: number): string {
   return `This handoff was scheduled for ${localInstant(scheduledAt)}. It started at ${localInstant(startedAt)}.`
 }
 
+/**
+ * The lines an occurrence of a repeating handoff adds outside the fence (`recurring-handoff`, design D7): that it
+ * repeats, that each time is its own session, its end, and the later times that passed before it opened and were
+ * not run separately. `missed` holds the first ones listed; `missedCount` all of them, `missedMore` when the count
+ * stopped at its limit.
+ */
+export function recurrenceLines(input: {
+  repeat: string
+  until?: number
+  missed: readonly number[]
+  missedCount: number
+  missedMore: boolean
+}): string {
+  const lines = [
+    `This handoff repeats on the schedule "${input.repeat}" (cron, local time), approved by the user; each time opens its own session.`,
+  ]
+  if (input.until !== undefined) lines.push(`The schedule ends at ${localInstant(input.until)}.`)
+  if (input.missedCount > 0) {
+    const listed = input.missed.map(localInstant).join(', ')
+    const rest = input.missedCount - input.missed.length
+    const count = input.missedMore ? `At least ${input.missedCount}` : String(input.missedCount)
+    lines.push(
+      `${count} later scheduled ${input.missedCount === 1 ? 'time' : 'times'} passed before it started and ${input.missedCount === 1 ? 'was' : 'were'} not run separately: ${listed}${rest > 0 ? `, and ${input.missedMore ? 'more' : `${rest} more`}` : ''}.`,
+    )
+  }
+  return lines.join(' ')
+}
+
 /** ISO 8601 with the desktop's offset, to the second: the agent reads it next to its own clock. */
 export function localInstant(ms: number): string {
   const date = new Date(ms)
@@ -154,5 +182,7 @@ export function receiptReason(code: IntakeRejection | 'READ_FAILED'): string {
       return 'Agent event reporting is off, so the end of the target session\'s turn cannot be observed. It can succeed once the user turns it on.'
     case 'SCHEDULE_INVALID':
       return '"at" breaks the scheduling rules: an ISO 8601 time with an offset, within the bound in your introduction.'
+    case 'REPEAT_INVALID':
+      return '"repeat" or "until" breaks the repeating rules: five cron fields "minute hour day month weekday" with a single minute, and "until" later than now and the start, with a time between; see your introduction.'
   }
 }

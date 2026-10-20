@@ -37,12 +37,24 @@ export interface HandoffOpenerDeps {
   requestOpen: (adapter: string, id: string, folderId: string) => void
   /** The inbox changed (`notifyIntakeChanged`). */
   changed: () => void
+  /**
+   * Keeps each recurrence's upcoming occurrence (`recurring-handoff`, `RecurrenceKeeper`): all of them at the start
+   * of every tick — so a repaired occurrence that is already due opens in the same tick — and one after its
+   * occurrence fires or is refused.
+   */
+  keeper?: { ensureAll: () => void; ensureNext: (recurrenceId: string) => void }
   now?: () => number
 }
 
 export class HandoffOpener {
   readonly #deps: HandoffOpenerDeps
   readonly #now: () => number
+  /**
+   * The records this run asked a window to open. A ticket is issued only for a handoff with a source, so the
+   * recurrence keeper asks this too to tell an opening in progress from one the opener refused. In memory: after a
+   * restart a fired, pending occurrence is one the user deals with.
+   */
+  readonly #requested = new Set<string>()
 
   constructor(deps: HandoffOpenerDeps) {
     this.#deps = deps
@@ -51,6 +63,7 @@ export class HandoffOpener {
 
   /** Opens every due handoff, oldest first, if a window can receive them. Never throws. */
   tick(): void {
+    this.#deps.keeper?.ensureAll()
     if (!this.#deps.canReceive()) return
     const now = this.#now()
     const due = this.#deps.service.store
@@ -63,6 +76,7 @@ export class HandoffOpener {
       } catch (error) {
         console.error(`[handoff] opening ${record.id} failed: ${String(error)}`)
       }
+      this.#afterFire(record)
     }
   }
 
@@ -73,7 +87,20 @@ export class HandoffOpener {
   runNow(adapter: string, id: string): boolean {
     const record = this.#deps.service.store.get(adapter, id)
     if (!record || record.state !== 'pending' || record.opensAt === undefined || record.firedAt !== undefined) return false
-    return this.#fire(record)
+    const fired = this.#fire(record)
+    this.#afterFire(record)
+    return fired
+  }
+
+  /** This run asked a window to open the record (as opposed to refusing it). */
+  wasRequested(adapter: string, id: string): boolean {
+    return this.#requested.has(`${adapter} ${id}`)
+  }
+
+  /** An occurrence fired or was refused: its recurrence's next one, at once (`recurring-handoff`). */
+  #afterFire(record: IntakeRecord): void {
+    const recurrenceId = record.content?.verified.recurrenceId
+    if (recurrenceId !== undefined) this.#deps.keeper?.ensureNext(recurrenceId)
   }
 
   #fire(record: IntakeRecord): boolean {
@@ -107,6 +134,7 @@ export class HandoffOpener {
       return false
     }
 
+    this.#requested.add(`${record.adapter} ${record.id}`)
     this.#deps.requestOpen(record.adapter, record.id, target.folderId)
     // A scheduled handoff is announced now, not when it was scheduled (design D4); an unscheduled one was
     // announced by `deliver` on arrival and is not announced twice.

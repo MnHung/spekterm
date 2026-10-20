@@ -361,6 +361,11 @@ would have the desktop submit a third-party body later on its own.
 
 If the session cannot be created, the accept SHALL be refused, and the item SHALL stay pending.
 
+**A repeating proposal (`recurring-handoff`) SHALL NOT be accepted from a device**: the accept SHALL be refused
+with a named error stating that it is approved on the desktop, and the proposal SHALL stay pending. A client
+that does not know repeating handoffs shows a proposal as an ordinary pending item, so accepting it there would
+approve an unbounded schedule its user was never shown. Approval from a device needs an operation of its own.
+
 Ignoring SHALL have the same effect as the desktop's ignore. Any change to the inbox, made on the desktop or
 from a device, SHALL be sent to connected clients as a new complete list and SHALL be reflected in the
 desktop's inbox.
@@ -401,6 +406,11 @@ unsent.
 
 - **WHEN** the user ignores a pending inbox item on the desktop while a client is connected
 - **THEN** the client receives an inbox list without that item
+
+#### Scenario: Accepting a repeating proposal from a device is refused
+
+- **WHEN** a client accepts a repeating proposal into a folder it names
+- **THEN** the response is the named error, no session is created, nothing is scheduled, and the proposal stays pending
 
 ### Requirement: Handoff state and briefs are readable
 
@@ -1401,3 +1411,48 @@ to it), and that a description is shown as plain text.
 
 - **WHEN** a watching client sends `/name   arguments  ` as a reply
 - **THEN** the reply's reported text is `/name arguments`, and that is what was written before the submit key
+
+### Requirement: A device sees repeating handoffs, declines a proposal, and runs or skips an occurrence
+
+The inbox list SHALL mark every item that belongs to a repeating handoff (`recurring-handoff`) with its role —
+a proposal waiting for approval, or an occurrence of an approved recurrence — and its cron expression as the
+agent wrote it, and its end time when it has one. A proposal SHALL also carry its next times, up to three, in the list's
+time unit, as computed when the list was built. A client SHALL be able to tell a proposal from an occurrence from that mark alone, whatever the
+item's other fields: an occurrence whose opening failed is pending without a scheduled time, and is still an
+occurrence.
+
+Ignoring a proposal SHALL decline it, with the effect of the desktop's Decline. Accepting an occurrence that is
+still scheduled SHALL run it now, as accepting a scheduled handoff does; accepting one whose opening failed
+SHALL follow the ordinary accept. **Ignoring an occurrence SHALL skip that time only**; the recurrence continues.
+Stopping a recurrence SHALL NOT be possible from a device in this version, and the desktop's list of approved
+recurrences is not part of the inbox list: a device does not see a recurrence that has no upcoming occurrence.
+
+These SHALL be fields on existing items and meanings of existing operations: the protocol version and the
+allow-list of operations SHALL NOT change. The protocol document SHALL describe the fields, the meanings and the
+error, and SHALL add client obligations: show the expression of a repeating item; say that ignoring an
+occurrence skips one time only; say that a proposal is approved on the desktop.
+
+#### Scenario: The inbox list marks a proposal with its expression and next times
+
+- **WHEN** an agent proposes a handoff repeating `0 21 * * 3` and a client lists the inbox
+- **THEN** the item is marked as a proposal with the expression `0 21 * * 3` and up to three next times, each a Wednesday at 21:00 in the desktop's time zone
+
+#### Scenario: A failed occurrence is still marked as an occurrence
+
+- **WHEN** an occurrence's target folder was removed before its time, its opening failed, and a client lists the inbox
+- **THEN** the item is pending, has no scheduled time, and is marked as an occurrence with its expression
+
+#### Scenario: Ignoring an occurrence from a device skips one time
+
+- **WHEN** a client ignores the upcoming occurrence of an approved recurrence
+- **THEN** no session is created for that time, and the list carries the recurrence's next occurrence at the following matching time
+
+#### Scenario: Ignoring a proposal from a device declines it
+
+- **WHEN** a client ignores a repeating proposal
+- **THEN** it is no longer listed on the client or the desktop, and nothing is scheduled
+
+#### Scenario: The operations and the protocol version are unchanged
+
+- **WHEN** a client authenticates against a desktop with this capability
+- **THEN** the protocol version and the list of operations are the same as before it

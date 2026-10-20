@@ -3,6 +3,7 @@ import path from 'node:path'
 
 import { MAX_FIELD_LENGTH, MAX_FIRST_PARTY_BODY_LENGTH } from './intake-schema'
 import { MAX_DELIVERY_BYTES } from './intake-source'
+import { MAX_REPEAT_SEARCH_YEARS } from './cron'
 import { MAX_REPORT_LENGTH, MAX_SCHEDULE_AHEAD_DAYS } from './handoff-delivery'
 import { receiptsDir } from './handoff-outbox'
 import type { WorkspaceFolder } from './workspace-store'
@@ -65,6 +66,11 @@ export interface IntroInput {
    * 壓縮、清除之後子 agent 就不知道要回報，而那個 session 永遠停在「等你」。
    */
   reportable?: boolean
+  /**
+   * The zone a repeating handoff's schedule is read in (`recurring-handoff`). Absent: the desktop's, when the
+   * introduction is written. Tests pass it.
+   */
+  timeZone?: string
 }
 
 /**
@@ -99,7 +105,7 @@ export function introText(input: IntroInput): string {
   return text
 }
 
-function composeIntro({ folders, outbox, receipts, name, relations, reportable }: IntroInput, shown: number): string {
+function composeIntro({ folders, outbox, receipts, name, relations, reportable, timeZone }: IntroInput, shown: number): string {
   /**
    * **數字由實際生效的常數推導，不寫死。**
    *
@@ -112,6 +118,7 @@ function composeIntro({ folders, outbox, receipts, name, relations, reportable }
    */
   const deliveryKb = Math.floor(MAX_DELIVERY_BYTES / 1024)
   const receiptsPath = receipts ?? receiptsDir(path.basename(outbox))
+  const zone = timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone
   const lines = [
     'You are running inside spekterm, a desktop workspace that hosts this terminal session.',
     '',
@@ -122,7 +129,7 @@ function composeIntro({ folders, outbox, receipts, name, relations, reportable }
     'A half-written .json file is read and rejected.',
     '',
     'Shape:',
-    '  {"target": "<repo name or absolute path>", "title": "<one line>", "body": "<the handoff>", "at": "<optional>"}',
+    '  {"target": "<repo name or absolute path>", "title": "<one line>", "body": "<the handoff>", "at": "<optional>", "repeat": "<optional>", "until": "<optional>"}',
     '',
     'Limits - a delivery that breaks any of these is rejected:',
     `  title: at most ${MAX_FIELD_LENGTH} characters.`,
@@ -131,6 +138,10 @@ function composeIntro({ folders, outbox, receipts, name, relations, reportable }
     '  If the work needs more, write the detail to a file in the target repo and point to it from the body.',
     `  at: leave it out to open the handoff now. To open it later, an ISO 8601 time with an offset (2027-01-15T09:00:00+01:00, or Z). No offset, a date that does not exist, or more than ${MAX_SCHEDULE_AHEAD_DAYS} days ahead is rejected; a time not later than now opens at once.`,
     '      A scheduled handoff opens only while spekterm runs: if its time passed while spekterm was closed, it opens at the next start. It always opens a new session.',
+    `  repeat: cron "minute hour day month weekday" in ${zone}, e.g. "0 21 * * 3" (Wed 21:00); then "at" is its start and "until" (format of "at", no day bound) its end, both optional.`,
+    '      Fields: * or a list of n, a-b, */s, a-b/s; JAN-DEC, SUN-SAT; weekday 0 or 7 is Sunday; day and weekday both set: either matches.',
+    `      Rejected: minute not one number, seconds, @macros, L W # ?, no time in ${MAX_REPEAT_SEARCH_YEARS} years; "until" without "repeat", not after now and the start, or with no time before it.`,
+    '      The user approves it first; then each time opens a new session until it ends or is stopped. It opens only while spekterm runs; times missed while closed run once at the next start.',
     '',
     'The target must match one of the repos below exactly (case-insensitive) by name, or by its absolute path.',
     'Names are not unique; if two repos share a name, use the absolute path. Partial or fuzzy matches are rejected.',
@@ -144,6 +155,7 @@ function composeIntro({ folders, outbox, receipts, name, relations, reportable }
     'A file gone from your outbox means its receipt exists. Its "status" is one of:',
     '  accepted  - a handoff: its session is being opened; a report: taken; a command: accepted to be carried out.',
     '  scheduled - a handoff that opens at "at".',
+    "  proposed  - a repeating handoff awaiting the user's approval; you are not told whether it is given.",
     '  duplicate - the same content was received before; nothing new happened.',
     '  rejected  - refused; "code" and "reason" say why. "permanent": false means it can succeed once something changes.',
     '  held      - not processed yet; the file stays and is read again ("reason" says when).',

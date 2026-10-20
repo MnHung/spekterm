@@ -2708,6 +2708,29 @@ function scheduledClick(title, keyPath) {
   })()`
 }
 
+/** The inbox's Schedules tab, by its fixed dictionary label: its visible text carries a count (`recurring-handoff`). */
+const SWITCH_TO_SCHEDULES = `(() => {
+  const list = document.querySelector('[role="tablist"]${label('intake.label')}')
+  const tab = list?.querySelector('[role="tab"]${label('intake.schedulesTab')}')
+  if (!tab) return false
+  if (tab.getAttribute('aria-selected') !== 'true') tab.click()
+  return tab.getAttribute('aria-selected') === 'true'
+})()`
+
+/** Open the inbox on its Schedules tab, where every scheduled handoff is listed. */
+async function openSchedules(app) {
+  await openInbox(app)
+  return pollFor({ read: () => app.client.evaluate(SWITCH_TO_SCHEDULES), settled: Boolean, timeoutMs: 10_000, label: 'the Schedules tab' })
+}
+
+/** The selected inbox tab's fixed label, or null when the inbox is closed. */
+const SELECTED_INTAKE_TAB = `(() => {
+  const list = document.querySelector('[role="tablist"]${label('intake.label')}')
+  return list?.querySelector('[role="tab"][aria-selected="true"]')?.getAttribute('aria-label') ?? null
+})()`
+
+const CLOSE_INBOX = `(() => { const d = document.querySelector('[role="dialog"]${label('intake.label')}'); d?.querySelector(${JSON.stringify(label('intake.close'))})?.click(); return !document.querySelector('[role="dialog"]${label('intake.label')}') })()`
+
 /**
  * scheduled-handoff while the app runs: waiting without a session, a notification or a badge; Run now and Cancel
  * in the inbox; opening when due without moving focus, with one notification; receipts for every outcome.
@@ -2750,7 +2773,8 @@ async function runScheduled(_mode, _modeConfig, context) {
   // being newest also separates "newest first" (LAST, CANCEL, LATER).
   write('cancel.json', { target, title: 'SCHED-CANCEL', body: 'never mind', at: new Date(Date.parse(tomorrow) + 24 * 3600_000).toISOString() })
   write('last.json', { target, title: 'SCHED-LAST', body: 'much later', at: new Date(Date.parse(tomorrow) + 48 * 3600_000).toISOString() })
-  await openInbox(app)
+  // Scheduled handoffs are listed in the Schedules tab (`recurring-handoff`).
+  await openSchedules(app)
   const listed = await pollFor({
     read: () => app.client.evaluate(`[...document.querySelectorAll(${JSON.stringify(`li[aria-label^="${prefixOf('intake.scheduledItemLabel')}"]`)})].map((li) => li.getAttribute('aria-label'))`),
     settled: (labels) => labels.length === 3,
@@ -2892,6 +2916,268 @@ async function runScheduledStart(_mode, _modeConfig, context) {
     Boolean(line) && Date.parse(line[1]) === Math.floor(past / 1000) * 1000 && Date.parse(line[2]) > past,
     line ? `${line[1]} / ${line[2]}` : overdue.slice(0, 200),
   )
+}
+
+// ── recurring-handoff ──────────────────────────────────────────────────────────
+
+function proposalItem(title) {
+  return label('intake.proposalItemLabel', { title })
+}
+
+function recurrenceItem(title) {
+  return label('intake.recurrenceItemLabel', { title })
+}
+
+/** Click a button, by its dictionary label, inside the row a selector names; true when the button was there. */
+function clickIn(rowSelector, keyPath) {
+  return `(() => {
+    const button = document.querySelector(${JSON.stringify(rowSelector)})?.querySelector(${JSON.stringify(label(keyPath))})
+    if (!button || button.disabled) return false
+    button.click()
+    return true
+  })()`
+}
+
+/** Choose a folder in a proposal's folder select (native setter + change, as `chooseFolderExpression`). */
+function chooseProposalFolder(title, folderId) {
+  return `(() => {
+    const select = document.querySelector(${JSON.stringify(proposalItem(title))})?.querySelector(${JSON.stringify(label('intake.chooseFolder'))})
+    if (!select) return null
+    if (select.value !== ${JSON.stringify(folderId)}) {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set
+      setter.call(select, ${JSON.stringify(folderId)})
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+    }
+    return select.value
+  })()`
+}
+
+/** A scheduled row's time (its `<time dateTime>`) and text, or null. */
+function scheduledRow(title) {
+  return `(() => {
+    const row = document.querySelector(${JSON.stringify(scheduledItem(title))})
+    if (!row) return null
+    return { at: Date.parse(row.querySelector('time')?.getAttribute('dateTime') ?? ''), text: row.textContent ?? '' }
+  })()`
+}
+
+/**
+ * recurring-handoff on the desktop: a proposal asks for attention and opens nothing; the inbox splits what waits now
+ * from what is planned (the Schedules tab, its count); Approve into another folder lists one occurrence there; Skip
+ * moves it a week; Stop repeating asks first; an occurrence due within the minute opens a session and the next one
+ * is listed; a proposal's notification opens the Schedules tab, another notification the items tab.
+ */
+async function runRecurring(_mode, _modeConfig, context) {
+  const { profile, folders } = seedProfile()
+  seedRouting(profile, { fallbackFolderId: folders[0].id })
+  const configDir = mkTemp('spekterm-intake-config-')
+  const marker = `spek-intake-${process.pid}-${Date.now()}`
+  const stub = makeStubAgent(mkTemp, configDir, { readyDelaySeconds: 2, busySeconds: 1 })
+  drop(profile, 'source', intake({ id: 'src-1', title: 'SOURCE-TITLE' }))
+  const app = await freshApp(context, { profile, configDir, stub, marker })
+  await openInbox(app)
+  await pollFor({ read: () => app.client.evaluate(acceptExpression('SOURCE-TITLE')), settled: Boolean, timeoutMs: 20_000, label: 'source session opened' })
+  const outbox = await awaitOutbox(profile, 'the source outbox')
+  const sessionId = basename(outbox)
+  const write = (name, payload) => {
+    writeFileSync(join(outbox, `${name}.partial`), JSON.stringify(payload))
+    renameSync(join(outbox, `${name}.partial`), join(outbox, name))
+  }
+  await pollFor({ read: () => app.client.evaluate(CLOSE_INBOX), settled: Boolean, timeoutMs: 10_000, label: 'inbox closed' })
+
+  // ── A proposal: a receipt, a notification, a count; no session ──
+  const quiet = await settledNotifications(profile, 'notifications settled before the proposal')
+  const pidsBefore = ptySessionPids(marker)
+  write('weekly.json', { target: basename(folders[1].path), title: 'RECUR-WEEKLY', body: 'weekly review', repeat: '0 21 * * 3' })
+  const receipt = await pollFor({ read: () => receiptOf(profile, sessionId, 'weekly.json'), settled: Boolean, timeoutMs: 20_000, label: 'the proposal receipt' })
+  check(results, 'a repeating handoff gets a proposed receipt', receipt?.status === 'proposed', JSON.stringify(receipt))
+  const afterProposal = await settledNotifications(profile, 'notifications settled after the proposal')
+  check(results, 'a proposal raises an arrival notification', afterProposal.length > quiet.length, JSON.stringify(afterProposal.slice(quiet.length).map((n) => n.title)))
+  check(results, 'a proposal opens no session', ptySessionPids(marker).length === pidsBefore.length, `before=${pidsBefore.length} after=${ptySessionPids(marker).length}`)
+  const badge = await pollFor({ read: () => app.client.evaluate(BADGE_TEXT), settled: (text) => text === '1', timeoutMs: 10_000, label: 'the badge counts the proposal' })
+  check(results, 'a proposal counts in the activity bar badge', badge === '1', JSON.stringify(badge))
+
+  // ── The tabs: not in the items tab; in the Schedules tab, whose label shows the count ──
+  await openInbox(app)
+  const inItems = await app.client.evaluate(`Boolean(document.querySelector(${JSON.stringify(proposalItem('RECUR-WEEKLY'))}) || document.querySelector(${JSON.stringify(itemSelector('RECUR-WEEKLY'))}))`)
+  check(results, 'the items tab does not list a proposal', inItems === false, String(inItems))
+  const tabCount = await app.client.evaluate(`document.querySelector('[role="tablist"]${label('intake.label')}')?.querySelector('[role="tab"]${label('intake.schedulesTab')}')?.querySelector('span')?.textContent ?? null`)
+  check(results, 'the Schedules tab label shows the number of proposals', tabCount === '1', JSON.stringify(tabCount))
+  await openSchedules(app)
+  const shown = await pollFor({ read: () => app.client.evaluate(`document.querySelector(${JSON.stringify(proposalItem('RECUR-WEEKLY'))})?.textContent ?? ''`), settled: (text) => text.includes('0 21 * * 3'), timeoutMs: 10_000, label: 'the proposal in the Schedules tab' })
+  check(results, 'the Schedules tab shows the proposal with its expression and next times', shown.includes(copy('intake.repeats', { repeat: '0 21 * * 3' })) && shown.includes(copy('intake.repeatNext', { times: '' }).trim()), shown.slice(0, 300))
+
+  // ── Approve into another folder ──
+  await pollFor({ read: () => app.client.evaluate(chooseProposalFolder('RECUR-WEEKLY', folders[2].id)), settled: (value) => value === folders[2].id, timeoutMs: 10_000, label: 'the proposal folder chosen' })
+  await pollFor({ read: () => app.client.evaluate(clickIn(proposalItem('RECUR-WEEKLY'), 'intake.approve')), settled: Boolean, timeoutMs: 10_000, label: 'Approve clicked' })
+  const row = await pollFor({ read: () => app.client.evaluate(scheduledRow('RECUR-WEEKLY')), settled: Boolean, timeoutMs: 15_000, label: 'the occurrence listed' })
+  const when = new Date(row?.at ?? 0)
+  check(
+    results,
+    'approving opens nothing and lists one occurrence, a Wednesday at 21:00, in the chosen folder',
+    ptySessionPids(marker).length === pidsBefore.length && when.getDay() === 3 && when.getHours() === 21 && row.text.includes(copy('intake.opensInFolder', { name: basename(folders[2].path) })),
+    JSON.stringify({ at: row?.at, text: row?.text.slice(0, 160) }),
+  )
+  const recurrence = await app.client.evaluate(`Boolean(document.querySelector(${JSON.stringify(recurrenceItem('RECUR-WEEKLY'))}))`)
+  check(results, 'the approved recurrence is listed among the recurrences', recurrence === true, String(recurrence))
+
+  // ── Skip ──
+  await pollFor({ read: () => app.client.evaluate(clickIn(scheduledItem('RECUR-WEEKLY'), 'intake.skipOccurrence')), settled: Boolean, timeoutMs: 10_000, label: 'Skip clicked' })
+  const skipped = await pollFor({ read: () => app.client.evaluate(scheduledRow('RECUR-WEEKLY')), settled: (r) => r !== null && r.at !== row.at, timeoutMs: 15_000, label: 'the next occurrence listed' })
+  check(results, 'Skip moves the occurrence to the next week', skipped?.at === row.at + 7 * 24 * 3600_000, JSON.stringify({ was: row.at, now: skipped?.at }))
+
+  // ── Stop repeating asks first ──
+  await pollFor({ read: () => app.client.evaluate(clickIn(recurrenceItem('RECUR-WEEKLY'), 'intake.stopRepeating')), settled: Boolean, timeoutMs: 10_000, label: 'Stop repeating clicked' })
+  await pollFor({ read: () => app.client.evaluate(clickIn(recurrenceItem('RECUR-WEEKLY'), 'intake.stopRepeatingNo')), settled: Boolean, timeoutMs: 10_000, label: 'Keep clicked' })
+  const kept = await app.client.evaluate(`Boolean(document.querySelector(${JSON.stringify(recurrenceItem('RECUR-WEEKLY'))}) && document.querySelector(${JSON.stringify(scheduledItem('RECUR-WEEKLY'))}))`)
+  check(results, 'declining the confirmation keeps the recurrence and its occurrence', kept === true, String(kept))
+  await pollFor({ read: () => app.client.evaluate(clickIn(recurrenceItem('RECUR-WEEKLY'), 'intake.stopRepeating')), settled: Boolean, timeoutMs: 10_000, label: 'Stop repeating clicked again' })
+  await pollFor({ read: () => app.client.evaluate(clickIn(recurrenceItem('RECUR-WEEKLY'), 'intake.stopRepeatingYes')), settled: Boolean, timeoutMs: 10_000, label: 'Stop confirmed' })
+  const stopped = await pollFor({
+    read: () => app.client.evaluate(`!document.querySelector(${JSON.stringify(recurrenceItem('RECUR-WEEKLY'))}) && !document.querySelector(${JSON.stringify(scheduledItem('RECUR-WEEKLY'))})`),
+    settled: Boolean,
+    timeoutMs: 15_000,
+    label: 'the recurrence gone',
+  })
+  check(results, 'Stop repeating removes the recurrence and its occurrence', stopped === true, String(stopped))
+
+  // ── An occurrence due shortly opens a session; the next is listed ──
+  // The next minute at least 40 s ahead, so the occurrence is created before it is due.
+  const due = new Date(Math.ceil((Date.now() + 40_000) / 60_000) * 60_000)
+  write('hourly.json', { target: basename(folders[1].path), title: 'RECUR-HOURLY', body: 'hourly check', repeat: `${due.getMinutes()} * * * *` })
+  await pollFor({ read: () => app.client.evaluate(`Boolean(document.querySelector(${JSON.stringify(proposalItem('RECUR-HOURLY'))}))`), settled: Boolean, timeoutMs: 20_000, label: 'the hourly proposal listed' })
+  const beforeDue = ptySessionPids(marker)
+  await pollFor({ read: () => app.client.evaluate(clickIn(proposalItem('RECUR-HOURLY'), 'intake.approve')), settled: Boolean, timeoutMs: 10_000, label: 'Approve hourly clicked' })
+  const first = await pollFor({ read: () => app.client.evaluate(scheduledRow('RECUR-HOURLY')), settled: Boolean, timeoutMs: 15_000, label: 'the hourly occurrence listed' })
+  check(results, 'the hourly occurrence is at its next minute', first?.at === due.getTime(), JSON.stringify({ at: first?.at, due: due.getTime() }))
+  const opened = await pollFor({ read: () => ptySessionPids(marker).length, settled: (n) => n > beforeDue.length, timeoutMs: 150_000, label: 'the occurrence opened' })
+  const openedCwds = sessionCwds(marker)
+  check(results, 'a due occurrence opens a new session in its folder', opened > beforeDue.length && openedCwds.filter((cwd) => cwd === folders[1].path).length >= 1 && Date.now() >= due.getTime(), JSON.stringify(openedCwds))
+  const nextRow = await pollFor({ read: () => app.client.evaluate(scheduledRow('RECUR-HOURLY')), settled: (r) => r !== null && r.at !== first.at, timeoutMs: 20_000, label: 'the next hourly occurrence' })
+  check(results, 'the next occurrence is listed as soon as one opens', nextRow?.at === first.at + 3600_000, JSON.stringify({ first: first.at, next: nextRow?.at }))
+
+  // ── Which tab a notification opens, with the inbox last left on rules ──
+  const leaveOnRules = async () => {
+    await openInbox(app)
+    await pollFor({ read: () => app.client.evaluate(switchTabExpression('intake.rules.label')), settled: Boolean, timeoutMs: 10_000, label: 'the rules tab' })
+    await pollFor({ read: () => app.client.evaluate(CLOSE_INBOX), settled: Boolean, timeoutMs: 10_000, label: 'inbox closed' })
+  }
+  await leaveOnRules()
+  await settledNotifications(profile, 'notifications settled before the note proposal')
+  write('note.json', { target: basename(folders[1].path), title: 'RECUR-NOTE', body: 'note', repeat: '0 9 * * 1' })
+  await pollFor({ read: () => receiptOf(profile, sessionId, 'note.json'), settled: Boolean, timeoutMs: 20_000, label: 'the note proposal read' })
+  await settledNotifications(profile, 'notifications settled after the note proposal')
+  fireNotification(profile, 1)
+  const proposalTab = await pollFor({ read: () => app.client.evaluate(SELECTED_INTAKE_TAB), settled: Boolean, timeoutMs: 15_000, label: 'the inbox opened by the notification' })
+  check(results, "a proposal's notification opens the Schedules tab", proposalTab === copy('intake.schedulesTab'), JSON.stringify(proposalTab))
+  await pollFor({ read: () => app.client.evaluate(CLOSE_INBOX), settled: Boolean, timeoutMs: 10_000, label: 'inbox closed' })
+  await leaveOnRules()
+  drop(profile, 'plain-note', intake({ id: 'plain-note-1', title: 'PLAIN-NOTE' }))
+  await pollFor({ read: () => notifications(profile).some((n) => (n.body ?? '').includes('PLAIN-NOTE')), settled: Boolean, timeoutMs: 20_000, label: 'the ordinary notification' })
+  await settledNotifications(profile, 'notifications settled after the ordinary item')
+  fireNotification(profile, 2)
+  const itemsTab = await pollFor({ read: () => app.client.evaluate(SELECTED_INTAKE_TAB), settled: Boolean, timeoutMs: 15_000, label: 'the inbox opened again' })
+  check(results, 'another notification opens the items tab', itemsTab === copy('intake.title'), JSON.stringify(itemsTab))
+}
+
+/**
+ * recurring-handoff at start, seeded through `intake.json` and `handoff-recurrences.json`, one launch:
+ * (a) a daily recurrence whose occurrence is three days overdue opens once, its context lists the missed times, and
+ *     the next occurrence is after now;
+ * (b) a recurrence recorded behind an occurrence that was added (a crash between the two writes), its time passed:
+ *     one opening, not two;
+ * (c) is a separate launch: a damaged recurrence file changes nothing and says so.
+ */
+async function runRecurringStart(_mode, _modeConfig, context) {
+  const { profile, folders } = seedProfile()
+  seedRouting(profile, { fallbackFolderId: folders[0].id })
+  const configDir = mkTemp('spekterm-intake-config-')
+  const marker = `spek-intake-${process.pid}-${Date.now()}`
+  const stub = makeStubAgent(mkTemp, configDir, { readyDelaySeconds: 2, busySeconds: 1 })
+  const DAY = 24 * 3600_000
+  // A daily time three days ago, on the minute: 09:00 local.
+  const base = new Date()
+  base.setHours(9, 0, 0, 0)
+  const overdue = base.getTime() - 3 * DAY
+  const content = (title) => ({
+    verified: { adapter: 'handoff', originKind: 'session', originId: folders[0].id, firstPartyBody: true },
+    authored: { title, body: `${title}-BODY`, actor: 'alpha', originLabel: 'alpha' },
+  })
+  const occurrence = (recurrenceId, folder, title, at) => ({
+    adapter: 'handoff',
+    id: `${recurrenceId}-r${at.toString(36)}`,
+    state: 'pending',
+    digest: `seed-${recurrenceId}`,
+    opensAt: at,
+    content: {
+      verified: { ...content(title).verified, targetText: folder.path, targetFolderId: folder.id, scheduledAt: at, repeat: '0 9 * * *', recurrenceId },
+      authored: content(title).authored,
+      receivedAt: at - DAY,
+    },
+  })
+  const recurrence = (id, folder, title, extra = {}) => ({ id, repeat: '0 9 * * *', intake: content(title), targetText: folder.path, approvedAt: overdue - DAY, ...extra })
+  writeFileSync(
+    join(profile, 'intake.json'),
+    JSON.stringify({ version: 1, entries: [occurrence('rec-a', folders[1], 'DAILY-A', overdue), occurrence('rec-b', folders[2], 'DAILY-B', overdue)] }),
+  )
+  writeFileSync(
+    join(profile, 'handoff-recurrences.json'),
+    JSON.stringify({
+      version: 1,
+      entries: [recurrence('rec-a', folders[1], 'DAILY-A', { lastOccurrenceAt: overdue }), recurrence('rec-b', folders[2], 'DAILY-B')],
+    }),
+  )
+  const app = await freshApp(context, { profile, configDir, stub, marker })
+  await pollFor({ read: () => sessionCwds(marker), settled: (list) => list.length >= 2, timeoutMs: 60_000, label: 'two occurrences opened at start' })
+  await new Promise((resolve) => setTimeout(resolve, WINDOW_WAIT_MS))
+  const cwds = sessionCwds(marker)
+  check(results, '(a) three missed daily times open one session', cwds.filter((cwd) => cwd === folders[1].path).length === 1, JSON.stringify(cwds))
+  check(results, '(b) a crash between the two writes, restarted after its time: one opening, not two', cwds.filter((cwd) => cwd === folders[2].path).length === 1, JSON.stringify(cwds))
+  const contextRoot = join(profile, 'intake')
+  const contexts = existsSync(contextRoot) ? readdirSync(contextRoot).filter((name) => name.endsWith('.md')).map((name) => readFileSync(join(contextRoot, name), 'utf8')) : []
+  const daily = contexts.find((text) => text.includes('DAILY-A-BODY')) ?? ''
+  check(results, '(a) its context lists the missed times', /repeats on the schedule "0 9 \* \* \*"/.test(daily) && /\d+ later scheduled times? passed before it started/.test(daily), daily.slice(0, 400))
+  await openSchedules(app)
+  const next = await pollFor({ read: () => app.client.evaluate(scheduledRow('DAILY-A')), settled: Boolean, timeoutMs: 15_000, label: 'the next daily occurrence' })
+  check(results, '(a) the next occurrence is after now', (next?.at ?? 0) > Date.now(), JSON.stringify(next?.at))
+}
+
+/** recurring-handoff: a damaged recurrence file changes nothing, and the inbox says so. */
+async function runRecurringDamaged(_mode, _modeConfig, context) {
+  const { profile, folders } = seedProfile()
+  seedRouting(profile, { fallbackFolderId: folders[0].id })
+  const configDir = mkTemp('spekterm-intake-config-')
+  const marker = `spek-intake-${process.pid}-${Date.now()}`
+  const stub = makeStubAgent(mkTemp, configDir, { readyDelaySeconds: 2, busySeconds: 1 })
+  const at = Date.now() + 2 * 24 * 3600_000
+  writeFileSync(
+    join(profile, 'intake.json'),
+    JSON.stringify({
+      version: 1,
+      entries: [
+        {
+          adapter: 'handoff',
+          id: `rec-c-r${at.toString(36)}`,
+          state: 'pending',
+          digest: 'seed-c',
+          opensAt: at,
+          content: {
+            verified: { adapter: 'handoff', originKind: 'session', originId: folders[0].id, firstPartyBody: true, targetText: folders[1].path, targetFolderId: folders[1].id, scheduledAt: at, repeat: '0 9 * * *', recurrenceId: 'rec-c' },
+            authored: { title: 'DAMAGED-C', body: 'c', actor: 'alpha', originLabel: 'alpha' },
+            receivedAt: Date.now(),
+          },
+        },
+      ],
+    }),
+  )
+  const damaged = '{"version": 2, "entries": []}'
+  writeFileSync(join(profile, 'handoff-recurrences.json'), damaged)
+  const app = await freshApp(context, { profile, configDir, stub, marker })
+  await openSchedules(app)
+  const listed = await pollFor({ read: () => app.client.evaluate(scheduledRow('DAMAGED-C')), settled: Boolean, timeoutMs: 15_000, label: 'the occurrence still listed' })
+  const says = await app.client.evaluate(`(document.querySelector('[role="dialog"]${label('intake.label')}')?.textContent ?? '').includes(${JSON.stringify(copy('intake.recurrencesUnavailable'))})`)
+  check(results, '(c) a damaged recurrence file: the occurrence is still listed and the inbox says the recurrences could not be read', Boolean(listed) && says === true, `listed=${Boolean(listed)} says=${says}`)
+  check(results, '(c) and the file is unchanged', readFileSync(join(profile, 'handoff-recurrences.json'), 'utf8') === damaged, '')
 }
 
 // ── intake-inbox-usability ─────────────────────────────────────────────────────
@@ -4727,6 +5013,9 @@ const SECTIONS = [
   { name: 'runHandoffFailure', run: runHandoffFailure },
   { name: 'runScheduled', run: runScheduled },
   { name: 'runScheduledStart', run: runScheduledStart },
+  { name: 'runRecurring', run: runRecurring },
+  { name: 'runRecurringStart', run: runRecurringStart },
+  { name: 'runRecurringDamaged', run: runRecurringDamaged },
   { name: 'runChooseFolder', run: runChooseFolder },
   { name: 'runOpenedLifecycle', run: runOpenedLifecycle },
   { name: 'runLineage', run: runLineage },

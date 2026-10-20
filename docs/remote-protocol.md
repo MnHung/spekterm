@@ -90,6 +90,7 @@ Stable strings; branch on them, show `message` only as a detail.
 | `SESSION_BUSY` | Hibernating or closing a session that is not idle, without `force`. Nothing happened. `detail.reason` says why (section 5, `sessions.hibernate`). |
 | `PREFILL_GONE` | No filled-in prompt with that id waits in the session now: it was sent, its item was cleared, the session ended, or it was never filled in (section 5, `sessions.submitPrefill`). |
 | `PREFILL_EDITED` | Something was typed into the session around its filled-in prompt; only the desktop can show what its input box holds. Send it there. |
+| `APPROVE_ON_DESKTOP` | `inbox.accept` on a repeating proposal (section 5, `inbox.list`): it is approved on the desktop. It stays pending. |
 | `PREFILL_PENDING` | A reply to a session that holds a filled-in prompt nobody has sent; it would be sent together with it. `detail.prefillId` names the prompt when the session list shows it, `detail.edited` as there (section 5, `conversation.send`). |
 | `INTERNAL` | Anything else. |
 
@@ -489,7 +490,7 @@ input makes the open prompt unanswerable from a device, and text with Enter type
 
 `p`: `{}` → `r`: `{ "items": [Item] }`, the desktop's inbox: `{ id, adapter, state, originKind, originId,
 originLabel, title, actor, body, bodyLength, receivedAt, occurredAt, sessionId?, folderId?, unresolved?,
-scheduledAt? }`. `folderId` is the folder routing suggests; `unresolved` says why there is none. Changes arrive as
+scheduledAt?, recurrence? }`. `folderId` is the folder routing suggests; `unresolved` says why there is none. Changes arrive as
 `inbox.changed` events with the whole list.
 
 `scheduledAt` (epoch milliseconds) marks a **scheduled handoff**: an agent handed work off to a later time, and
@@ -498,6 +499,20 @@ present only while the item waits for its time — pending, and not yet opened �
 comparison with your clock, is what makes an item scheduled. A value in the past means the item is due and opens
 as soon as the desktop can (within about 30 seconds). When it opens, an `inbox.changed` without the field
 follows. `inbox.accept` on a scheduled item opens it now (its one automatic opening); `inbox.ignore` cancels it.
+
+`recurrence` marks a **repeating handoff**: `{ role, repeat, until?, next? }`. An agent proposed work that comes
+back on a cron schedule (`repeat`, five fields as the agent wrote them, read in the desktop's time zone), optionally
+ending at `until` (epoch milliseconds). Tell the two roles apart by `role`, never by the presence of `scheduledAt`:
+
+- `"proposal"` — waiting for the user's approval; it opens nothing until approved. `next` lists up to three times
+  it would open, as of when the list was built. **A proposal is approved on the desktop only**: `inbox.accept` on
+  it answers `APPROVE_ON_DESKTOP` and it stays pending. `inbox.ignore` declines it.
+- `"occurrence"` — one time of an approved recurrence. While it waits it carries `scheduledAt` and is a scheduled
+  item as above: `inbox.accept` runs it now and the next time is scheduled after it; **`inbox.ignore` skips this
+  time only** and the recurrence continues with its next time. An occurrence whose opening failed is pending
+  without `scheduledAt` and still has `role: "occurrence"`; accepting it is the ordinary accept.
+
+Stopping a recurrence, and the list of approved recurrences, are on the desktop only in this version.
 
 ### `inbox.accept`
 
@@ -723,3 +738,7 @@ open (on Android, a foreground service), and reconnect with backoff when the net
     a notification's action. This is the last human check before someone else's text reaches the agent, and this
     repository cannot enforce it for a client. Show a prompt with `edited: true` as one to finish at the desktop,
     not as a send control. After `sent`, say the desktop has not seen the agent start yet.
+17. **Show a repeating item's `recurrence.repeat`** (and `until` when present). For a proposal, show its `next`
+    times and its body before anything else, and do not offer accept as an approval: the desktop refuses it
+    (`APPROVE_ON_DESKTOP`); say it is approved on the desktop, and offer ignore as Decline. For an occurrence, say
+    that ignoring skips this time only.

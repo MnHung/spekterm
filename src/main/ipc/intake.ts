@@ -1,6 +1,8 @@
 import { type WebContents, ipcMain } from 'electron'
+import type { ApproveResult, RecurrenceKeeper, RecurrenceListing } from '../recurrence-keeper'
 
 import { bodyOf } from '../intake-schema'
+import { contextScheduleFor } from '../context-schedule'
 import { buildContext, buildPrompt, createNonce, writeContext } from '../intake-context'
 import { decideAccept, type IntakeAcceptResult } from '../intake-accept'
 import { handoffTickets, ticketFor } from '../handoff-ticket'
@@ -39,6 +41,7 @@ import { dismissIntake, notifyIntakeChanged, onIntakeChanged } from '../intake-c
 
 export type { IntakeView } from '../intake-projection'
 export type { IntakeAcceptResult } from '../intake-accept'
+export type { ApproveResult, RecurrenceListing, RecurrenceView } from '../recurrence-keeper'
 
 export const INTAKE_CHANNELS = {
   list: 'workspace:intake:list',
@@ -80,6 +83,10 @@ export const INTAKE_CHANNELS = {
   focusSession: 'workspace:intake:focusSession',
   /** renderer → main: open a scheduled handoff now (`scheduled-handoff`'s Run now, `HandoffOpener.runNow`). */
   runNow: 'workspace:intake:runNow',
+  /** renderer → main: approve a repeating proposal into a folder (`recurring-handoff`, `RecurrenceKeeper.approve`). */
+  approveRecurrence: 'workspace:intake:approveRecurrence',
+  /** renderer → main: stop a recurrence (`RecurrenceKeeper.stop`). */
+  stopRecurrence: 'workspace:intake:stopRecurrence',
 } as const
 
 export interface RuleView extends RoutingRule {
@@ -120,6 +127,11 @@ function sanitizeRules(input: unknown): RoutingConfig {
 /** `list` 的回傳形狀。 */
 export interface IntakeSnapshot {
   items: IntakeView[]
+  /**
+   * The approved recurrences (`recurring-handoff`'s Repeating section). Not inbox items, and not in a device's
+   * `inbox.list`. Absent when no keeper is wired.
+   */
+  recurrences?: RecurrenceListing
   /**
    * 拒絕的痕跡 —— **逐則**，不是一個總數。
    *
@@ -166,7 +178,7 @@ export interface IntakeHandlerDeps {
    * **以回呼交出而不是導出一個函式**：送出的對象是這一層持有的 `senders`，而那個集合的
    * 生命週期綁在這次註冊上。
    */
-  registerOpenInbox?: (open: () => void) => void
+  registerOpenInbox?: (open: (tab?: 'inbox' | 'schedules') => void) => void
   /** 把「請 renderer 在某個 folder 自動建立 session」交出去，供交接的 producer 呼叫。 */
   registerAutoAccept?: (request: (adapter: string, id: string, folderId: string) => void) => void
   /** 把「把焦點移到某個 session」交出去，供通知被觸發時呼叫。 */
@@ -180,6 +192,8 @@ export interface IntakeHandlerDeps {
   onNewReceiver?: (contentsId: number) => void
   /** Run now (`HandoffOpener.runNow`). Unprovided ⇒ refused. */
   runNow?: (adapter: string, id: string) => boolean
+  /** The recurrence keeper (`recurring-handoff`). Unprovided ⇒ approval and stop are refused, nothing is listed. */
+  recurrences?: Pick<RecurrenceKeeper, 'listing' | 'approve' | 'stop' | 'ensureNext'>
 }
 
 export function registerIntakeHandlers(deps: IntakeHandlerDeps): void {
@@ -207,6 +221,7 @@ export function registerIntakeHandlers(deps: IntakeHandlerDeps): void {
     const ids = knownIds()
     return {
       items: listView(service.store.list(), config, ids),
+      ...(deps.recurrences ? { recurrences: deps.recurrences.listing() } : {}),
       notices: service.notices().map((notice) => ({
         ...notice,
         ...(notice.key === OVERFLOW_KEY ? { overflow: true } : {}),
@@ -223,10 +238,10 @@ export function registerIntakeHandlers(deps: IntakeHandlerDeps): void {
    * 把收件匣打開。**重用既有的 `senders` 集合與其銷毀剪除** —— 另外持有一份參考的話，
    * renderer 重新載入之後那份就指向一個已銷毀的 `WebContents`。
    */
-  const openInbox = (): void => {
+  const openInbox = (tab: 'inbox' | 'schedules' = 'inbox'): void => {
     for (const sender of senders) {
       if (sender.isDestroyed()) senders.delete(sender)
-      else sender.send(INTAKE_CHANNELS.openInbox)
+      else sender.send(INTAKE_CHANNELS.openInbox, tab)
     }
   }
   deps.registerOpenInbox?.(openInbox)
@@ -261,6 +276,16 @@ export function registerIntakeHandlers(deps: IntakeHandlerDeps): void {
   ipcMain.handle(INTAKE_CHANNELS.runNow, (_event, id: unknown, adapter: unknown) => {
     if (typeof id !== 'string' || typeof adapter !== 'string') return { ok: false }
     return { ok: deps.runNow?.(adapter, id) ?? false }
+  })
+
+  ipcMain.handle(INTAKE_CHANNELS.approveRecurrence, (_event, id: unknown, adapter: unknown, folderId: unknown): ApproveResult => {
+    if (typeof id !== 'string' || typeof adapter !== 'string' || !deps.recurrences) return { ok: false, reason: 'unknown' }
+    return deps.recurrences.approve(adapter, id, folderId)
+  })
+
+  ipcMain.handle(INTAKE_CHANNELS.stopRecurrence, (_event, recurrenceId: unknown) => {
+    if (typeof recurrenceId !== 'string' || !deps.recurrences) return { ok: false }
+    return { ok: deps.recurrences.stop(recurrenceId) }
   })
   deps.registerFocusSession?.((sessionId) => {
     send(INTAKE_CHANNELS.focusSession, sessionId)
@@ -340,6 +365,9 @@ export function registerIntakeHandlers(deps: IntakeHandlerDeps): void {
       if (!decision.ok) return decision
       // The user's accept is the handoff's one automatic opening too: the opener must not open it afterwards.
       const ticket = ticketFor(record, decision.folderId, handoffTickets, markFired)
+      // An occurrence the recurrence was waiting on: with its ticket live it no longer holds the recurrence back.
+      const recurrenceId = record?.content?.verified.recurrenceId
+      if (recurrenceId !== undefined) deps.recurrences?.ensureNext(recurrenceId)
       return ticket ? { ...decision, ticket } : decision
     },
   )
@@ -367,11 +395,10 @@ export function registerIntakeHandlers(deps: IntakeHandlerDeps): void {
         receivedAt: record.content.receivedAt,
       }
       const nonce = createNonce()
-      const scheduledAt = record.content.verified.scheduledAt
       const target = await writeContext(
         contextRoot,
         record.id,
-        buildContext(bodyOf(intake), nonce, scheduledAt === undefined ? undefined : { scheduledAt, startedAt: Date.now() }),
+        buildContext(bodyOf(intake), nonce, contextScheduleFor(record.content.verified, record.firedAt, Date.now())),
       )
       const firstPartyBody = record.content.verified.firstPartyBody === true
       const prompt = buildPrompt(target, nonce, firstPartyBody)

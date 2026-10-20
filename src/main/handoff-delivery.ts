@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 
+import { firstMatchAfter, MAX_REPEAT_SEARCH_YEARS, parseCron } from './cron'
 import { type DeliveryProvenance, type HandoffSource, MAX_FIELD_LENGTH, normalizeAuthored } from './intake-schema'
 
 /** 交接的 adapter 名。去重的主鍵之一（`(adapter, id)`）。 */
@@ -15,8 +16,15 @@ export interface HandoffPayload {
   target: string
   title: string
   body: string
-  /** The `at` the agent wrote, as written. Absent: open on arrival. Parsed by `parseScheduledAt`. */
+  /**
+   * The `at` the agent wrote, as written. Absent: open on arrival. Parsed by `parseScheduledAt`. With `repeat` it is
+   * the recurrence's start, not the time the handoff opens (`recurring-handoff`).
+   */
   at?: string
+  /** A cron expression: the handoff repeats once the user approves it (`recurring-handoff`). Parsed by `parseCron`. */
+  repeat?: string
+  /** When a repeating handoff ends, as written. Parsed by `parseUntil`. */
+  until?: string
 }
 
 export type PayloadResult =
@@ -44,6 +52,73 @@ export type ScheduleResult =
   | { kind: 'scheduled'; at: number }
   | { kind: 'invalid'; rule: string }
 
+/**
+ * One time in the strict form (`SCHEDULE_FORM`), checked component by component, as an instant. Shared by `at` and
+ * `until`; the bound and the comparison with now are each field's own rule.
+ */
+function parseInstant(text: string): { ok: true; at: number } | { ok: false; rule: string } {
+  const m = SCHEDULE_FORM.exec(text)
+  if (!m) {
+    return {
+      ok: false,
+      rule: /(Z|[+-]\d{2}:\d{2})$/.test(text) ? 'not YYYY-MM-DDTHH:MM[:SS] with an offset' : 'no offset (Z or ±HH:MM)',
+    }
+  }
+  const [year, month, day, hour, minute] = [m[1], m[2], m[3], m[4], m[5]].map(Number)
+  const second = m[6] === undefined ? 0 : Number(m[6])
+  if (month < 1 || month > 12) return { ok: false, rule: 'month out of range' }
+  if (day < 1 || day > daysInMonth(year, month)) return { ok: false, rule: 'day does not exist in that month' }
+  if (hour > 23) return { ok: false, rule: 'hour out of range' }
+  if (minute > 59 || second > 59) return { ok: false, rule: 'minute or second out of range' }
+  if (m[8] !== undefined && (Number(m[8]) > 23 || Number(m[9]) > 59)) return { ok: false, rule: 'offset out of range' }
+  const ms = Date.parse(text)
+  if (!Number.isFinite(ms)) return { ok: false, rule: 'not a time' }
+  return { ok: true, at: ms }
+}
+
+/** A repeating handoff: the expression in its canonical form, and its start and end when set. */
+export interface Recurrence {
+  repeat: string
+  startAt?: number
+  until?: number
+}
+
+export type RecurrenceResult = { kind: 'absent' } | { kind: 'repeating'; recurrence: Recurrence } | { kind: 'invalid'; rule: string }
+
+/**
+ * Reads `repeat` and `until` (`recurring-handoff`, design D3) against the same reading of the clock as `at`.
+ * `startAt` is the already-parsed start (`parseScheduledAt` of `at`, only when later than now). Every refusal names
+ * its rule; the receipt carries it.
+ */
+export function parseRecurrence(payload: HandoffPayload, startAt: number | undefined, now: number): RecurrenceResult {
+  if (payload.repeat === undefined) {
+    return payload.until === undefined ? { kind: 'absent' } : { kind: 'invalid', rule: 'until: only with repeat' }
+  }
+  const cron = parseCron(payload.repeat)
+  if (!cron.ok) return { kind: 'invalid', rule: `repeat: ${cron.rule}` }
+  let until: number | undefined
+  if (payload.until !== undefined) {
+    const instant = parseInstant(payload.until)
+    if (!instant.ok) return { kind: 'invalid', rule: `until: ${instant.rule}` }
+    if (instant.at <= now || (startAt !== undefined && instant.at <= startAt)) {
+      return { kind: 'invalid', rule: 'until: not later than now and the start' }
+    }
+    until = instant.at
+  }
+  // The start is inclusive: a time exactly at it is the first.
+  const first = firstMatchAfter(cron.schedule, startAt === undefined ? now : startAt - 1)
+  if (first === null) return { kind: 'invalid', rule: `repeat: no time within ${MAX_REPEAT_SEARCH_YEARS} years` }
+  if (until !== undefined && first > until) return { kind: 'invalid', rule: 'until: no time between the start and until' }
+  return {
+    kind: 'repeating',
+    recurrence: {
+      repeat: payload.repeat.trim().split(/[ \t]+/).join(' '),
+      ...(startAt !== undefined ? { startAt } : {}),
+      ...(until !== undefined ? { until } : {}),
+    },
+  }
+}
+
 function daysInMonth(year: number, month: number): number {
   if (month === 2) return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0 ? 29 : 28
   return [4, 6, 9, 11].includes(month) ? 30 : 31
@@ -56,22 +131,9 @@ function daysInMonth(year: number, month: number): number {
  */
 export function parseScheduledAt(at: string | undefined, now: number): ScheduleResult {
   if (at === undefined) return { kind: 'absent' }
-  const m = SCHEDULE_FORM.exec(at)
-  if (!m) {
-    return {
-      kind: 'invalid',
-      rule: /(Z|[+-]\d{2}:\d{2})$/.test(at) ? 'not YYYY-MM-DDTHH:MM[:SS] with an offset' : 'no offset (Z or ±HH:MM)',
-    }
-  }
-  const [year, month, day, hour, minute] = [m[1], m[2], m[3], m[4], m[5]].map(Number)
-  const second = m[6] === undefined ? 0 : Number(m[6])
-  if (month < 1 || month > 12) return { kind: 'invalid', rule: 'month out of range' }
-  if (day < 1 || day > daysInMonth(year, month)) return { kind: 'invalid', rule: 'day does not exist in that month' }
-  if (hour > 23) return { kind: 'invalid', rule: 'hour out of range' }
-  if (minute > 59 || second > 59) return { kind: 'invalid', rule: 'minute or second out of range' }
-  if (m[8] !== undefined && (Number(m[8]) > 23 || Number(m[9]) > 59)) return { kind: 'invalid', rule: 'offset out of range' }
-  const ms = Date.parse(at)
-  if (!Number.isFinite(ms)) return { kind: 'invalid', rule: 'not a time' }
+  const instant = parseInstant(at)
+  if (!instant.ok) return { kind: 'invalid', rule: instant.rule }
+  const ms = instant.at
   if (ms <= now) return { kind: 'absent' }
   if (ms - now > MAX_SCHEDULE_AHEAD_DAYS * DAY_MS) return { kind: 'invalid', rule: `more than ${MAX_SCHEDULE_AHEAD_DAYS} days ahead` }
   return { kind: 'scheduled', at: ms }
@@ -189,9 +251,14 @@ export function parseHandoffPayload(contents: string): PayloadResult {
     return { ok: false, reason: 'FIELD_TYPE' }
   }
   const title = typeof source.title === 'string' ? source.title : ''
-  const at = source.at
-  if (at !== undefined && typeof at !== 'string') return { ok: false, reason: 'FIELD_TYPE', field: 'at' }
-  return { ok: true, value: { target, title, body, ...(at !== undefined ? { at } : {}) } }
+  const optional: Record<string, string> = {}
+  for (const field of ['at', 'repeat', 'until'] as const) {
+    const value = source[field]
+    if (value === undefined) continue
+    if (typeof value !== 'string') return { ok: false, reason: 'FIELD_TYPE', field }
+    optional[field] = value
+  }
+  return { ok: true, value: { target, title, body, ...optional } }
 }
 
 /**
@@ -207,11 +274,12 @@ export function parseHandoffPayload(contents: string): PayloadResult {
  * 內容摘要同時滿足兩端：重送冪等、不同內容自然不同。摘要**取自正規化後的三個欄位而非原始
  * 位元組** —— 否則同一份內容改一個空白就變成另一則交接。
  */
-export function handoffIntakeId(sessionId: string, payload: HandoffPayload, scheduledAt?: number): string {
+export function handoffIntakeId(sessionId: string, payload: HandoffPayload, scheduledAt?: number, recurrence?: Recurrence): string {
   // The schedule joins the digest only when present, so every handoff id from before scheduling is unchanged,
-  // and the same body at two times is two handoffs.
+  // and the same body at two times is two handoffs. A recurrence likewise (`recurring-handoff`).
   const fields: unknown[] = [payload.target, payload.title, payload.body]
   if (scheduledAt !== undefined) fields.push(scheduledAt)
+  if (recurrence !== undefined) fields.push({ repeat: recurrence.repeat, start: recurrence.startAt ?? null, until: recurrence.until ?? null })
   const digest = createHash('sha256')
     .update(JSON.stringify(fields), 'utf8')
     .digest('hex')
@@ -232,8 +300,10 @@ export interface DeliveryInput {
   targetFolderId: string
   /** 來源 session 與它於此刻的快照（`session-lineage`）。識別碼不合法時缺席。 */
   source?: HandoffSource
-  /** When the handoff opens, if later than the read time (`parseScheduledAt`). */
+  /** When the handoff opens, if later than the read time (`parseScheduledAt`). Never with `recurrence`. */
   scheduledAt?: number
+  /** A repeating handoff: a proposal, opened by nothing but the user's approval (`recurring-handoff`). */
+  recurrence?: Recurrence
 }
 
 /** 交給 `deliver()` 的兩樣東西：投遞的文字，以及接收端算出來的 provenance。 */
@@ -257,7 +327,7 @@ export function buildDelivery(input: DeliveryInput): {
     // 我們指定的 `id` 覆蓋 payload 裡任何自稱的 id。
     contents: JSON.stringify({
       ...original,
-      id: handoffIntakeId(input.sessionId, input.payload, input.scheduledAt),
+      id: handoffIntakeId(input.sessionId, input.payload, input.scheduledAt, input.recurrence),
       title: input.payload.title,
       body: input.payload.body,
       actor: input.originLabel,
@@ -272,7 +342,15 @@ export function buildDelivery(input: DeliveryInput): {
       // Kept so the target can be resolved again when the handoff opens (`handoff-opener.ts`).
       targetText: normalizeAuthored(input.payload.target),
       ...(input.scheduledAt !== undefined ? { scheduledAt: input.scheduledAt } : {}),
-      autoOpen: true,
+      ...(input.recurrence
+        ? {
+            repeat: input.recurrence.repeat,
+            ...(input.recurrence.startAt !== undefined ? { repeatStart: input.recurrence.startAt } : {}),
+            ...(input.recurrence.until !== undefined ? { repeatUntil: input.recurrence.until } : {}),
+          }
+        : {}),
+      // A proposal is not opened by the opener: only approval schedules it (`recurring-handoff`, D3).
+      autoOpen: input.recurrence === undefined,
     },
   }
 }

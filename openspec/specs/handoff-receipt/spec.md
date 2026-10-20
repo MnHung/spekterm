@@ -46,7 +46,39 @@ SHALL get no receipt.
 - **WHEN** the receipts directory cannot be written, and an agent writes a valid handoff
 - **THEN** a session is created for the handoff, and the delivery file is removed
 
-### Requirement: A receipt states one of five outcomes
+### Requirement: Receipts are readable whole, and bounded
+
+A receipt SHALL be written so that a reader in another process never sees it half-written. A session's
+receipts SHALL be removed when its outbox is removed, and a session SHALL keep at most the most recent hundred
+receipts: an agent that writes many files cannot grow the directory without bound. Trimming SHALL remove only
+regular files and SHALL NOT follow a symbolic link: the directory's location is told to the agent, which can
+write there.
+
+#### Scenario: A reader never sees a partial receipt
+
+- **WHEN** a large receipt is written while another process reads that file name repeatedly
+- **THEN** every read that finds the file finds a complete JSON object
+
+#### Scenario: Receipts beyond the bound are removed oldest first
+
+- **WHEN** a session's outbox has received one hundred and one files
+- **THEN** its receipts directory holds one hundred receipts, and the oldest is the one removed
+
+### Requirement: A receipt is the outcome of reading, not of the work
+
+A receipt SHALL state only what the system did when it read the file. It SHALL NOT be presented as the target
+session having received, started or finished the work: whether a handed-off session finished is its own
+report (`handoff-completion`), visible in the relations file (`session-lineage`).
+
+The system SHALL still NOT write anything into the source session's terminal about a delivery's outcome: that
+would arrive as the agent's input and disturb what the user is looking at.
+
+#### Scenario: A failed delivery writes nothing into the source terminal
+
+- **WHEN** a handoff fails because its target matches no folder
+- **THEN** nothing is sent to the source session's terminal, and the outcome is in the receipt
+
+### Requirement: A receipt states one of six outcomes
 
 A receipt SHALL be a JSON object naming the file it is for, the time it was written and one status:
 
@@ -56,6 +88,8 @@ A receipt SHALL be a JSON object naming the file it is for, the time it was writ
   (a command can still fail or be dropped later, as `agent-session-control` rules, and the receipt does not
   follow that);
 - `scheduled` — a handoff that will open at the time the receipt states;
+- `proposed` — a repeating handoff (`recurring-handoff`) that waits for the user's approval. Nothing opens
+  until the user approves it, and the agent is not told later whether they did;
 - `duplicate` — the same content was already received, a report included; nothing new happened;
 - `rejected` — refused: the receipt carries the refusal's code, a reason in words, and **whether the refusal is
   permanent**, by the rule `agent-intake` uses for permanent and temporary failures. A permanent refusal will
@@ -93,34 +127,7 @@ wrote.
 - **WHEN** a handoff whose target matches no folder is refused
 - **THEN** its receipt does not contain the target string or any part of the body
 
-### Requirement: Receipts are readable whole, and bounded
+#### Scenario: A repeating handoff gets a proposed receipt
 
-A receipt SHALL be written so that a reader in another process never sees it half-written. A session's
-receipts SHALL be removed when its outbox is removed, and a session SHALL keep at most the most recent hundred
-receipts: an agent that writes many files cannot grow the directory without bound. Trimming SHALL remove only
-regular files and SHALL NOT follow a symbolic link: the directory's location is told to the agent, which can
-write there.
-
-#### Scenario: A reader never sees a partial receipt
-
-- **WHEN** a large receipt is written while another process reads that file name repeatedly
-- **THEN** every read that finds the file finds a complete JSON object
-
-#### Scenario: Receipts beyond the bound are removed oldest first
-
-- **WHEN** a session's outbox has received one hundred and one files
-- **THEN** its receipts directory holds one hundred receipts, and the oldest is the one removed
-
-### Requirement: A receipt is the outcome of reading, not of the work
-
-A receipt SHALL state only what the system did when it read the file. It SHALL NOT be presented as the target
-session having received, started or finished the work: whether a handed-off session finished is its own
-report (`handoff-completion`), visible in the relations file (`session-lineage`).
-
-The system SHALL still NOT write anything into the source session's terminal about a delivery's outcome: that
-would arrive as the agent's input and disturb what the user is looking at.
-
-#### Scenario: A failed delivery writes nothing into the source terminal
-
-- **WHEN** a handoff fails because its target matches no folder
-- **THEN** nothing is sent to the source session's terminal, and the outcome is in the receipt
+- **WHEN** an agent writes a valid handoff with `repeat` as `h.json`
+- **THEN** the receipt `h.json` states `proposed`, and no session was created

@@ -4,17 +4,18 @@ import path from 'node:path'
 import { receiptReason } from './agent-protocol-copy'
 import { isPermanentRejection } from './intake-rejection'
 import type { SourceOutcome } from './intake-source'
+import { isProposalRecord } from './recurrence-kind'
 
 /**
  * The receipt spekterm writes for every file it reads from an agent's outbox (`handoff-receipt`, design D8).
  *
  * It states **what was done when the file was read** — accepted, scheduled, a duplicate, refused, or held back —
  * never whether the target session started or finished the work (that is the child's own report). Its own status
- * type, not `IntakeRejection`: the five statuses are the agent's vocabulary, and `held` / `READ_FAILED` exist
+ * type, not `IntakeRejection`: the six statuses are the agent's vocabulary, and `held` / `READ_FAILED` exist
  * only here.
  */
 
-export type ReceiptStatus = 'accepted' | 'scheduled' | 'duplicate' | 'rejected' | 'held'
+export type ReceiptStatus = 'accepted' | 'scheduled' | 'proposed' | 'duplicate' | 'rejected' | 'held'
 
 export interface Receipt {
   /** The delivery's file name. */
@@ -34,13 +35,16 @@ export interface Receipt {
 export const MAX_RECEIPTS = 100
 
 /** The codes whose detail is system-written (a field name, a rule, workspace paths) and helps the agent. */
-const DETAILED = new Set(['FIELD_TYPE', 'TOO_LONG', 'SCHEDULE_INVALID', 'TARGET_AMBIGUOUS'])
+const DETAILED = new Set(['FIELD_TYPE', 'TOO_LONG', 'SCHEDULE_INVALID', 'REPEAT_INVALID', 'TARGET_AMBIGUOUS'])
 
 export function receiptFor(file: string, outcome: SourceOutcome, now: number): Receipt {
   const base = { file: path.basename(file), writtenAt: new Date(now).toISOString() }
   if ('failed' in outcome) return { ...base, status: 'held', code: 'READ_FAILED', reason: receiptReason('READ_FAILED') }
   if (outcome.ok) {
     if (outcome.duplicate) return { ...base, status: 'duplicate' }
+    // A repeating handoff waits for the user's approval (`recurring-handoff`); the agent is not told later whether
+    // it was given.
+    if (isProposalRecord(outcome.record)) return { ...base, status: 'proposed' }
     const scheduledAt = outcome.record?.content?.verified.scheduledAt
     if (scheduledAt !== undefined) return { ...base, status: 'scheduled', at: new Date(scheduledAt).toISOString() }
     return { ...base, status: 'accepted' }

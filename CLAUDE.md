@@ -161,9 +161,14 @@ OpenSpec 結構的側欄，讓使用者不必另外開 IDE 就能一邊駕駛 ag
 commit only, ad-hoc signed (not notarized). **尚未開始**：Windows 產物、Intel Mac、Developer ID 簽章與公證、自動更新（Phase 6 其餘）。
 **交接已交付**（agent → 另一個 repo，以及母、子、兄弟之間經 Claude Code 本機訊息功能的往來）；
 **以工具而非寫檔投遞**（MCP）仍未做；**the agent learns each file's outcome from a receipt** spekterm writes
-beside its outbox (`handoff-receipt`: accepted / scheduled / duplicate / rejected / held, written before the file
-is removed). **A handoff may name a later time** (`scheduled-handoff`, `"at"`): it waits in the inbox and opens
-when due, or at the next start. **Every automatic opening goes through `HandoffOpener`**, which waits for a window
+beside its outbox (`handoff-receipt`: accepted / scheduled / proposed / duplicate / rejected / held, written before
+the file is removed). **A handoff may name a later time** (`scheduled-handoff`, `"at"`): it waits in the inbox and
+opens when due, or at the next start. **A handoff may repeat** (`recurring-handoff`, `"repeat"`, a strict 5-field
+cron subset in the desktop's zone, with `at` as its start and `until` as its end): it is a **proposal** that opens
+nothing until the user approves it on the desktop; then `RecurrenceKeeper` is the **one owner** of its upcoming
+occurrence (an ordinary scheduled record, so the opener opens it), found by scanning, never by a pointer. A time
+the opener refuses pauses the recurrence until the user deals with it; an unreadable recurrence file is
+unavailable, never empty. Scheduling lives in the inbox's Schedules tab. **Every automatic opening goes through `HandoffOpener`**, which waits for a window
 that has restored and lists the inbox, and opens each handoff **at most once, ever** (`firedAt`, persisted
 first) — an open request no window receives is lost. The introduction must stay under the CLI's 10,000-character
 `additionalContext` threshold; past it the agent keeps only a 2 KB preview (`docs/lessons/handoff.md` §16).

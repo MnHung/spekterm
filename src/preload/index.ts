@@ -10,6 +10,7 @@ import type { FollowUpdate as ConversationUpdate } from '../main/transcript-foll
 import type { DrainResult, WaitState } from '../main/agent-events'
 import type { SessionLineage } from '../shared/lineage/types'
 import type {
+  ApproveResult,
   IntakeAcceptResult,
   IntakeRulesSnapshot,
   IntakeSnapshot,
@@ -644,6 +645,12 @@ const workspaceApi = {
     /** Open a scheduled handoff now (`scheduled-handoff`'s Run now). */
     runNow: (id: string, adapter: string): Promise<{ ok: boolean }> =>
       ipcRenderer.invoke('workspace:intake:runNow', id, adapter),
+    /** Approve a repeating proposal into a folder (`recurring-handoff`). Opens no session. */
+    approveRecurrence: (id: string, adapter: string, folderId: string): Promise<ApproveResult> =>
+      ipcRenderer.invoke('workspace:intake:approveRecurrence', id, adapter, folderId),
+    /** Stop a recurrence: its upcoming occurrence is removed, nothing further is created. */
+    stopRecurrence: (recurrenceId: string): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('workspace:intake:stopRecurrence', recurrenceId),
     /** 把一則已開好的項目從收件匣清除。不刪紀錄、不碰它的 session。 */
     settle: (id: string, adapter: string): Promise<{ ok: boolean }> =>
       ipcRenderer.invoke('workspace:intake:settle', id, adapter),
@@ -660,8 +667,9 @@ const workspaceApi = {
     },
     /** 使用者打開了收件匣 —— 通知上界的重置點。無回應通道。 */
     opened: (): void => ipcRenderer.send('workspace:intake:opened'),
-    onOpenInbox: (listener: () => void): (() => void) => {
-      const handler = (): void => listener()
+    /** Open the inbox, on the given tab when it is closed (`recurring-handoff`: only proposals ⇒ Schedules). */
+    onOpenInbox: (listener: (tab: 'inbox' | 'schedules') => void): (() => void) => {
+      const handler = (_event: IpcRendererEvent, tab: unknown): void => listener(tab === 'schedules' ? 'schedules' : 'inbox')
       ipcRenderer.on('workspace:intake:openInbox', handler)
       return () => ipcRenderer.removeListener('workspace:intake:openInbox', handler)
     },

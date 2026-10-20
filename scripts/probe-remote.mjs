@@ -1285,6 +1285,77 @@ async function runScheduled(_mode, _config, context) {
 }
 
 /**
+ * recurring-handoff on a device: a proposal is listed with its `recurrence` mark (role, expression, end, next
+ * times); accepting it from the device is refused with `APPROVE_ON_DESKTOP` and leaves it pending; once approved on
+ * the desktop, its occurrence is listed with `scheduledAt`, and ignoring it from the device skips to the next time.
+ * The operations do not grow.
+ */
+async function runRecurring(_mode, _config, context) {
+  const repos = makeRepos()
+  const profile = seedProfile(repos, { remote: { enabled: true, port: LISTEN_A } })
+  const { app } = await start(context, profile, { readyDelaySeconds: 1 })
+  const paired = await phone(app)
+  const { client } = paired
+  const operations = paired.response.r?.operations ?? []
+  check(results, 'no operation is added for repeating handoffs', !operations.some((op) => /recurr|approve/i.test(op)), JSON.stringify(operations))
+
+  const parent = await remoteCreate(client, 'f', 'claude')
+  const outbox = await pollFor({
+    read: () => {
+      try {
+        return readdirSync(join(profile, 'handoff', 'outbox')).includes(parent.r.sessionId) ? join(profile, 'handoff', 'outbox', parent.r.sessionId) : null
+      } catch {
+        return null
+      }
+    },
+    settled: Boolean,
+    timeoutMs: 20_000,
+    label: 'the parent outbox',
+  })
+  const until = new Date(Date.now() + 60 * 24 * 3600_000).toISOString()
+  writeFileSync(join(outbox, 'weekly.partial'), JSON.stringify({ target: repos.names.g, title: 'RECUR-WEEKLY', body: 'weekly review', repeat: '0 21 * * 3', until }))
+  renameSync(join(outbox, 'weekly.partial'), join(outbox, 'weekly.json'))
+  const proposal = await pollFor({
+    read: async () => (await call(client, 'inbox.list')).r.items.find((i) => i.title === 'RECUR-WEEKLY') ?? null,
+    settled: Boolean,
+    timeoutMs: 20_000,
+    label: 'the proposal listed',
+  })
+  const next = proposal?.recurrence?.next ?? []
+  check(
+    results,
+    'a proposal carries its recurrence mark: role, expression, end, up to three Wednesday 21:00 times, no scheduledAt',
+    proposal?.recurrence?.role === 'proposal' && proposal.recurrence.repeat === '0 21 * * 3' && proposal.recurrence.until === Date.parse(until) &&
+      next.length === 3 && next.every((t) => new Date(t).getDay() === 3 && new Date(t).getHours() === 21) && proposal.scheduledAt === undefined,
+    JSON.stringify(proposal?.recurrence),
+  )
+
+  const refused = await call(client, 'inbox.accept', { adapter: proposal.adapter, id: proposal.id, folderId: 'g' })
+  const still = (await call(client, 'inbox.list')).r.items.find((i) => i.id === proposal.id)
+  check(results, 'accepting a proposal from a device is refused with APPROVE_ON_DESKTOP and it stays pending', refused.e?.code === 'APPROVE_ON_DESKTOP' && still?.state === 'pending', JSON.stringify(refused.e ?? ''))
+
+  // Approved on the desktop (its own IPC, as the overlay's Approve).
+  const approved = await app.client.evaluate(`window.workspace.intake.approveRecurrence(${JSON.stringify(proposal.id)}, ${JSON.stringify(proposal.adapter)}, 'g')`)
+  const occurrence = await pollFor({
+    read: async () => (await call(client, 'inbox.list')).r.items.find((i) => i.recurrence?.role === 'occurrence' && i.state === 'pending') ?? null,
+    settled: Boolean,
+    timeoutMs: 15_000,
+    label: 'the occurrence listed',
+  })
+  check(results, 'approved on the desktop: the device lists one occurrence with scheduledAt and its expression', approved?.ok === true && typeof occurrence?.scheduledAt === 'number' && occurrence.recurrence.repeat === '0 21 * * 3', JSON.stringify({ approved, occurrence: occurrence?.recurrence }))
+
+  await call(client, 'inbox.ignore', { adapter: occurrence.adapter, id: occurrence.id })
+  const following = await pollFor({
+    read: async () => (await call(client, 'inbox.list')).r.items.find((i) => i.recurrence?.role === 'occurrence' && i.state === 'pending') ?? null,
+    settled: (item) => item !== null && item.id !== occurrence.id,
+    timeoutMs: 15_000,
+    label: 'the next occurrence listed',
+  })
+  check(results, 'ignoring an occurrence from a device skips one time: the next one, a week later, is listed', following?.scheduledAt === occurrence.scheduledAt + 7 * 24 * 3600_000, JSON.stringify({ was: occurrence.scheduledAt, now: following?.scheduledAt }))
+  await app.close()
+}
+
+/**
  * remote-protocol: a prompt a device's accept left unsent is listed and sent from the device (`remote-prefill-send`).
  * The stub stays busy for a few seconds after a submission, so the start is seen (design, Risks: a start and the
  * next ready in one drained batch are never seen as a start, by the desktop's Enter either).
@@ -2836,6 +2907,7 @@ const SECTIONS = [
   { name: 'runReaccept', run: runReaccept },
   { name: 'runPrefillSubmit', run: runPrefillSubmit },
   { name: 'runScheduled', run: runScheduled },
+  { name: 'runRecurring', run: runRecurring },
   { name: 'runOpenSpec', run: runOpenSpec },
   { name: 'runAttention', run: runAttention },
   { name: 'runHibernation', run: runHibernation },

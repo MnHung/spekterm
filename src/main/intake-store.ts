@@ -247,17 +247,22 @@ function isInstant(value: unknown): value is number {
 }
 
 /**
- * The schedule's two verified fields are **read** (by the opener and every view), so each is kept only with its
+ * The schedule's verified fields are **read** (by the opener and every view), so each is kept only with its
  * type — the same reason `withSafeSource` gives. A record that loses one is an ordinary item.
  */
 function withSafeSchedule(content: IntakeContent): IntakeContent {
-  const { scheduledAt, targetText, ...rest } = content.verified
+  const { scheduledAt, targetText, repeat, repeatStart, repeatUntil, recurrenceId, ...rest } = content.verified
   return {
     ...content,
     verified: {
       ...rest,
       ...(isInstant(scheduledAt) ? { scheduledAt } : {}),
       ...(typeof targetText === 'string' ? { targetText } : {}),
+      // `recurring-handoff`: read by the keeper, the opener and every view, so kept only with their types.
+      ...(typeof repeat === 'string' ? { repeat } : {}),
+      ...(isInstant(repeatStart) ? { repeatStart } : {}),
+      ...(isInstant(repeatUntil) ? { repeatUntil } : {}),
+      ...(typeof recurrenceId === 'string' ? { recurrenceId } : {}),
     },
   }
 }

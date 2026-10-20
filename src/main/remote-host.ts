@@ -10,6 +10,7 @@ import { startFollow } from './conversation-follow'
 import { readBriefFor } from './handoff-brief'
 import { lifecycleViewOf } from './handoff-lifecycle-view'
 import { dismissIntake } from './intake-changes'
+import { isProposalRecord } from './recurrence-kind'
 import {
   SUBMIT_KEY,
   SUBMIT_KEY_DELAY_MS,
@@ -439,6 +440,11 @@ export function createRemoteHost(deps: HostDeps): RemoteHost {
       // Asked even when there was no offer: a retry after a timed-out attempt still clears the desktop's card.
       fromRenderer(await deps.request(contentsId, { kind: 'withdraw-close', sessionId }))
       return { sessionId }
+    },
+
+    isInboxProposal(adapter, id) {
+      const record = deps.intake.store.get(adapter, id)
+      return record?.state === 'pending' && isProposalRecord(record)
     },
 
     dismissInbox(adapter, id) {

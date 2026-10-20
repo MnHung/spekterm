@@ -43,6 +43,7 @@ export const ERROR_CODES = [
   'PREFILL_GONE',
   'PREFILL_EDITED',
   'PREFILL_PENDING',
+  'APPROVE_ON_DESKTOP',
   'INTERNAL',
 ] as const
 

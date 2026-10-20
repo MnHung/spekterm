@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { InsightsOverlay } from './insights/InsightsOverlay'
-import { IntakeOverlay } from './intake/IntakeOverlay'
+import { IntakeOverlay, type IntakeTab } from './intake/IntakeOverlay'
 import { useIntake } from './intake/intake-state'
 import { SettingsDialog, type SettingsSection } from './settings/SettingsDialog'
 import { useRemoteState } from './remote/useRemoteState'
@@ -116,7 +116,12 @@ export function ActivityBar(): React.JSX.Element {
   // 開啟 overlay 的那個按鈕 —— 關閉時焦點要還給它，否則落回 `<body>`，下一次按鍵什麼都不發生。
   const [insightsOpener, setInsightsOpener] = useState<HTMLElement | null>(null)
   const [intakeOpener, setIntakeOpener] = useState<HTMLElement | null>(null)
-  const [intakeTab, setIntakeTab] = useState<'inbox' | 'rules'>('inbox')
+  const [intakeTab, setIntakeTab] = useState<IntakeTab>('inbox')
+  // Whether the inbox is open, for the notification listener registered once below (its closure would be stale).
+  const intakeOpenRef = useRef(false)
+  useEffect(() => {
+    intakeOpenRef.current = intakeOpener !== null
+  }, [intakeOpener])
   const handoffsRef = useRef<HTMLButtonElement>(null)
 
   /**
@@ -134,10 +139,13 @@ export function ActivityBar(): React.JSX.Element {
    * 把 state 加進依賴又會讓每次開關都重訂閱，而重訂閱的空窗會吃掉一則訊息。
    */
   useEffect(() => {
-    return window.workspace.intake.onOpenInbox(() => {
+    return window.workspace.intake.onOpenInbox((tab) => {
       // **Opening the inbox closes Settings, by any route** (`terminal-preferences`): a notification can arrive
       // while Settings is open, and two modal layers would then compete for focus and for Esc.
       setSettings(null)
+      // The tab is set on every opening by a notification — an inbox last left on rules would otherwise reopen there
+      // — and left alone when the inbox is open (`agent-intake`: the trigger is then a no-op).
+      if (!intakeOpenRef.current) setIntakeTab(tab)
       setIntakeOpener((current) => current ?? handoffsRef.current)
     })
   }, [])

@@ -5,8 +5,8 @@ import { runAccept } from './accept-flow'
 import { useTranslation } from 'react-i18next'
 
 import { formatDateTime, relativeTime } from '@shared/i18n/locale'
-import { isScheduled, isWaitingForUser } from '@shared/intake/scheduled'
-import type { IntakeView } from '../../../../main/ipc/intake'
+import { isItemsTabItem, isProposal, isScheduled, isWaitingForUser } from '@shared/intake/scheduled'
+import type { ApproveResult, IntakeView, RecurrenceListing, RecurrenceView } from '../../../../main/ipc/intake'
 import { useSessions } from '../terminal/sessions'
 import type { WorkspaceFolder } from '../types'
 import { useNow } from '../useNow'
@@ -56,7 +56,9 @@ function itemKey(item: IntakeView): string {
   return `${item.adapter} ${item.id}`
 }
 
-type Tab = 'inbox' | 'rules'
+/** The overlay's tabs. `schedules` holds everything planned (`recurring-handoff`, design D6). */
+export type IntakeTab = 'inbox' | 'schedules' | 'rules'
+type Tab = IntakeTab
 
 export interface IntakeOverlayProps {
   onClose: () => void
@@ -157,9 +159,18 @@ export function IntakeOverlay({
     [close, sessions, t],
   )
 
-  // Waiting for the user, and waiting for their time (`scheduled-handoff`): the same predicates as the badge.
-  const items = snapshot.items.filter(isWaitingForUser)
+  /**
+   * One named predicate per list (`src/shared/intake/scheduled.ts`): the items tab lists what waits for the user
+   * now; the Schedules tab what is planned — proposals, then every scheduled handoff by time (one-off and
+   * occurrences of recurrences). The header counts what the badge counts, proposals included, so the two numbers
+   * the user sees agree.
+   */
+  const items = snapshot.items.filter(isItemsTabItem)
+  const waitingCount = snapshot.items.filter(isWaitingForUser).length
+  const proposals = snapshot.items.filter(isProposal)
   const scheduled = snapshot.items.filter(isScheduled).sort((a, b) => (a.scheduledAt ?? 0) - (b.scheduledAt ?? 0))
+  const recurrences: RecurrenceListing = snapshot.recurrences ?? { available: true, recurrences: [] }
+  const folderName = (id: string | undefined): string | undefined => folders.find((folder) => folder.id === id)?.name
   const liveSessions = sessions.all()
   const knownFolderIds = new Set(folders.map((folder) => folder.id))
   /**
@@ -197,9 +208,14 @@ export function IntakeOverlay({
       <header className="sticky top-0 z-10 flex shrink-0 items-center gap-3 border-b border-hairline bg-stage px-4 py-2">
         <h2 className="text-sm font-bold text-ink">{t('intake.title')}</h2>
         <div role="tablist" aria-label={t('intake.label')} className="flex gap-1">
+          {/*
+            Each tab is named by a fixed dictionary label: the Schedules tab's visible text carries a count, and a
+            selector built from visible text would stop finding it when the number changes.
+          */}
           <button
             type="button"
             role="tab"
+            aria-label={t('intake.title')}
             aria-selected={tab === 'inbox'}
             onClick={() => setTab('inbox')}
             className={tabClass(tab === 'inbox')}
@@ -209,6 +225,20 @@ export function IntakeOverlay({
           <button
             type="button"
             role="tab"
+            aria-label={t('intake.schedulesTab')}
+            aria-selected={tab === 'schedules'}
+            onClick={() => setTab('schedules')}
+            className={tabClass(tab === 'schedules')}
+          >
+            {t('intake.schedulesTab')}
+            {proposals.length > 0 ? (
+              <span className="ml-1.5 rounded-full bg-accent/20 px-1.5 text-2xs text-accent">{proposals.length}</span>
+            ) : null}
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-label={t('intake.rules.label')}
             aria-selected={tab === 'rules'}
             onClick={() => setTab('rules')}
             className={tabClass(tab === 'rules')}
@@ -218,7 +248,7 @@ export function IntakeOverlay({
         </div>
         <span className="flex-1" />
         <span className="text-2xs text-ink-faint">
-          {t('intake.pendingCount', { count: items.length })}
+          {t('intake.pendingCount', { count: waitingCount })}
         </span>
         <button
           ref={closeRef}
@@ -314,22 +344,29 @@ export function IntakeOverlay({
 
         {tab === 'rules' ? (
           <RulesEditor />
-        ) : items.length === 0 && opened.length === 0 && scheduled.length === 0 ? (
+        ) : tab === 'schedules' ? (
+          <SchedulesTab
+            proposals={proposals}
+            scheduled={scheduled}
+            recurrences={recurrences}
+            folders={folders}
+            folderName={folderName}
+            selectionFor={(item) =>
+              preselectFolder({
+                override: overrides.get(itemKey(item)),
+                // A proposal never had a session.
+                existingSessionFolderId: undefined,
+                resolvedFolderId: item.folderId,
+                knownFolderIds,
+              })
+            }
+            onChoose={(item, folderId) => choose(itemKey(item), folderId)}
+            onChanged={reload}
+          />
+        ) : items.length === 0 && opened.length === 0 ? (
           <p className="text-2xs text-ink-faint">{t('intake.empty')}</p>
         ) : (
           <>
-            {scheduled.length > 0 ? (
-              <ul aria-label={t('intake.scheduledLabel')} className="mb-4 flex flex-col gap-1">
-                {scheduled.map((item) => (
-                  <ScheduledCard
-                    key={itemKey(item)}
-                    item={item}
-                    folderName={folders.find((folder) => folder.id === item.folderId)?.name}
-                    onChanged={reload}
-                  />
-                ))}
-              </ul>
-            ) : null}
             <ul className="flex flex-col gap-3">
               {items.map((item) => (
                 <IntakeCard
@@ -461,6 +498,8 @@ function ScheduledCard({
 }): React.JSX.Element {
   const { t } = useTranslation()
   const at = new Date(item.scheduledAt ?? 0)
+  // An occurrence of a recurrence: its Cancel skips this time only, and says so (`recurring-handoff`).
+  const cancelKey = item.recurrence ? 'intake.skipOccurrence' : 'intake.cancelScheduled'
   return (
     <li
       aria-label={t('intake.scheduledItemLabel', { title: item.title })}
@@ -475,11 +514,11 @@ function ScheduledCard({
         <span className="flex-1" />
         <button
           type="button"
-          aria-label={t('intake.cancelScheduled')}
+          aria-label={t(cancelKey)}
           onClick={() => void window.workspace.intake.dismiss(item.id, item.adapter).then(onChanged)}
           className="cursor-pointer rounded px-2 py-0.5 text-2xs text-ink-dim hover:bg-hairline/40 focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         >
-          {t('intake.cancelScheduled')}
+          {t(cancelKey)}
         </button>
         <button
           type="button"
@@ -490,10 +529,291 @@ function ScheduledCard({
           {t('intake.runNow')}
         </button>
       </div>
+      {item.recurrence ? <RepeatLine repeat={item.recurrence.repeat} until={item.recurrence.until} /> : null}
       {showTitleSeparately(item.title, item.body) ? <span className="break-words text-2xs text-ink">{item.title}</span> : null}
       {/* Plain text, whole, scrolled rather than cut — the same rule as the opened items' body. */}
       <p className="max-h-64 overflow-y-auto whitespace-pre-wrap break-words text-2xs text-ink-faint">{item.body}</p>
       <p className="text-2xs text-ink-faint">{t('intake.bodyLength', { count: item.bodyLength })}</p>
+    </li>
+  )
+}
+
+/** A repeating handoff's schedule, as written, and its end (`recurring-handoff`). */
+function RepeatLine({ repeat, until }: { repeat: string; until?: number }): React.JSX.Element {
+  const { t } = useTranslation()
+  return (
+    <p className="text-2xs text-ink-dim">
+      {t('intake.repeats', { repeat })}{' '}
+      <span className="text-ink-faint">
+        {until === undefined
+          ? t('intake.repeatUntilStopped')
+          : t('intake.repeatUntil', { time: formatDateTime(new Date(until), OCCURRED_FORMAT) })}
+      </span>
+    </p>
+  )
+}
+
+/**
+ * Everything planned (`recurring-handoff`, design D6), apart from what waits for the user now: proposals waiting
+ * for approval, then every scheduled handoff by time (one-off and occurrences), then the approved recurrences.
+ */
+function SchedulesTab({
+  proposals,
+  scheduled,
+  recurrences,
+  folders,
+  folderName,
+  selectionFor,
+  onChoose,
+  onChanged,
+}: {
+  proposals: readonly IntakeView[]
+  scheduled: readonly IntakeView[]
+  recurrences: RecurrenceListing
+  folders: readonly WorkspaceFolder[]
+  folderName: (id: string | undefined) => string | undefined
+  selectionFor: (item: IntakeView) => Preselection
+  onChoose: (item: IntakeView, folderId: string) => void
+  onChanged: () => void
+}): React.JSX.Element {
+  const { t } = useTranslation()
+  if (proposals.length === 0 && scheduled.length === 0 && recurrences.recurrences.length === 0 && recurrences.available) {
+    return <p className="text-2xs text-ink-faint">{t('intake.schedulesEmpty')}</p>
+  }
+  return (
+    <div className="flex flex-col gap-4">
+      {proposals.length > 0 ? (
+        <section className="flex flex-col gap-1">
+          <h3 className="text-2xs font-bold text-ink-dim">{t('intake.proposalsLabel')}</h3>
+          <ul aria-label={t('intake.proposalsLabel')} className="flex flex-col gap-3">
+            {proposals.map((item) => (
+              <ProposalCard
+                key={itemKey(item)}
+                item={item}
+                folders={folders}
+                selection={selectionFor(item)}
+                onChoose={(folderId) => onChoose(item, folderId)}
+                onChanged={onChanged}
+              />
+            ))}
+          </ul>
+        </section>
+      ) : null}
+      {scheduled.length > 0 ? (
+        <section className="flex flex-col gap-1">
+          <h3 className="text-2xs font-bold text-ink-dim">{t('intake.scheduledLabel')}</h3>
+          <ul aria-label={t('intake.scheduledLabel')} className="flex flex-col gap-1">
+            {scheduled.map((item) => (
+              <ScheduledCard key={itemKey(item)} item={item} folderName={folderName(item.folderId)} onChanged={onChanged} />
+            ))}
+          </ul>
+        </section>
+      ) : null}
+      {!recurrences.available ? (
+        <p role="status" className="rounded border border-hairline bg-shell px-3 py-2 text-2xs text-ink">
+          {t('intake.recurrencesUnavailable')}
+        </p>
+      ) : recurrences.recurrences.length > 0 ? (
+        <section className="flex flex-col gap-1">
+          <h3 className="text-2xs font-bold text-ink-dim">{t('intake.recurrencesLabel')}</h3>
+          <ul aria-label={t('intake.recurrencesLabel')} className="flex flex-col gap-1">
+            {recurrences.recurrences.map((recurrence) => (
+              <RecurrenceRow
+                key={recurrence.id}
+                recurrence={recurrence}
+                folderName={folderName(recurrence.folderId)}
+                onChanged={onChanged}
+              />
+            ))}
+          </ul>
+        </section>
+      ) : null}
+    </div>
+  )
+}
+
+/**
+ * A repeating handoff waiting for approval: its body whole, its schedule as written, the times it would open and
+ * its end, so the user sees when and for how long before approving. Approve opens nothing now; it schedules the
+ * first time, in the folder chosen here. Decline is the inbox's ignore.
+ */
+function ProposalCard({
+  item,
+  folders,
+  selection,
+  onChoose,
+  onChanged,
+}: {
+  item: IntakeView
+  folders: readonly WorkspaceFolder[]
+  selection: Preselection
+  onChoose: (folderId: string) => void
+  onChanged: () => void
+}): React.JSX.Element {
+  const { t } = useTranslation()
+  const [failure, setFailure] = useState<string | null>(null)
+  const chosen = selection.folderId
+  const next = item.recurrence?.next ?? []
+  const ended = next.length === 0
+
+  const approve = async (): Promise<void> => {
+    setFailure(null)
+    const result: ApproveResult = await window.workspace.intake.approveRecurrence(item.id, item.adapter, chosen)
+    if (!result.ok) {
+      setFailure(
+        result.reason === 'FOLDER_GONE'
+          ? t('intake.chosenFolderGone')
+          : result.reason === 'ended'
+            ? t('intake.proposalEnded')
+            : result.reason === 'unavailable'
+              ? t('intake.recurrencesUnavailable')
+              : t('intake.proposalGone'),
+      )
+    }
+    onChanged()
+  }
+
+  return (
+    <li
+      aria-label={t('intake.proposalItemLabel', { title: item.title })}
+      className="rounded border border-hairline bg-shell px-3 py-2"
+    >
+      <div className="flex items-baseline gap-2 whitespace-nowrap">
+        <span className="text-2xs text-ink-faint">{t('intake.fromOrigin', { origin: item.originLabel })}</span>
+        <OccurredAt at={item.occurredAt} />
+      </div>
+      {showTitleSeparately(item.title, item.body) ? <p className="mt-1 break-words text-sm text-ink">{item.title}</p> : null}
+      {/* Plain text, whole, scrolled rather than cut: what will run at every time is what the user approves. */}
+      <p className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap break-words text-2xs text-ink-dim">{item.body}</p>
+      <p className="mt-1 text-2xs text-ink-faint">{t('intake.bodyLength', { count: item.bodyLength })}</p>
+      {item.recurrence ? (
+        <div className="mt-2">
+          <RepeatLine repeat={item.recurrence.repeat} until={item.recurrence.until} />
+          {ended ? (
+            <p className="text-2xs text-ink-faint">{t('intake.proposalEnded')}</p>
+          ) : (
+            <p className="text-2xs text-ink-faint">
+              {t('intake.repeatNext', { times: next.map((at) => formatDateTime(new Date(at), OCCURRED_FORMAT)).join(', ') })}
+            </p>
+          )}
+        </div>
+      ) : null}
+      {failure ? <p className="mt-1 text-2xs text-ink">{failure}</p> : null}
+      <div className="mt-2 flex items-center gap-2">
+        <span className="text-2xs text-ink-dim">{t('intake.approveInto')}</span>
+        <select
+          aria-label={t('intake.chooseFolder')}
+          value={chosen}
+          onChange={(event) => onChoose(event.target.value)}
+          className="cursor-pointer rounded border border-hairline bg-shell px-2 py-1 text-2xs text-ink focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        >
+          {chosen === '' ? (
+            <option value="" disabled>
+              {t('intake.choosePlaceholder')}
+            </option>
+          ) : null}
+          {folders.map((folder) => (
+            <option key={folder.id} value={folder.id}>
+              {folder.name}
+            </option>
+          ))}
+        </select>
+        <span className="flex-1" />
+        <button
+          type="button"
+          aria-label={t('intake.decline')}
+          onClick={() => void window.workspace.intake.dismiss(item.id, item.adapter).then(onChanged)}
+          className="cursor-pointer rounded px-2 py-1 text-2xs text-ink-dim hover:bg-hairline/40 focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        >
+          {t('intake.decline')}
+        </button>
+        <button
+          type="button"
+          aria-label={t('intake.approve')}
+          disabled={chosen === '' || ended}
+          onClick={() => void approve()}
+          className="cursor-pointer rounded bg-accent/10 px-2 py-1 text-2xs text-accent disabled:cursor-default disabled:opacity-40 focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        >
+          {t('intake.approve')}
+        </button>
+      </div>
+    </li>
+  )
+}
+
+/**
+ * One approved recurrence: its schedule, folder, next time or why there is none, and Stop repeating — behind an
+ * inline confirmation, because a stopped recurrence cannot be proposed again with the same content from the same
+ * session (it is a duplicate).
+ */
+function RecurrenceRow({
+  recurrence,
+  folderName,
+  onChanged,
+}: {
+  recurrence: RecurrenceView
+  folderName: string | undefined
+  onChanged: () => void
+}): React.JSX.Element {
+  const { t } = useTranslation()
+  const [confirming, setConfirming] = useState(false)
+  const status =
+    recurrence.next !== undefined
+      ? t('intake.recurrenceNext', { time: formatDateTime(new Date(recurrence.next), OCCURRED_FORMAT) })
+      : recurrence.waiting === 'earlier'
+        ? t('intake.recurrenceWaitingEarlier')
+        : recurrence.waiting === 'full'
+          ? t('intake.recurrenceWaitingFull')
+          : ''
+  return (
+    <li
+      aria-label={t('intake.recurrenceItemLabel', { title: recurrence.title })}
+      className="flex flex-col gap-1 rounded border border-hairline px-3 py-1.5"
+    >
+      <div className="flex items-baseline gap-2 whitespace-nowrap">
+        <span className="min-w-0 truncate text-2xs text-ink">{recurrence.title}</span>
+        <span className="text-2xs text-ink-dim">{t('intake.opensInFolder', { name: folderName ?? recurrence.targetText })}</span>
+        <span className="text-2xs text-ink-faint">{status}</span>
+        <span className="flex-1" />
+        {confirming ? null : (
+          <button
+            type="button"
+            aria-label={t('intake.stopRepeating')}
+            onClick={() => setConfirming(true)}
+            className="cursor-pointer rounded px-2 py-0.5 text-2xs text-ink-dim hover:bg-hairline/40 focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          >
+            {t('intake.stopRepeating')}
+          </button>
+        )}
+      </div>
+      <RepeatLine repeat={recurrence.repeat} until={recurrence.until} />
+      {confirming ? (
+        <div className="flex items-center gap-2">
+          <span className="text-2xs text-ink">{t('intake.stopRepeatingConfirm')}</span>
+          <span className="flex-1" />
+          <button
+            type="button"
+            aria-label={t('intake.stopRepeatingNo')}
+            onClick={() => setConfirming(false)}
+            className="cursor-pointer rounded px-2 py-0.5 text-2xs text-ink-dim hover:bg-hairline/40 focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          >
+            {t('intake.stopRepeatingNo')}
+          </button>
+          <button
+            type="button"
+            aria-label={t('intake.stopRepeatingYes')}
+            onClick={() =>
+              void window.workspace.intake.stopRecurrence(recurrence.id).then(() => {
+                setConfirming(false)
+                onChanged()
+              })
+            }
+            className="cursor-pointer rounded bg-accent/10 px-2 py-0.5 text-2xs text-accent focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          >
+            {t('intake.stopRepeatingYes')}
+          </button>
+        </div>
+      ) : null}
     </li>
   )
 }
@@ -537,6 +857,8 @@ function IntakeCard({
         */}
         <code className="min-w-0 max-w-[14rem] truncate font-mono text-2xs text-ink-faint">{item.id}</code>
       </div>
+      {/* An occurrence that was opened and waits for the user (`recurring-handoff`): it belongs to a recurrence. */}
+      {item.recurrence ? <RepeatLine repeat={item.recurrence.repeat} until={item.recurrence.until} /> : null}
       {/* 標題也是第三方撰寫的 —— 與本文同樣只當文字呈現。 */}
       {showTitleSeparately(item.title, item.body) ? (
         <p className="mt-1 break-words text-sm text-ink">{item.title}</p>

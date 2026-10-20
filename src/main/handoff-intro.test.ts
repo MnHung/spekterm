@@ -9,6 +9,7 @@ import { MAX_FIELD_LENGTH, MAX_FIRST_PARTY_BODY_LENGTH } from './intake-schema'
 import { MAX_DELIVERY_BYTES } from './intake-source'
 import { MAX_REPORT_LENGTH, MAX_SCHEDULE_AHEAD_DAYS, parseScheduledAt } from './handoff-delivery'
 import { resolveTarget } from './handoff-target'
+import { MAX_REPEAT_SEARCH_YEARS } from './cron'
 
 const folders = [
   { name: 'spekterm', path: '/home/u/git/spekterm' },
@@ -318,4 +319,29 @@ test('a very large workspace keeps every rule within the hard limit, and says ho
   // Every rule is still there: the end of the text is the report paragraph, the last one composed.
   assert.match(text, /Report again after each later request you finish\.$/)
   assert.match(text, /Partial or fuzzy matches are rejected/)
+})
+
+test('the introduction states repeat, its syntax, its zone, approval, and missed times (recurring-handoff)', () => {
+  const text = introText({ folders, outbox: '/data/handoff/s1', timeZone: 'Asia/Taipei' })
+  assert.match(text, /"repeat": "<optional>", "until": "<optional>"/)
+  assert.match(text, /repeat: cron "minute hour day month weekday" in Asia\/Taipei/)
+  assert.match(text, /"at" is its start and "until" \(format of "at", no day bound\) its end, both optional/)
+  assert.match(text, /\* or a list of n, a-b, \*\/s, a-b\/s; JAN-DEC, SUN-SAT; weekday 0 or 7 is Sunday/)
+  assert.match(text, /day and weekday both set: either matches/)
+  assert.match(text, /Rejected: minute not one number, seconds, @macros, L W # \?/)
+  assert.match(text, /"until" without "repeat", not after now and the start, or with no time before it/)
+  assert.match(text, /The user approves it first; then each time opens a new session until it ends or is stopped/)
+  assert.match(text, /It opens only while spekterm runs; times missed while closed run once at the next start/)
+  assert.match(text, /proposed {2}- a repeating handoff awaiting the user's approval/)
+})
+
+test('the stated year bound is the one the schedule search applies', () => {
+  const text = introText({ folders, outbox: '/data/handoff/s1' })
+  const stated = Number(/no time in (\d+) years/.exec(text)?.[1])
+  assert.equal(stated, MAX_REPEAT_SEARCH_YEARS)
+})
+
+test('the zone is the desktop zone when none is passed', () => {
+  const text = introText({ folders, outbox: '/data/handoff/s1' })
+  assert.ok(text.includes(` in ${Intl.DateTimeFormat().resolvedOptions().timeZone},`))
 })

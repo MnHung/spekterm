@@ -8,6 +8,7 @@ import {
   MAX_REPORT_LENGTH,
   outboxKindOf,
   parseHandoffPayload,
+  parseRecurrence,
   parseReport,
   parseScheduledAt,
 } from './handoff-delivery'
@@ -95,6 +96,8 @@ export interface HandoffServiceDeps {
    * the tests exercise the default production uses.
    */
   sourceTesting?: Pick<IntakeSourceOptions, 'watch' | 'onRescan'>
+  /** The clock a delivery is read against. Tests inject it (a real clock broke a test on a slow machine). */
+  now?: () => number
 }
 
 /**
@@ -161,7 +164,7 @@ export class HandoffService {
   async deliverFile(contents: string, file: string, state?: FileState): Promise<DeliverOutcome> {
     const { service } = this.#deps
     // One reading of the clock per delivery: whether a handoff is scheduled is decided against it, once.
-    const now = Date.now()
+    const now = (this.#deps.now ?? Date.now)()
 
     const sessionId = sourceSessionOf(file)
     // 不在 `<root>/<sessionId>/` 正下方 ⇒ 不是一份交接。消費掉它，否則它每次掃描都再走一趟。
@@ -208,6 +211,15 @@ export class HandoffService {
         failure,
       }
     }
+    // With `repeat`, `at` is the recurrence's start and the handoff is a proposal, never a scheduled handoff: the
+    // start must not reach `scheduledAt`, which the receipt, the arrival guard and the views all key on.
+    const recurrence = parseRecurrence(payload.value, schedule.kind === 'scheduled' ? schedule.at : undefined, now)
+    if (recurrence.kind === 'invalid') {
+      return {
+        ...service.reject('REPEAT_INVALID', payload.value.target, recurrence.rule, { adapter: HANDOFF_ADAPTER, ...failure }),
+        failure,
+      }
+    }
 
     const target = resolveTarget(payload.value.target, this.#deps.candidates())
     if (!target.ok) {
@@ -245,7 +257,11 @@ export class HandoffService {
       originLabel,
       targetFolderId: target.folderId,
       source: lineageSourceOf(sessionId, source),
-      ...(schedule.kind === 'scheduled' ? { scheduledAt: schedule.at } : {}),
+      ...(recurrence.kind === 'repeating'
+        ? { recurrence: recurrence.recurrence }
+        : schedule.kind === 'scheduled'
+          ? { scheduledAt: schedule.at }
+          : {}),
     })
 
     // **失敗的診斷欄位一律帶上** —— 共用路徑的拒絕（本文過長、識別碼不合法…）同樣要說得出

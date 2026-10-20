@@ -129,6 +129,8 @@ export interface RemoteHost {
   /** Withdraws an agent's offer to close its own session, as the desktop's Keep (`remote-close-offer` D2). */
   keep(sessionId: string): Promise<{ sessionId: string }>
   dismissInbox(adapter: string, id: string): void
+  /** The item is a repeating proposal (`recurring-handoff`): approved on the desktop only. */
+  isInboxProposal(adapter: string, id: string): boolean
   openspecChanges(folderId: string): Promise<unknown>
   openspecChange(folderId: string, slug: string): Promise<unknown>
   openspecSpecs(folderId: string): Promise<unknown>
@@ -343,6 +345,12 @@ export const OPERATIONS: Record<string, Operation> = {
     const id = str(p, 'id')
     const folderId = p.folderId
     if (typeof folderId !== 'string' || folderId === '') throw new RemoteError('FOLDER_REQUIRED', 'accepting needs the folder the user chose')
+    // A client that predates repeating handoffs shows a proposal as an ordinary item: accepting it there would approve
+    // an unbounded schedule its user never saw (`recurring-handoff`, design D9). Before `perform`, so no window is
+    // needed to refuse.
+    if (state.host.isInboxProposal(adapter, id)) {
+      throw new RemoteError('APPROVE_ON_DESKTOP', 'a repeating handoff is approved on the desktop; it stays pending')
+    }
     return state.host.perform({ kind: 'accept', adapter, id, folderId })
   },
 

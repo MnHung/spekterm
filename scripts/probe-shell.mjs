@@ -305,6 +305,10 @@ const PROBE_EXPRESSION = `(async () => {
           'dismiss',
           // scheduled-handoff: Run now on a scheduled handoff.
           'runNow',
+          // recurring-handoff: approve a repeating proposal (into a folder the main process looks up), stop a
+          // recurrence by its id. Neither takes a path.
+          'approveRecurrence',
+          'stopRecurrence',
           'settle',
           'dismissNotices',
           'dismissNotice',

@@ -30,7 +30,10 @@ import {
   setRemoteWatched,
 } from './ipc/terminal'
 import { broadcastRemoteState, registerRemoteHandlers, requestRenderer } from './ipc/remote'
-import { notifyIntakeChanged, onIntakeChanged } from './intake-changes'
+import { notifyIntakeChanged, onIntakeChanged, onIntakeDismissed } from './intake-changes'
+import { RecurrenceKeeper } from './recurrence-keeper'
+import { notificationTab } from './recurrence-kind'
+import { RecurrenceStore } from './recurrence-store'
 import { OpenSpecService } from './openspec-service'
 import { AttentionLog } from './remote-attention'
 import { createRemoteHost } from './remote-host'
@@ -70,7 +73,7 @@ import { isRestored, onRestoreGateOpen, whenRestored } from './restore-gate'
 import { SessionControl } from './session-control'
 import { cancelCommandEnd, expectCommandEnd, lastProcessChangeAt, runStartedAt } from './session-runs'
 import { sessionExists } from '../shared/lineage/existence'
-import { configureTicketLineage, ticketResolutionFor } from './handoff-ticket'
+import { configureTicketLineage, handoffTickets, ticketResolutionFor } from './handoff-ticket'
 import { ancestryOf } from '../shared/lineage/ancestry'
 import { preferredTitle } from '../shared/lineage/label'
 import { RoutingStore, routingFile } from './intake-routing'
@@ -521,12 +524,28 @@ void app.whenReady().then(async () => {
    */
   intakeService.onFailure((failure) => notifier.failed(failure))
 
-  let openInbox: (() => void) | null = null
+  let openInbox: ((tab?: 'inbox' | 'schedules') => void) | null = null
   let requestAutoAccept: ((adapter: string, id: string, folderId: string) => void) | null = null
   let focusSession: ((sessionId: string) => void) | null = null
   let receivers: () => number[] = () => []
   // Created below, once the folder list and preferences it reads are wired; the handlers only reach it later.
   let opener: HandoffOpener | null = null
+  /**
+   * Repeating handoffs (`recurring-handoff`): the approved recurrences, and the one owner of their upcoming
+   * occurrences. Every path that can change one reaches the keeper: the opener's tick and firing, approval, Run now,
+   * an accept, and an ignore from either side (`onIntakeDismissed`).
+   */
+  const recurrenceStore = new RecurrenceStore(join(app.getPath('userData'), 'handoff-recurrences.json'))
+  recurrenceStore.load()
+  const recurrenceKeeper = new RecurrenceKeeper({
+    service: intakeService,
+    recurrences: recurrenceStore,
+    candidates: () => store.list().map((folder) => ({ id: folder.id, name: folder.name, path: folder.path })),
+    opening: (adapter, id) => handoffTickets.isLive(adapter, id) || (opener?.wasRequested(adapter, id) ?? false),
+    changed: notifyIntakeChanged,
+  })
+  recurrenceKeeper.ensureAll()
+  onIntakeDismissed((adapter, id) => recurrenceKeeper.afterDismiss(adapter, id))
   registerIntakeHandlers({
     service: intakeService,
     routing: routingStore,
@@ -541,6 +560,7 @@ void app.whenReady().then(async () => {
     registerReceivers: (list) => { receivers = list },
     onNewReceiver: () => opener?.tick(),
     runNow: (adapter, id) => opener?.runNow(adapter, id) ?? false,
+    recurrences: recurrenceKeeper,
   })
 
   /**
@@ -581,7 +601,8 @@ void app.whenReady().then(async () => {
     // 以它為閘會在「剛建好、還沒落盤」的窗口裡誤判成不存在，而症狀是通知偶爾改去打開收件匣
     // （實測三次有一次）。renderer 那側已經有一道「找不到就什麼都不做」，那才是對的位置。
     if (sessionId) focusSession?.(sessionId)
-    else openInbox?.()
+    // Only proposals ⇒ the Schedules tab, where they are approved (`recurring-handoff`).
+    else openInbox?.(notificationTab(keys, (adapter, id) => intakeStore.get(adapter, id)))
   }
 
   const insights = createInsightsService({
@@ -862,6 +883,7 @@ void app.whenReady().then(async () => {
     canReceive: () => anyWindowReceives(receivers(), isRestored),
     requestOpen: (adapter, id, folderId) => requestAutoAccept?.(adapter, id, folderId),
     changed: notifyIntakeChanged,
+    keeper: recurrenceKeeper,
   })
   onRestoreGateOpen(() => opener?.tick())
   const openerTimer = setInterval(() => opener?.tick(), OPENER_INTERVAL_MS)

@@ -640,3 +640,32 @@ recorded "1 萬字, then a file and a 2,000 preview" all along. The reviewer rep
   delivery back for its bookkeeping would turn a full disk into a lost handoff. Receipts are written to a
   dot-prefixed name and renamed (a reader in another process saw 218 torn reads in the control group), and a
   `held` receipt is rewritten only when its code changes — the 30-second re-read would otherwise churn it.
+
+## 18. Repeating handoffs: what fails silently here (`recurring-handoff`)
+
+- **The ticket is not "an opening is in progress".** `ticketFor` issues one only for a handoff with a lineage
+  source. The keeper first read "fired, pending, no live ticket" as "the opener refused it — wait for the user",
+  so an occurrence without a source paused its recurrence until its session attached, and the next time appeared
+  a tick later. The unit tests issued tickets in their fake opener and stayed green; `probe:intake`'s start
+  section, seeding occurrences without a source, found it. The keeper now also asks the opener what it requested
+  in this run (`HandoffOpener.wasRequested`).
+- **Scan, never follow a pointer.** An occurrence is added before the recurrence records it; a crash between the
+  two writes, restarted after that occurrence's time, computes a different next time. Only scanning for records
+  of the recurrence finds the first one and keeps one occurrence, not two.
+- **The next time is after `max(now, the last occurrence, the start)`.** "After now" alone makes Run now on
+  Tuesday re-create Wednesday's time; "after the last" alone, after a long absence, would create every missed
+  time instead of one.
+- **An unreadable recurrence file must not read as empty.** Read as empty, every occurrence looks like an orphan
+  of a stopped recurrence, and the next approval overwrites the file. A missing file is empty; a damaged one, or
+  one from a newer version, makes the store unavailable: nothing is created, changed or written, and the inbox
+  says so.
+- **`TZ` is per process.** The daylight-saving tests set `process.env.TZ` in their own file (`node --test` runs one
+  process per file, and Node re-reads `TZ` on assignment); their first test checks that the zone applied, or a
+  `TZ` that did not would make every expectation pass. On the spring day, 02:30 and 03:30 build the same instant:
+  every search is "strictly after", which also deduplicates.
+- **A start must never reach `scheduledAt`.** With `repeat`, `at` is the start. The receipt (`scheduled` before
+  `proposed`), the arrival guard and the scheduled section all key on `scheduledAt`; a start there would make a
+  proposal silent, uncounted and listed as scheduled. A start that passes between the outbox's two reads gives
+  two proposal ids (the same race a one-off `at` already has).
+- **Classify by the record's role, never by `scheduledAt`.** An occurrence whose opening failed is pending with no
+  `scheduledAt`, which is exactly what a proposal looks like if one goes by that field.

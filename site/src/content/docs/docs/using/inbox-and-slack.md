@@ -1,73 +1,86 @@
 ---
 title: Inbox and Slack
-description: Turn Slack mentions into inbox items you review, then open as a ready-to-go Claude Code session in the folder you choose.
+description: Turn Slack mentions into inbox items. Review each one, then open it as a ready-to-go Claude Code session in the folder you choose.
 sidebar:
   order: 5
 ---
 
-The inbox collects work that arrives from outside: today, mainly **Slack messages that mention you**.
-Each item waits until you read it. When you accept it, spekterm opens a `claude` session in the folder you
-confirm, with the message as context and a first prompt typed in — but **not sent**. You press `Enter`.
+The inbox collects work that arrives from outside. Today that is mainly **Slack messages that mention you**.
+Each item waits until you have read it. When you accept one, spekterm opens a `claude` session in the folder
+you confirm. The message goes to the agent as context, and a first prompt is typed in but **not sent**: you
+press `Enter`.
 
 Open the inbox with **Handoffs** on the activity bar (the column at the far left). The entry shows how
 many items are waiting for you.
 
 ## Reviewing an item
 
-Each item shows where it came from, who wrote it, when it happened, and its **full text** — before
-anything is opened. The text is shown as plain text, exactly as the agent will receive it.
+Before anything opens, each item shows where it came from, who wrote it, when, and its **full text**. The
+text is shown as plain text, exactly as the agent will receive it.
 
-- **Opens in** shows the folder the item will open in. spekterm preselects one using your routing rules;
+- **Opens in** shows the folder the item will open in. spekterm preselects one from your routing rules, and
   you can pick another. Nothing opens until a folder is confirmed.
-- **Accept** opens a `claude` session in that folder. The item's text is handed to the agent as context,
-  and a prompt that points at it is typed into the agent's input. Read it, change it if you like, and press
-  `Enter` to send.
+- **Accept** opens a `claude` session in that folder. The agent gets the item's text as context, and a prompt
+  that points to it is typed into the agent's input. Read the prompt, edit it if you like, and press `Enter`
+  to send it.
 - **Dismiss** removes the item without opening anything.
 
-Once accepted, an item shows as **Already opened** until you **Clear from inbox**, so you can still
-reread what you accepted.
+An accepted item shows **Already opened** until you choose **Clear from inbox**, so you can still reread
+what you accepted.
 
-Message text written by someone else is never sent to an agent on its own. You review it first, and the
-first prompt waits for your `Enter` — or, for an item accepted on a paired phone, for you to send it from the phone
-after reading it there ([Remote access](/docs/using/remote-access/#sending-an-inbox-items-prompt-from-the-phone)).
+Text written by someone else never reaches an agent on its own. You review it first, and the first prompt
+waits for your `Enter`. For an item accepted on a paired phone, the prompt waits until you read it on the
+phone and send it from there
+([Remote access](/docs/using/remote-access/#sending-an-inbox-items-prompt-from-the-phone)).
 
-## Scheduled handoffs
+## The Schedules tab
 
-An agent can hand work off to a later time ([Handoffs](/docs/using/handoffs/#handing-work-off-to-a-later-time)).
-Until that time it is listed under **Scheduled**, earliest first, with when it opens, where it came from,
-the folder it opens in, and its full text. It is not counted on the inbox entry and raises no notification
-while it waits.
+The inbox keeps what needs you now apart from what is planned. The **Inbox** tab lists the items to deal
+with now. The **Schedules** tab lists everything planned, in three parts:
 
-- **Run now** opens it at once, as its time would have.
-- **Cancel** drops it: it never opens.
+- **Waiting for approval**: repeating handoffs an agent proposed
+  ([Handoffs](/docs/using/handoffs/#handing-off-work-that-repeats)). Each shows its schedule, the next times
+  it would open, its end, and its full text. **Approve** it into the folder you choose, or **Decline** it. A
+  proposal whose end has already passed can no longer be approved. The tab's label shows how many proposals
+  wait.
+- **Scheduled**: every handoff waiting for its time, earliest first. That covers handoffs for a later time
+  ([Handoffs](/docs/using/handoffs/#handing-work-off-to-a-later-time)) and the next time of each repeating
+  handoff. Each shows when it opens, where it came from, the folder it opens in, and its full text.
+  **Run now** opens it at once, as if its time had come. **Cancel** drops a one-off handoff, and **Skip this time**
+  drops one time of a repeating one.
+- **Repeating**: each approved repeating handoff, with its next time or the reason it has none (an earlier
+  time is still waiting in the inbox, or the inbox is full). **Stop repeating** ends it, after asking you
+  first.
 
-A scheduled handoff counts toward the inbox's limit on waiting items, like every other item.
+A proposal waits for you, so it counts on the inbox entry and sends a notification. A scheduled handoff does
+neither until it opens. When a notification is only about proposals, opening the inbox from it shows the
+Schedules tab. Every item, planned or not, counts toward the inbox's limit on waiting items.
 
 ## Notifications
 
-When new items arrive, spekterm shows a desktop notification. Several arrivals at once are merged into
-one. Clicking the notification brings spekterm to the front with the inbox open.
+When new items arrive, spekterm shows a desktop notification. Items that arrive together share one
+notification. Clicking it brings spekterm to the front with the inbox open.
 
 ## Routing rules
 
 The **Routing rules** tab decides which folder is preselected for an item.
 
-- Rules are checked from top to bottom; the first one that matches wins. Each rule picks a field
-  (**Match on**), a text it must **Contain**, and the folder to **Open in**. Reorder rules with the arrow
-  buttons.
-- **Default folder** is used when no rule matches. Set one — otherwise items arrive with no folder chosen,
+- Rules are checked from top to bottom, and the first one that matches wins. Each rule names a field
+  (**Match on**), the text that field must contain (**Contains**), and the folder to open in (**Open in**).
+  Reorder rules with the arrow buttons.
+- **Default folder** is used when no rule matches. Set one. Without it, items arrive with no folder chosen,
   and you pick one each time.
 - Some fields, such as the title and the message text, are written by whoever sent the item. Rules on
   those fields are marked, because a sender can word a message to steer where it opens.
 
-If a rule points at a folder that is no longer in your workspace, the item says so instead of quietly
+If a rule points to a folder that is no longer in your workspace, the item says so instead of quietly
 opening somewhere else.
 
 ## Connecting Slack
 
-The Slack connection is set up in **Settings → Integrations**. It connects your Slack account; spekterm then finds messages that mention **you** — the
-person the token belongs to — and turns each one into an inbox item, with the thread up to that message
-as context. A very long thread is shortened, and the item says so.
+Set up the Slack connection in **Settings → Integrations**. It connects your Slack account. spekterm then
+finds messages that mention **you** (the person the token belongs to) and turns each one into an inbox item.
+The thread up to that message comes along as context. A very long thread is shortened, and the item says so.
 
 You need a Slack app in your workspace with a **user token**. Give the token these user token scopes:
 
@@ -77,44 +90,46 @@ channels:read     groups:read     im:read     mpim:read
 users:read
 ```
 
-The `*:history` scopes let spekterm read messages; the `*:read` scopes let it list the conversations you
-are in; `users:read` turns user IDs into names. After changing scopes, reinstall the app and copy the
-token again. Paste it under **User token** and press **Save** or **Enter**; leaving the field does not save it,
-so half a pasted token is never stored. Your identity is read from the token — there is nothing else to fill in.
+The `*:history` scopes let spekterm read messages, the `*:read` scopes let it list the conversations you
+are in, and `users:read` turns user IDs into names. After changing scopes, reinstall the app and copy the
+token again. Paste it under **User token** and press **Save** or **Enter**. Leaving the field does not save
+it, so half a pasted token is never stored. spekterm reads your identity from the token, so there is nothing
+else to fill in.
 
-While no **Default folder** is set, the Integrations section says that mentions will arrive with no folder to
-open in, with a button that opens the inbox's routing rules.
+While no **Default folder** is set, the Integrations section warns that mentions will arrive with no folder
+to open in. Its **Open routing rules** button takes you to the inbox's routing rules.
 
 ### When mentions arrive
 
 spekterm checks for new mentions when it starts, every five minutes, and right after you save a token.
-**Look-back window** (applied with **Enter** or when you leave the field) sets how far back the startup check
-searches: Slack does not replay what happened
-while spekterm was closed, so mentions older than the window are missed. On macOS, closing the window does
-not quit spekterm: while it keeps running without a window, the inbox keeps receiving and the five-minute
-check continues.
+**Look-back window** limits how far back a check reaches. Slack does not replay what happened while
+spekterm was closed, so a mention that is older than the window when spekterm starts is missed. A new
+window applies when you press **Enter** or leave the field.
+
+On macOS, closing the window does not quit spekterm. While it runs without a window, the inbox keeps
+receiving items and the five-minute check continues.
 
 For mentions within seconds, also add an **app-level token**: enable Socket Mode for your Slack app and
-create an app-level token for it. **Live updates** then shows whether the live connection is on. If it
-drops, spekterm falls back to the periodic check.
+create an app-level token for it. **Live updates** then shows whether the live connection is on. If the
+connection drops, spekterm falls back to the periodic check.
 
 ### Status
 
-The Integrations section always says what state the connection is in: not set up, working with nothing new,
-how many mentions arrived on the last check, Slack asking to slow down, or credentials that are invalid or
-missing scopes. A broken connection never looks like "nobody mentioned you": while it is broken, the inbox also
-shows a one-line Slack status with a button that opens the Integrations section.
+The Integrations section always shows the state of the connection: not set up, working with nothing new,
+how many mentions the last check brought in, Slack asking spekterm to slow down, or credentials that are
+invalid or missing scopes. A broken connection never looks like "nobody mentioned you". While it is broken,
+the inbox also shows a one-line Slack status with a button that opens the Integrations section.
 
 ### Your tokens
 
 Tokens are stored in spekterm's data directory (`~/.config/Spekterm` on Linux,
-`~/Library/Application Support/Spekterm` on macOS) with access limited to your user. They are sent only to Slack
-(or to the endpoint you set under **API endpoint** — only change it if you know why; an address that is not
-`https` is refused and the endpoint stays as it was), and never reach
-your terminals or your agents. See [Data and network](/docs/reference/data-and-network/).
+`~/Library/Application Support/Spekterm` on macOS), with access limited to your user. They are sent only to
+Slack, or to the endpoint set under **API endpoint**. Change the endpoint only if you know why: an address
+that is not `https` is refused, and the endpoint stays as it was. Tokens never reach your terminals or your
+agents. See [Data and network](/docs/reference/data-and-network/).
 
 ## Rejected deliveries
 
-An item that cannot be accepted into the inbox — unreadable, too long to review, or naming a repository
-that is not in your workspace — is not dropped silently. The inbox lists each rejection with its reason
-until you clear it, including after a restart.
+An item that cannot enter the inbox is not dropped silently. That happens when it is unreadable, too long
+to review, or names a repository that is not in your workspace. The inbox lists each rejection with its
+reason until you clear it, and the list survives a restart.

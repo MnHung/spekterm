@@ -1,4 +1,5 @@
 import type { IntakeRecord } from './intake-store'
+import { isProposalRecord } from './recurrence-kind'
 
 /**
  * `accept` 的回傳形狀 —— 成功時帶一個**指示**（在哪個 folder 建立），外加「它是不是已經
@@ -37,6 +38,9 @@ export function decideAccept(input: {
 }): IntakeAcceptResult {
   const { record, chosenFolderId, knownFolderIds, eventsEnabled } = input
   if (!record?.content) return { ok: false, reason: 'unknown' }
+  // A repeating proposal is approved, never accepted (`recurring-handoff`): accepting would open its body once as an
+  // ordinary handoff. No interface offers it; this refusal is the main process's own.
+  if (isProposalRecord(record)) return { ok: false, reason: 'unknown' }
   // Not `firedAt`: a record pending again after a prefill timeout must still be accepted, reusing its session.
   if (input.opening) return { ok: false, reason: 'opening' }
 

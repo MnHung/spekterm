@@ -1,4 +1,6 @@
-import { bodyOf } from './intake-schema'
+import { matchesBetween, parseCron } from './cron'
+import { bodyOf, type IntakeVerified } from './intake-schema'
+import { recurrenceRoleOf, type RecurrenceRole } from './recurrence-kind'
 import { resolveRouting, type RoutingConfig } from './intake-routing'
 import type { IntakeRecord } from './intake-store'
 
@@ -46,12 +48,34 @@ export interface IntakeView {
    * not carry it. A device reads a past value as due.
    */
   scheduledAt?: number
+  /**
+   * What the item is to a repeating handoff (`recurring-handoff`, design D6), from the record — never from "has
+   * `scheduledAt`": an occurrence whose opening failed is pending without one and is still an occurrence. `next`
+   * (a proposal only): up to three times from its start, not past its end, as of when the list was built.
+   */
+  recurrence?: { role: RecurrenceRole; repeat: string; until?: number; next?: number[] }
+}
+
+/** How many upcoming times a proposal shows. */
+export const PROPOSAL_PREVIEW = 3
+
+function recurrenceOf(verified: IntakeVerified, now: number): IntakeView['recurrence'] {
+  const role = recurrenceRoleOf(verified)
+  if (role === undefined || verified.repeat === undefined) return undefined
+  const base = { role, repeat: verified.repeat, ...(verified.repeatUntil !== undefined ? { until: verified.repeatUntil } : {}) }
+  if (role !== 'proposal') return base
+  const cron = parseCron(verified.repeat)
+  if (!cron.ok) return { ...base, next: [] }
+  const from = Math.max(now, verified.repeatStart === undefined ? -Infinity : verified.repeatStart - 1)
+  const { times } = matchesBetween(cron.schedule, from, verified.repeatUntil ?? Infinity, PROPOSAL_PREVIEW)
+  return { ...base, next: times }
 }
 
 export function project(
   record: IntakeRecord,
   routing: RoutingConfig,
   knownFolderIds: ReadonlySet<string>,
+  now: number = Date.now(),
 ): IntakeView {
   const content = record.content
   const base: IntakeView = {
@@ -74,11 +98,13 @@ export function project(
   const intake = { id: record.id, verified: content.verified, authored: content.authored, receivedAt: content.receivedAt }
   const body = bodyOf(intake)
   const scheduledAt = content.verified.scheduledAt
+  const recurrence = recurrenceOf(content.verified, now)
   const withBody = {
     ...base,
     body,
     bodyLength: body.length,
     ...(record.state === 'pending' && scheduledAt !== undefined && record.firedAt === undefined ? { scheduledAt } : {}),
+    ...(recurrence ? { recurrence } : {}),
   }
   if (record.state !== 'pending') return withBody
 
@@ -103,11 +129,12 @@ export function listView(
   records: readonly IntakeRecord[],
   routing: RoutingConfig,
   knownFolderIds: ReadonlySet<string>,
+  now: number = Date.now(),
 ): IntakeView[] {
   return records
     .filter((record) => record.state !== 'dismissed')
     .filter((record) => !(record.state === 'accepted' && record.settledAt !== undefined))
-    .map((record) => project(record, routing, knownFolderIds))
+    .map((record) => project(record, routing, knownFolderIds, now))
     .sort(byNewestOccurrence)
 }
 

@@ -110,6 +110,17 @@ export interface IntakeVerified {
   scheduledAt?: number
   /** The target string the handoff's agent wrote, normalized: resolved again when the handoff opens. */
   targetText?: string
+  /**
+   * The cron expression of a repeating handoff (`recurring-handoff`), fields joined by one space. On a proposal
+   * (no `recurrenceId`) and on each occurrence of an approved recurrence.
+   */
+  repeat?: string
+  /** A proposal's start (epoch ms, from `at`), only when later than the read time. Never `scheduledAt`. */
+  repeatStart?: number
+  /** A proposal's end (epoch ms, from `until`). */
+  repeatUntil?: number
+  /** The recurrence an occurrence belongs to. Absent on a proposal: that is what tells the two apart. */
+  recurrenceId?: string
 }
 
 /** 歸屬的三態定義在 `src/shared/lineage/types.ts`（renderer 也要用）。 */
@@ -195,6 +206,12 @@ export interface DeliveryProvenance {
   scheduledAt?: number
   /** See `IntakeVerified.targetText`. */
   targetText?: string
+  /** See `IntakeVerified.repeat`. A proposal is delivered without `autoOpen`: nothing opens it but approval. */
+  repeat?: string
+  /** See `IntakeVerified.repeatStart`. */
+  repeatStart?: number
+  /** See `IntakeVerified.repeatUntil`. */
+  repeatUntil?: number
   /**
    * The record is opened by `HandoffOpener` (`scheduled-handoff`): it gets `opensAt`, the scheduled time or the
    * read time. Not a verified field — it is the record's state, kept with the dedupe key.
@@ -254,6 +271,8 @@ export type IntakeRejection =
   | 'CONTROL_UNAVAILABLE'
   /** A handoff's `at` breaks the scheduling rules: its form, a missing offset, a date that does not exist, the bound. */
   | 'SCHEDULE_INVALID'
+  /** A handoff's `repeat` or `until` breaks the repeating rules (`recurring-handoff`); the detail names the rule. */
+  | 'REPEAT_INVALID'
   | 'MALFORMED'
   | 'MISSING_ID'
   | 'INVALID_ID'
@@ -433,6 +452,9 @@ export function parseIntake(
         ...(provenance?.source ? { source: provenance.source } : {}),
         ...(provenance?.scheduledAt !== undefined ? { scheduledAt: provenance.scheduledAt } : {}),
         ...(provenance?.targetText !== undefined ? { targetText: provenance.targetText } : {}),
+        ...(provenance?.repeat !== undefined ? { repeat: provenance.repeat } : {}),
+        ...(provenance?.repeatStart !== undefined ? { repeatStart: provenance.repeatStart } : {}),
+        ...(provenance?.repeatUntil !== undefined ? { repeatUntil: provenance.repeatUntil } : {}),
       },
       authored,
       receivedAt: Date.now(),

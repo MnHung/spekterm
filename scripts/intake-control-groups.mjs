@@ -35,6 +35,34 @@ const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
  * 沒有指名的話，一個「因為別的理由紅了」的 mutation 會被當成通過 —— 而那正是這支腳本要防的。
  */
 export const MUTATIONS = [
+  // ── recurring-handoff ──
+  {
+    name: 'proposal-auto-opens',
+    section: 'runRecurring',
+    file: 'src/main/handoff-delivery.ts',
+    from: `      autoOpen: input.recurrence === undefined,`,
+    to: `      autoOpen: true,`,
+    expectRed: 'a proposal opens no session',
+    why: '**A proposal opened as an ordinary handoff**: the agent runs once without the user ever approving the schedule.',
+  },
+  {
+    name: 'notification-tab-ignored',
+    section: 'runRecurring',
+    file: 'src/main/index.ts',
+    from: `    else openInbox?.(notificationTab(keys, (adapter, id) => intakeStore.get(adapter, id)))`,
+    to: `    else openInbox?.()`,
+    expectRed: "a proposal's notification opens the Schedules tab",
+    why: '**The notification lands on the items tab**, where a proposal is not listed: the user is sent to look for it.',
+  },
+  {
+    name: 'recurrence-file-read-as-empty',
+    section: 'runRecurringDamaged',
+    file: 'src/main/recurrence-store.ts',
+    from: `    if (!entries) {\n      this.#available = false`,
+    to: `    if (!entries) {\n      if (entries === null) return\n      this.#available = false`,
+    expectRed: '(c) a damaged recurrence file: the occurrence is still listed and the inbox says the recurrences could not be read',
+    why: '**An unreadable recurrence file read as empty**: nothing tells the user, and the next approval overwrites every recurrence they had.',
+  },
   // ── scheduled-handoff ──
   {
     name: 'scheduled-opens-at-once',
@@ -85,8 +113,8 @@ export const MUTATIONS = [
     name: 'scheduled-cancel-dead',
     section: 'runScheduled',
     file: 'src/renderer/src/shell/intake/IntakeOverlay.tsx',
-    from: `          aria-label={t('intake.cancelScheduled')}\n          onClick={() => void window.workspace.intake.dismiss(item.id, item.adapter).then(onChanged)}`,
-    to: `          aria-label={t('intake.cancelScheduled')}\n          onClick={() => void onChanged()}`,
+    from: `          aria-label={t(cancelKey)}\n          onClick={() => void window.workspace.intake.dismiss(item.id, item.adapter).then(onChanged)}`,
+    to: `          aria-label={t(cancelKey)}\n          onClick={() => void onChanged()}`,
     expectRed: 'Cancel removes a scheduled handoff from the inbox',
     why: '**Cancel does nothing**: the handoff still opens at its time.',
   },
@@ -141,7 +169,7 @@ export const MUTATIONS = [
     name: 'schedule-line-missing',
     section: 'runScheduledStart',
     file: 'src/main/ipc/intake.ts',
-    from: `        buildContext(bodyOf(intake), nonce, scheduledAt === undefined ? undefined : { scheduledAt, startedAt: Date.now() }),`,
+    from: `        buildContext(bodyOf(intake), nonce, contextScheduleFor(record.content.verified, record.firedAt, Date.now())),`,
     to: `        buildContext(bodyOf(intake), nonce),`,
     expectRed: '(a) its context states when it was scheduled for and when it started',
     why: '**Not told the times**: a handoff opened days late acts as if no time had passed.',
