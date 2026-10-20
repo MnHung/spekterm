@@ -228,6 +228,12 @@ occurrence created before its end time SHALL still open if it opens late.
 - **WHEN** the user ignores that item
 - **THEN** the scheduled section lists the recurrence's next matching time after now
 
+#### Scenario: An occurrence whose folder is gone names no other folder
+
+- **GIVEN** a recurrence approved into folder B, folder B removed from the workspace, and a routing rule and a fallback folder that would match the occurrence
+- **WHEN** its next occurrence is created
+- **THEN** the occurrence is listed as having its folder gone, never with the rule's or the fallback's folder
+
 #### Scenario: An unreadable recurrence file changes nothing
 
 - **GIVEN** an approved recurrence with an upcoming occurrence, and its recurrence file then damaged

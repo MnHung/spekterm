@@ -207,4 +207,18 @@ describe('已由接收端解析出目標的 intake', () => {
       folderId: 'fGone',
     })
   })
+
+  it('a named target that resolved to no folder is refused, never matched by a rule or the fallback', () => {
+    const config: RoutingConfig = {
+      rules: [{ id: 'r1', criterion: 'body', contains: 'b', folderId: 'fB' }],
+      fallbackFolderId: 'fB',
+    }
+    const unresolved: Intake = {
+      id: 'h1-r1',
+      verified: { adapter: 'handoff', originKind: 'session', originId: 'f1', targetText: '/home/me/gone' },
+      authored: { title: 't', body: 'b', actor: 'a', originLabel: 'alpha' },
+      receivedAt: 0,
+    }
+    assert.deepEqual(resolveRouting(config, unresolved, new Set(['fB'])), { ok: false, reason: 'FOLDER_GONE' })
+  })
 })

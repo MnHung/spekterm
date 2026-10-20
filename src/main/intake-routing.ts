@@ -106,6 +106,9 @@ export function resolveRouting(
       ? { ok: true, folderId: addressed }
       : { ok: false, reason: 'FOLDER_GONE', folderId: addressed }
   }
+  // An agent named the target, but it resolved to no folder: a repeating handoff's occurrence created after its
+  // folder left the workspace. Its target is still named; the rules and the fallback must not pick another.
+  if (intake.verified.targetText !== undefined) return { ok: false, reason: 'FOLDER_GONE' }
 
   for (const rule of config.rules) {
     const haystack = valueOf(intake, rule.criterion).toLowerCase()
