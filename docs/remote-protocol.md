@@ -400,8 +400,9 @@ One connection watches at most one conversation; watching another ends the previ
   `r.text` says so; the conversation entry is that same line. As measured with the agent: the command written runs (a
   name that is the start of another is not swapped by the input box's completion); one sent while the agent works
   runs after its turn; an unknown command is answered by the agent CLI locally and reaches neither the agent nor the
-  conversation, so it stays "not confirmed"; one long enough to be taken as a paste (about 2,000 characters) is not run
-  as a command and arrives as a plain message.
+  conversation, so it stays "not confirmed"; one **longer than 800 characters** is taken as a paste, is not run as a
+  command, and arrives as a plain message. The limit counts characters, not bytes (800 CJK characters still run), and
+  newlines neither count extra nor stop a command: arguments over several lines run as one command.
 - Control characters other than newline are removed.
 - The text is written, then the submit key **500 ms later**. Just before the submit key the wait state is read
   again: if the agent began waiting on a choice meanwhile, the key is withheld and the outcome is

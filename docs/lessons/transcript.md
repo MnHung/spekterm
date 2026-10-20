@@ -704,7 +704,9 @@ records after each.
 | `/pns:echo c1` (a namespaced command) | `pns:echo` | as above |
 | `/probe-echo   sp1  sp2  ` | arguments `sp1  sp2`: **trimmed at both ends, inner spaces kept** | `<command-args>sp1  sp2</command-args>` |
 | `<a&b> "q"`, a newline in the arguments | verbatim, no escaping | verbatim |
-| `/probe-echo` + about 2,000 characters | **not run**: taken as a paste, recorded inside `<pasted_content>` as a plain prompt | `promptSource: "typed"` |
+| `/probe-echo` + arguments, **more than 800 characters in all** (800 runs, 810 does not; bisected) | **not run**: taken as a paste, recorded inside `<pasted_content>` as a plain prompt | `promptSource: "typed"` |
+| the same with CJK arguments | the limit is in characters, not bytes: 800 characters (2,220 bytes) run, 850 do not | |
+| the same with a newline every 10 characters | newlines change nothing: 700 characters over 70 lines run as one command, 850 do not | |
 | `/probe-echo busy1` while a tool runs | run after the turn | an ordinary `user` record (not `queued_command`) |
 | `/clear` | — | name first, indented: `<command-name>/clear</command-name>\n            <command-message>clear</command-message>\n            <command-args></command-args>`, beside an `isMeta` `<local-command-caveat>` record |
 | `/compact` | — | a plain `user` string `/compact` |
