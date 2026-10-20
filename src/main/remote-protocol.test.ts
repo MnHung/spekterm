@@ -273,3 +273,49 @@ test('with no window, sessions.submitPrefill answers NO_WINDOW', async () => {
   const session = openRemoteSession(noWindowHost(), conn)
   assert.equal((await call(session, conn, 'sessions.submitPrefill', { sessionId: 's1', prefillId: 'p1' })).e?.code, 'NO_WINDOW')
 })
+
+test('a conversation watch sends the agent status with its first events, and the host stops it with the watch', async () => {
+  let stopped = 0
+  let later: ((view: { sessionId: string; model?: string }) => void) | null = null
+  const host = {
+    followConversation: (_id: string, sink: { status: (view: { sessionId: string; model?: string }) => void }) => {
+      sink.status({ sessionId: 's1', model: 'Opus' })
+      later = sink.status
+      return { stop: () => void (stopped += 1) }
+    },
+    setWatched: () => undefined,
+  } as unknown as RemoteHost
+  const conn = connection()
+  const session = openRemoteSession(host, conn)
+  assert.equal((await call(session, conn, 'conversation.watch', { sessionId: 's1' })).ok, true)
+  const kinds = conn.frames.map((frame) => (frame.t === 'evt' ? frame.k : frame.t))
+  assert.deepEqual(kinds, ['conversation.status', 'res'], 'the first status comes before the answer, as the first update does')
+  assert.deepEqual(conn.frames[0].d, { sessionId: 's1', model: 'Opus' })
+  later!({ sessionId: 's1', model: 'Sonnet' })
+  assert.deepEqual(conn.frames.at(-1), { t: 'evt', k: 'conversation.status', d: { sessionId: 's1', model: 'Sonnet' } })
+  assert.equal((await call(session, conn, 'conversation.unwatch')).ok, true)
+  assert.equal(stopped, 1)
+})
+
+test('a conversation watch sends the skill list as conversation.skills, null included', async () => {
+  let report: ((skills: unknown) => void) | null = null
+  const host = {
+    followConversation: (_id: string, sink: { skills: (skills: unknown) => void }) => {
+      report = sink.skills
+      return { stop: () => undefined }
+    },
+    setWatched: () => undefined,
+  } as unknown as RemoteHost
+  const conn = connection()
+  const session = openRemoteSession(host, conn)
+  assert.equal((await call(session, conn, 'conversation.watch', { sessionId: 's1' })).ok, true)
+  report!(null)
+  report!([{ name: 'pdf', description: 'Read PDFs.' }])
+  assert.deepEqual(
+    conn.frames.filter((frame) => frame.k === 'conversation.skills').map((frame) => frame.d),
+    [
+      { sessionId: 's1', skills: null },
+      { sessionId: 's1', skills: [{ name: 'pdf', description: 'Read PDFs.' }] },
+    ],
+  )
+})

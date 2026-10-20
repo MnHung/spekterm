@@ -264,3 +264,36 @@ test('a path in a message is delivered as written', () => {
   const text = 'look at /home/me/repo/src/x.ts please'
   assert.equal((project(userRecord(text))[0] as { text: string }).text, text)
 })
+
+const textOf = (content: string) => (project(userRecord(content))[0] as { text: string; meta: boolean })
+
+test('a skill run with arguments is shown as the line typed (the measured shape, message first)', () => {
+  const recorded = '<command-message>opsx:continue</command-message>\n<command-name>/opsx:continue</command-name>\n<command-args>my-change</command-args>'
+  assert.equal(textOf(recorded).text, '/opsx:continue my-change')
+  assert.equal(textOf(recorded).meta, false)
+})
+
+test('a command without arguments is shown as its name', () => {
+  assert.equal(textOf('<command-message>simplify</command-message>\n<command-name>/simplify</command-name>\n<command-args></command-args>').text, '/simplify')
+  assert.equal(textOf('<command-message>simplify</command-message>\n<command-name>/simplify</command-name>').text, '/simplify', 'no args marker')
+})
+
+test('a built-in command recorded name first and indented is shown as typed', () => {
+  const recorded = '<command-name>/compact</command-name>\n            <command-message>compact</command-message>\n            <command-args></command-args>'
+  assert.equal(textOf(recorded).text, '/compact')
+})
+
+test('arguments keep their inner spacing, special characters and newlines, trimmed at both ends', () => {
+  const recorded = '<command-message>probe-echo</command-message>\n<command-name>/probe-echo</command-name>\n<command-args>  sp1  <a&b>\nline2 </command-args>'
+  assert.equal(textOf(recorded).text, '/probe-echo sp1  <a&b>\nline2')
+})
+
+test('markers among other text, or a second name, are shown as recorded', () => {
+  // Control group: drop the whole-content check (`rest.trim() !== ''`) → the first case is restored (red).
+  const mixed = 'typed first <command-name>/x</command-name>'
+  assert.equal(textOf(mixed).text, mixed)
+  const twice = '<command-name>/a</command-name><command-name>/b</command-name>'
+  assert.equal(textOf(twice).text, twice)
+  const output = '<local-command-stdout>Compacted</local-command-stdout>'
+  assert.equal(textOf(output).text, output, 'a built-in command\'s output is not restored')
+})

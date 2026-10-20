@@ -137,6 +137,8 @@ export interface AgentStatus {
   thinking?: boolean
   contextPercent?: number
   contextTokens?: number
+  /** The context window's size in tokens, as the agent reports it (never from a table of our own). */
+  contextSize?: number
   costUsd?: number
   linesAdded?: number
   linesRemoved?: number
@@ -196,6 +198,7 @@ export function readAgentStatus(sessionId: string): AgentStatus | undefined {
     })(),
     contextPercent,
     contextTokens: total,
+    contextSize: size,
     costUsd: cost ? num(cost.total_cost_usd) : undefined,
     linesAdded: cost ? num(cost.total_lines_added) : undefined,
     linesRemoved: cost ? num(cost.total_lines_removed) : undefined,

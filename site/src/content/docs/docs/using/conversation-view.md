@@ -52,6 +52,8 @@ Type in **Message the agent** and press **Send**. Whether you can send depends o
 
 What you send goes to the agent as plain text. It is never interpreted as terminal control sequences.
 
+A slash command you sent, such as `/simplify` or a skill with arguments, appears as the line you typed.
+
 A message you sent appears as **Not confirmed yet** until it shows up in Claude Code's own record. If it
 never does, the view tells you to check the terminal view — the message may not have arrived.
 

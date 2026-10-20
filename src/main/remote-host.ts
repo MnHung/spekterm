@@ -1,4 +1,6 @@
 import { preferredTitle } from '../shared/lineage/label'
+import { armOrigin } from './agent-origin'
+import { type AgentStatus, readAgentStatus } from './agent-status'
 import { backgroundOf, dismissRequest, markAnswered, openRequestsOf, refreshWait, subscribeWait, waitStateOf } from './agent-wait'
 import type { FinishedCall, WaitState } from './agent-events'
 import { busyReason } from './hibernation-policy'
@@ -24,6 +26,7 @@ import type { OpenSpecService } from './openspec-service'
 import { OpenSpecServiceError } from './openspec-service'
 import type { AttentionLog } from './remote-attention'
 import type { AttachmentStore } from './remote-attachments'
+import { watchUsage } from './remote-agent-status'
 import { runQueued, sendReply } from './remote-conversation'
 import { RemoteError, type ErrorCode } from './remote-frames'
 import { remoteChange, remoteChanges, remoteSpec, remoteSpecs } from './remote-openspec'
@@ -86,6 +89,10 @@ export interface HostDeps {
   }
   /** Resolves `true` once the agent starts working (`isSubmitted`), `false` after `ms`; subscribed before the key. */
   started?: (sessionId: string, ms: number) => Promise<boolean>
+  /** The agent's reported status (`agent-status.ts`); injected for tests. */
+  readStatus?: (sessionId: string) => AgentStatus | undefined
+  /** Arms the phone-origin note (`agent-origin.ts`); injected for tests. */
+  armOrigin?: (sessionId: string) => boolean
 }
 
 /** How long a device's submit waits to see the agent start before answering `sent` (`remote-prefill-send` D3). */
@@ -234,11 +241,17 @@ export function createRemoteHost(deps: HostDeps): RemoteHost {
         update: sink.update,
         wait: (state, pending, requests) => sink.wait(state, pending, promptView(requests, lastKeystrokeAt(sessionId))),
         alive: () => alive,
+        skills: (list) => sink.skills(list),
       })
       if (!follow) return 'none'
+      // With the follow's first update and wait, before the answer: one poll per watch (`remote-phone-context` B3).
+      const usage = watchUsage(sessionId, deps.readStatus ?? readAgentStatus, (view) => {
+        if (alive) sink.status(view)
+      })
       return {
         stop: () => {
           alive = false
+          usage.stop()
           follow.stop()
         },
       }
@@ -272,6 +285,7 @@ export function createRemoteHost(deps: HostDeps): RemoteHost {
           },
           delay,
           submitDelayMs: SUBMIT_KEY_DELAY_MS,
+          armOrigin: (id) => (deps.armOrigin ?? armOrigin)(id),
           // Any unconfirmed fill, listed or not, edited or not (`remote-prefill-send` D5).
           prefillPending: (id) => {
             const view = prefills.of(id)
@@ -311,6 +325,12 @@ export function createRemoteHost(deps: HostDeps): RemoteHost {
         if (!now || now.sizeOf(sessionId) === null) throw new RemoteError('NOT_FOUND', `session ${sessionId} has no running process`)
         // Watched before the key, so a start drained right after it is not missed.
         const started = (deps.started ?? agentStarted)(sessionId, SUBMIT_CONFIRM_WINDOW_MS)
+        // The user sent it from the phone (`remote-phone-context` A2); a failure to arm is no note.
+        try {
+          ;(deps.armOrigin ?? armOrigin)(sessionId)
+        } catch {
+          // No note for this prompt.
+        }
         now.write(sessionId, SUBMIT_KEY)
         // At once: the device's own key is not typing over the prompt, so a key that did not take can be sent again.
         prefills.noteKey(sessionId)

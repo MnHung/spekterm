@@ -377,6 +377,11 @@ function prefilled(opts: { wait?: string; offered?: boolean; edited?: boolean; i
       unsent: () => fill !== null,
     },
     started: () => Promise.resolve(opts.started ?? true),
+    // Recorded among the writes, so a test sees the arm's place relative to the key.
+    armOrigin: (id) => {
+      made.writes.push(`<arm ${id}>`)
+      return true
+    },
   })
   return {
     ...made,
@@ -426,13 +431,13 @@ test('the list carries no fill on a shell or a dormant session', () => {
 test('submitting writes the submit key alone, notes it, and answers confirmed or sent (remote-prefill-send D3)', async () => {
   const made = prefilled()
   assert.deepEqual(await made.host.submitPrefill('a', 'p1'), { outcome: 'confirmed' })
-  assert.deepEqual(made.writes, ['\r'])
+  assert.deepEqual(made.writes, ['<arm a>', '\r'], 'the phone-origin note is armed right before the key')
   assert.deepEqual(made.notes, ['a'])
   assert.deepEqual(made.refreshed, ['a'], 'the state is refreshed before it is read')
   const unseen = prefilled({ started: false })
   assert.deepEqual(await unseen.host.submitPrefill('a', 'p1'), { outcome: 'sent' })
   assert.deepEqual(await unseen.host.submitPrefill('a', 'p1'), { outcome: 'sent' }, 'a second submit after sent is accepted')
-  assert.deepEqual(unseen.writes, ['\r', '\r'])
+  assert.deepEqual(unseen.writes, ['<arm a>', '\r', '<arm a>', '\r'])
 })
 
 test('every refusal of a submit writes nothing', async () => {

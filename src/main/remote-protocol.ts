@@ -2,6 +2,8 @@ import type { BackgroundTask, WaitState } from './agent-events'
 import { type AnswerDecision, type AnswerOutcome, DECISIONS, type PromptView } from './remote-answer'
 import { LIMITS, type PutParams, type PutResult } from './remote-attachments'
 import type { AttentionEvent, AttentionPosition } from './remote-attention'
+import type { UsageView } from './remote-agent-status'
+import type { SkillList } from './transcript-skills'
 import { type ReplyOutcome, resumeFrom } from './remote-conversation'
 import { RemoteError, type RequestFrame, errorFrame, eventFrame, resultFrame } from './remote-frames'
 import type { OutputListener, OutputSnapshot, TerminalPosition } from './remote-output'
@@ -84,6 +86,10 @@ export interface ConversationSink {
   update(update: FollowUpdate): void
   /** `prompt`: the open prompt and whether this device may answer it (`remote-answer.ts`), or `null`. */
   wait(state: WaitState, pending: { tool: string; arg: string | null } | null, prompt: PromptView | null): void
+  /** The agent's reported model and usage, at the watch's start and on every change (`remote-phone-context` B3). */
+  status(view: UsageView): void
+  /** The skills its agent can invoke; `null` = no listing in the transcript followed now (`remote-phone-context` C3). */
+  skills(skills: SkillList): void
 }
 
 /** Everything the protocol needs from the application. The real one is `remote-host.ts`. */
@@ -246,6 +252,8 @@ export const OPERATIONS: Record<string, Operation> = {
         send(state, 'conversation.update', delivered)
       },
       wait: (wait, pending, prompt) => send(state, 'conversation.wait', { sessionId, state: wait, pending, prompt }),
+      status: (view) => send(state, 'conversation.status', view),
+      skills: (skills) => send(state, 'conversation.skills', { sessionId, skills }),
     })
     if (follow === null) throw new RemoteError('NOT_FOUND', `no session ${sessionId}`)
     if (follow === 'none') throw new RemoteError('NO_CONVERSATION', 'this session has no conversation (a shell)')

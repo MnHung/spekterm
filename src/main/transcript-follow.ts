@@ -218,6 +218,34 @@ function resultText(content: unknown): string {
  */
 const ONE_PASTE = /^\n*<pasted_content id="([^"\n]+)">\n([\s\S]*)\n<\/pasted_content id="\1">\n?$/
 
+/**
+ * A slash command as the agent records it — only its markers, in **either order** (a skill: message, name, args; a
+ * built-in such as `/clear`: name first, indented), whitespace between — restored to the line the user typed, or
+ * `null` for any other content (`agent-transcript-stream`; measured, CLI 2.1.304). Only the name and the arguments
+ * are read; `<command-message>` repeats the name. The CLI records the arguments verbatim, trimmed at both ends, so
+ * a device reply written as `/name args` matches its entry. A built-in's `<local-command-stdout>` record is not this.
+ */
+const COMMAND_MARKER = /<(command-message|command-name|command-args)>([\s\S]*?)<\/\1>/g
+
+export function commandLine(content: string): string | null {
+  let name: string | null = null
+  let args = ''
+  let names = 0
+  const rest = content.replace(COMMAND_MARKER, (_whole, tag: string, inner: string) => {
+    if (tag === 'command-name') {
+      names += 1
+      name = inner.trim()
+    } else if (tag === 'command-args') {
+      args = inner.trim()
+    }
+    return ''
+  })
+  if (names !== 1 || rest.trim() !== '' || name === null) return null
+  const command: string = name
+  if (!/^\/\S+$/.test(command)) return null
+  return args ? `${command} ${args}` : command
+}
+
 export function unwrapPaste(content: string): string {
   const match = ONE_PASTE.exec(content)
   return match ? match[2] : content
@@ -243,7 +271,7 @@ export function project(raw: unknown): ViewEvent[] {
   if (type === 'user') {
     // 使用者的訊息可能是字串，也可能是帶 `tool_result` 的陣列 —— 後者不是使用者打的字。
     if (typeof content === 'string') {
-      const text = unwrapPaste(content)
+      const text = commandLine(content) ?? unwrapPaste(content)
       return text.trim()
         ? [{ kind: 'user', uuid, at, text, meta: notTypedByUser(r) }]
         : []
@@ -289,13 +317,18 @@ export function project(raw: unknown): ViewEvent[] {
   return out
 }
 
+/** Parses one line; `null` when it is not JSON (a half-written or damaged line must not stop the follow). */
+export function parseLine(line: string): unknown {
+  try {
+    return JSON.parse(line)
+  } catch {
+    return null
+  }
+}
+
 /** 解析一行並投影。解析失敗即忽略 —— 半行、損毀的行不該讓整條跟進停擺。 */
 export function projectLine(line: string): ViewEvent[] {
-  try {
-    return project(JSON.parse(line))
-  } catch {
-    return []
-  }
+  return project(parseLine(line))
 }
 
 /**

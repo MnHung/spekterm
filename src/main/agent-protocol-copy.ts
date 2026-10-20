@@ -99,6 +99,18 @@ export function attachmentSentence(paths: readonly string[]): string {
 }
 
 /**
+ * What the agent is told, outside the message, about a prompt a paired device submitted (`remote-phone-context` A5).
+ * It says where the user reads the answer, not that they are away, and it comes with that one prompt only.
+ */
+export function phoneOriginNote(): string {
+  return (
+    'The user sent this message from their phone (the spekterm companion app) and will read your reply there. ' +
+    'Keep it short and easy to read on a small screen: lead with the answer, and avoid wide tables, long code ' +
+    'blocks and long paths unless asked.'
+  )
+}
+
+/**
  * The reason a receipt gives for a code (`handoff-receipt`). **Fixed sentences, never the delivery's text**: a
  * receipt carries nothing the agent or a third party wrote. Temporary refusals and held files say what has to
  * change, or when the file is read again. Exhaustive: a new code fails to compile until it has a reason.

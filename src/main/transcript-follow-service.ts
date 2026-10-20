@@ -8,12 +8,14 @@ import {
   attachmentOf,
   consume,
   initialFollowState,
+  parseLine,
   planRead,
-  projectLine,
+  project,
   type Attachment,
   type FollowState,
   type ViewEvent,
 } from './transcript-follow'
+import { foldSkills, sameSkills, type SkillList } from './transcript-skills'
 
 /**
  * 紀錄跟進的服務層 —— 定位、監看、生命週期。純邏輯在 `transcript-follow.ts`。
@@ -38,6 +40,11 @@ export interface FollowerDeps {
   statSize?: (target: string) => number | null
   readRange?: (target: string, from: number, to: number) => Buffer | null
   exists?: (target: string) => boolean
+  /**
+   * The skills the agent was told it can invoke, as far as the transcript read so far says (`transcript-skills.ts`):
+   * after the first read and on every change, `null` when it holds no listing. Only a device's watch asks for it.
+   */
+  onSkills?: (skills: SkillList) => void
 }
 
 function defaultStatSize(target: string): number | null {
@@ -90,7 +97,8 @@ export interface FollowUpdate {
 
 export class TranscriptFollower {
   readonly #sessionId: string
-  readonly #deps: Required<FollowerDeps>
+  readonly #deps: Required<Omit<FollowerDeps, 'onSkills'>>
+  readonly #onSkills: ((skills: SkillList) => void) | undefined
   readonly #emit: (update: FollowUpdate) => void
 
   #target: string | null = null
@@ -99,6 +107,8 @@ export class TranscriptFollower {
   #state: FollowState = initialFollowState()
   #attached = false
   #disposed = false
+  #skills: SkillList = null
+  #skillsReported = false
 
   constructor(sessionId: string, emit: (update: FollowUpdate) => void, deps: FollowerDeps = {}) {
     this.#sessionId = sessionId
@@ -109,6 +119,7 @@ export class TranscriptFollower {
       readRange: deps.readRange ?? defaultReadRange,
       exists: deps.exists ?? ((t) => fs.existsSync(t)),
     }
+    this.#onSkills = deps.onSkills
   }
 
   get target(): string | null {
@@ -213,14 +224,20 @@ export class TranscriptFollower {
       // 早期版本在這裡回報「跟進中」，而呈現層把它當成一個整頁的載入狀態 —— 於是新 session
       // 的輸入框被吃掉，使用者打不了字；打不了字紀錄就永遠不會出現。**那是一個死鎖**，
       // 而規格本來就寫著「呈現層收到『尚無內容』而非錯誤」。
-      if (initial) this.#publish('ok', [], false, true)
+      if (initial) {
+        this.#publish('ok', [], false, true)
+        this.#setSkills(null)
+      }
       return
     }
     this.#watchFile(target)
 
     const plan = planRead(this.#state, size)
     if (plan.kind === 'idle') {
-      if (initial) this.#publish('ok', [], false, true)
+      if (initial) {
+        this.#publish('ok', [], false, true)
+        this.#setSkills(null)
+      }
       return
     }
     const reset = plan.kind === 'reset'
@@ -234,7 +251,11 @@ export class TranscriptFollower {
 
     const next = consume(reset ? initialFollowState() : this.#state, chunk, reset)
     this.#state = next.state
-    const events = next.lines.flatMap(projectLine)
+    // Parsed once, then projected and folded: the listing is not a view event. A first read (a relocation
+    // included: `/clear` moves to a transcript with its own listing) starts from no list.
+    const records = next.lines.map(parseLine)
+    const events = records.flatMap(project)
+    this.#setSkills(foldSkills(reset || !this.#attached ? null : this.#skills, records))
 
     if (!this.#attached || reset) {
       this.#attached = true
@@ -243,6 +264,14 @@ export class TranscriptFollower {
       return
     }
     if (events.length > 0) this.#publish('ok', events, false, false)
+  }
+
+  #setSkills(next: SkillList): void {
+    const changed = !this.#skillsReported || !sameSkills(this.#skills, next)
+    this.#skills = next
+    if (!changed || !this.#onSkills) return
+    this.#skillsReported = true
+    this.#onSkills(next)
   }
 
   #publish(status: FollowStatus, events: ViewEvent[], truncated: boolean, reset: boolean): void {

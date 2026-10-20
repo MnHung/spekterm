@@ -24,6 +24,23 @@ import { join } from 'node:path'
  * **它自己算紀錄的位置，用的是與產品相同的規則**（cwd 的每個非英數字元換成 `-`）。刻意不從
  * 產品那邊接一個路徑進來 —— 那樣兩邊就是同一個推導，而「產品算錯位置」這個失敗會變得表達不出來。
  */
+/** A shell line appending a `skill_listing` record (shaped as CLI 2.1.304 writes it) to the stub's transcript. */
+function listingLine(names, isInitial) {
+  const record = {
+    type: 'attachment',
+    uuid: `skills-${names.join('-')}-${isInitial ? 'i' : 'd'}`,
+    timestamp: '2026-10-20T00:00:00.000Z',
+    attachment: {
+      type: 'skill_listing',
+      content: names.map((name) => `- ${name}: STUB-SKILL ${name}`).join('\n'),
+      skillCount: names.length,
+      isInitial,
+      names,
+    },
+  }
+  return `printf '%s\\n' '${JSON.stringify(record).replace(/'/g, "'\\''")}' >> "$tp"`
+}
+
 export function makeStubAgent(
   mkTemp,
   configDir,
@@ -99,6 +116,18 @@ export function makeStubAgent(
      * with it is already "waiting" — an unseen-turn assertion would pass whether the product detected turn ends or not.
      */
     startupStop = true,
+    /**
+     * Record a line starting with `/` as the agent records a slash command: only its markers, message first
+     * (`<command-message>name</command-message>\n<command-name>/name</command-name>\n<command-args>args</command-args>`,
+     * measured, CLI 2.1.304). The conversation must show the typed line, or a device's `/skill args` reply never
+     * matches its entry (`agent-transcript-stream`). **Off by default**: existing probes assert on raw lines.
+     */
+    slashCommands = false,
+    /**
+     * The skills of an initial `skill_listing` record written at startup (the real agent writes it with the first
+     * prompt; the follow reads the whole file either way). `null` writes none.
+     */
+    skillListing = null,
   } = {},
 ) {
   const home = mkTemp('spekterm-agentview-stub-')
@@ -239,11 +268,15 @@ export function makeStubAgent(
     // Every record gets its own `uuid`: resuming a conversation names the last one received.
     '    nuser=$((nuser+1))',
     pasteWrap ? `    pre='\\n\\n<pasted_content id=\\"p1\\">\\n'; post='\\n</pasted_content id=\\"p1\\">\\n'` : '',
+    '    content="$line"',
+    slashCommands
+      ? '    case "$line" in /*) cname="${line%% *}"; cargs=""; [ "$cname" = "$line" ] || cargs="${line#* }"; content="<command-message>${cname#/}</command-message>\\n<command-name>$cname</command-name>\\n<command-args>$cargs</command-args>" ;; esac'
+      : '',
     queuedDelivery
       ? `    printf '{"type":"attachment","uuid":"q-%s-%s","timestamp":"2026-09-06T00:00:01.000Z","attachment":{"type":"queued_command","prompt":"%s","commandMode":"prompt","origin":{"kind":"human"}}}\\n' "$$" "$nuser" "$line" >> "$tp"`
       : pasteWrap
         ? `    printf '{"type":"user","uuid":"u-%s-%s","timestamp":"2026-09-06T00:00:01.000Z","message":{"role":"user","content":"%s%s%s"}}\\n' "$$" "$nuser" "$pre" "$line" "$post" >> "$tp"`
-        : `    printf '{"type":"user","uuid":"u-%s-%s","timestamp":"2026-09-06T00:00:01.000Z","message":{"role":"user","content":"%s"}}\\n' "$$" "$nuser" "$line" >> "$tp"`,
+        : `    printf '{"type":"user","uuid":"u-%s-%s","timestamp":"2026-09-06T00:00:01.000Z","message":{"role":"user","content":"%s"}}\\n' "$$" "$nuser" "$content" >> "$tp"`,
     // `busySeconds`：先宣告忙碌、停一段時間再宣告就緒 —— 供「忙碌時呈現忙碌、閒置後消失」。
     busySeconds ? '  fire PreToolUse' : '',
     busySeconds ? `  sleep ${busySeconds}` : '',
@@ -296,6 +329,7 @@ export function makeStubAgent(
     transcriptFixture
       ? `cat ${JSON.stringify(transcriptFixture)} > "$tp"`
       : `printf '{"type":"assistant","uuid":"a1","timestamp":"2026-09-06T00:00:00.000Z","message":{"role":"assistant","content":[{"type":"text","text":"STUB-HELLO-%s"}]}}\\n' "$sid" >> "$tp"`,
+    skillListing ? listingLine(skillListing, true) : '',
     // 大量紀錄 —— 供「初次附掛超過上限時只送最近一段並明示」。
     bulkRecords
       ? `i=0; while [ $i -lt ${bulkRecords} ]; do printf '{"type":"assistant","uuid":"b%s","timestamp":"2026-09-06T00:00:00.000Z","message":{"role":"assistant","content":[{"type":"text","text":"BULK-%s"}]}}\\n' "$i" "$i" >> "$tp"; i=$((i+1)); done`
@@ -477,6 +511,15 @@ export function makeStubAgent(
           }
         })
     },
+    /** A probe command appending a later `skill_listing` record (`command(conversationId, …)`). */
+    skillListing: (names, isInitial = false) => listingLine(names, isInitial),
+    /**
+     * A probe command running the status line command the product injected (`--settings`), with this payload on
+     * stdin, as the agent does when it redraws its status line. The stub does not run it by itself.
+     */
+    statusLine: (payload) =>
+      `cmd=$(node -e 'const s=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));process.stdout.write(String((s.statusLine||{}).command||""))' "$settings"); ` +
+      `[ -z "$cmd" ] || printf '%s' '${JSON.stringify(payload).replace(/'/g, "'\\''")}' | sh -c "$cmd" >/dev/null 2>&1`,
     /** 替身宣告就緒的那一刻是否已經到了。 */
     ready: () => existsSync(readyReceipt),
   }

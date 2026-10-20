@@ -1570,6 +1570,39 @@ async function runPasteRecorded(_mode, _config, context) {
 }
 
 /**
+ * A slash command the agent records in its command markers is shown as the line typed, and clears "not confirmed"
+ * (`agent-transcript-stream`, `remote-phone-context` C4). The stub records a `/` line as the agent does
+ * (`slashCommands`). Control group: drop `commandLine` from `project()` → the entry shows the markers (red).
+ */
+async function runSlashCommandLine(_mode, _config, context) {
+  if (context.app) await context.app.close()
+  const repo = mkTemp('spekterm-agentview-repoC-')
+  const configDir = mkTemp('spekterm-agentview-configC-')
+  const stub = makeStubAgent(mkTemp, configDir, { slashCommands: true })
+  const profile = seedProfile(repo)
+  const app = await launch({ profile, configDir, stub, port: PORT })
+  context.app = app
+
+  await openConversation(app, repo.split('/').pop())
+  await sendFromConversation(app, '/probe-skill SLASH-PROBE args')
+  const marker = copy('conversation.unconfirmed').toUpperCase()
+  const confirmed = await pollFor({
+    read: () => app.client.evaluate(`({ view: ${VIEW_STATE}, entries: ${USER_ENTRIES} })`),
+    settled: (state) => !state.view.text.toUpperCase().includes(marker) && state.entries.some((e) => e.text.includes('SLASH-PROBE')),
+    timeoutMs: 25_000,
+    label: 'the slash command confirmed',
+  })
+  const entry = confirmed.entries.find((e) => e.text.includes('SLASH-PROBE'))
+  check(
+    results,
+    'a slash command is shown as the line typed, without its markers, and clears "not confirmed"',
+    entry?.text.slice(entry.label.length).trim() === '/probe-skill SLASH-PROBE args' && entry?.label === copy('conversation.userMessage') &&
+      !confirmed.view.text.includes('command-name') && !confirmed.view.text.toUpperCase().includes(marker),
+    `entry=${JSON.stringify(entry?.text ?? null)} label=${JSON.stringify(entry?.label ?? null)} markers=${confirmed.view.text.includes('command-name')}`,
+  )
+}
+
+/**
  * Automatic hibernation of agent sessions (session-hibernation design D4), threshold seeded as
  * seconds. Which sessions an agent's state keeps running depends on that state being current for
  * sessions nobody watches — the always-on subscription. Two sessions carry it: one never watched (it
@@ -2072,6 +2105,7 @@ const SECTIONS = [
   { name: 'runMidTurnDelivery', run: runMidTurnDelivery },
   { name: 'runSubagentPrompt', run: runSubagentPrompt },
   { name: 'runPasteRecorded', run: runPasteRecorded },
+  { name: 'runSlashCommandLine', run: runSlashCommandLine },
   { name: 'runAutoHibernateAgent', run: runAutoHibernateAgent },
   { name: 'runCloseConfirmAgent', run: runCloseConfirmAgent },
   { name: 'runAttention', run: runAttention },

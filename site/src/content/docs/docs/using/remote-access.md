@@ -67,6 +67,18 @@ shows that prompt waiting, with the item's full text, and sends it only when you
 for you, nothing more. Until then a reply from the phone to that session is refused, so it can never go out together
 with a prompt you have not read. If you typed into that session on the computer, finish it there.
 
+### Replying from the phone
+
+When you reply from the phone, spekterm tells the agent — alongside your message, not inside it — that you sent it
+from your phone and will read the answer there, so it keeps the answer short and easy to read on a small screen.
+Your message itself is sent exactly as you wrote it, and the next message you type on the computer carries no such
+note.
+
+While you watch a conversation, the phone can also show the session's model, effort, context used, cost and rate
+limits — what the status bar shows on the computer, when **Show agent status in the status bar** is on — and the
+skills the agent can run. Send `/name` or `/name arguments` as a reply to run one. The list appears once the session
+has received its first message; the agent's built-in commands such as `/clear` are not in it.
+
 ### Attaching files
 
 A reply from the phone can carry photos, screenshots, PDFs and text files (up to 10 per reply, 10 MB each).

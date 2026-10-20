@@ -47,6 +47,7 @@ import { createCloseDialogStub, stubCloseRoot } from './close-dialog-stub'
 import type { FolderLookup } from './workspace-store'
 import { configureAgentEvents } from './agent-events'
 import { configureAgentInjection } from './agent-injection'
+import { configureAgentOrigin } from './agent-origin'
 import { configureAttachments } from './remote-attachments'
 import { configureAgentStatus } from './agent-status'
 import { contextRoot } from './intake-context'
@@ -403,6 +404,7 @@ void app.whenReady().then(async () => {
 
   // agent 狀態橋接的落點（payload 與注入用的 settings 檔）。與偏好同在 userData 之下。
   configureAgentStatus(app.getPath('userData'))
+  configureAgentOrigin(app.getPath('userData'))
   configureAgentEvents(app.getPath('userData'))
   configureAgentInjection(app.getPath('userData'))
 

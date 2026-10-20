@@ -2,6 +2,7 @@ import type { OpenRequest, WaitState } from './agent-events'
 import { lastTranscriptPathOf, openRequestsOf, pendingRequestOf, subscribeWait, waitStateOf, type WaitSnapshot } from './agent-wait'
 import { transcriptPathFor } from './transcript-follow'
 import { type FollowUpdate, TranscriptFollower } from './transcript-follow-service'
+import type { SkillList } from './transcript-skills'
 
 /** Where an agent session's transcript is, as the terminal service knows it. */
 export interface AgentSource {
@@ -16,6 +17,8 @@ export interface FollowSink {
   wait(state: WaitState, pending: { tool: string; arg: string | null } | null, requests: OpenRequest[]): void
   /** `false` once the consumer is gone; nothing more is delivered. */
   alive(): boolean
+  /** The skills the agent was told it can invoke (`transcript-skills.ts`); only a device's watch asks for them. */
+  skills?(skills: SkillList): void
 }
 
 /** One running follow of one session's conversation. */
@@ -45,10 +48,21 @@ export function startFollow(sessionId: string, source: AgentSource | null, sink:
     return null
   }
 
-  const follower = new TranscriptFollower(sessionId, (update) => {
-    if (!sink.alive()) return
-    sink.update(update)
-  })
+  const skills = sink.skills?.bind(sink)
+  const follower = new TranscriptFollower(
+    sessionId,
+    (update) => {
+      if (!sink.alive()) return
+      sink.update(update)
+    },
+    skills
+      ? {
+          onSkills: (list) => {
+            if (sink.alive()) skills(list)
+          },
+        }
+      : {},
+  )
   let lastSent: WaitState = waitStateOf(sessionId)
   const unsubscribe = subscribeWait(sessionId, (snapshot) => {
     const previous = lastSent

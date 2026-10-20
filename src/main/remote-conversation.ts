@@ -25,6 +25,8 @@ import type { FollowUpdate } from './transcript-follow-service'
  *   on a choice during the delay, the key is withheld and the reply answered `filled-not-submitted` —
  *   writing it would pick the prompt's default for the user. Nothing is sent later.
  * - **Order**: one queue per session, across connections, so two replies never interleave.
+ * - **Origin**: right before the submit key the agent is told, outside the message, that the user sent it from
+ *   their phone (`agent-origin.ts`).
  */
 
 export type ReplyOutcome = 'submitted' | 'filled-not-submitted'
@@ -47,6 +49,18 @@ export function resumeFrom(update: FollowUpdate, afterUuid: unknown): FollowUpda
   return { ...update, events: update.events.slice(last + 1), reset: false }
 }
 
+/**
+ * A reply that is a slash command, written as the conversation shows it (`remote-phone-context` C5): trimmed, one
+ * space after the command's name. The CLI records the arguments trimmed at both ends and otherwise verbatim
+ * (measured, CLI 2.1.304), so `r.text` then equals the restored entry (`commandLine`). Anything else is unchanged.
+ */
+export function slashForm(text: string): string {
+  const trimmed = text.trim()
+  if (!trimmed.startsWith('/')) return text
+  const match = /^(\/\S+)\s+([\s\S]+)$/.exec(trimmed)
+  return match ? `${match[1]} ${match[2]}` : trimmed
+}
+
 /** `encodeInput`'s filter without its submit key: newlines kept, other C0 controls and DEL removed. */
 export function cleanReply(text: string): string {
   // eslint-disable-next-line no-control-regex
@@ -64,6 +78,11 @@ export interface ReplyDeps {
    * would be typed after it and submitted with it. `prefillId` when a device can see it.
    */
   prefillPending?: (sessionId: string) => { prefillId?: string; edited: boolean } | null
+  /**
+   * Arms the note that tells the agent this prompt came from the user's phone (`remote-phone-context` A2). Called
+   * immediately before the submit key, after every re-check, so a withheld key arms nothing. Its failure is no note.
+   */
+  armOrigin?: (sessionId: string) => void
 }
 
 function prefillRefusal(pending: { prefillId?: string; edited: boolean }): RemoteError {
@@ -110,7 +129,7 @@ export function sendReply(
   if (watching !== sessionId) {
     return Promise.reject(new RemoteError('NOT_WATCHING', 'reply only to the conversation this connection watches'))
   }
-  const cleaned = cleanReply(text)
+  const cleaned = slashForm(cleanReply(text))
   if (cleaned.trim() === '' && !takeAttachments) return Promise.reject(new RemoteError('BAD_PARAMS', 'the reply is empty'))
   const state = deps.waitStateOf(sessionId)
   if (!SENDABLE.includes(state)) {
@@ -149,6 +168,12 @@ export function sendReply(
     if (!SENDABLE.includes(deps.waitStateOf(sessionId))) return { outcome: 'filled-not-submitted' as const, text: full }
     // A prompt filled in during the delay sits in the box with the reply: the key would submit both.
     if (deps.prefillPending?.(sessionId)) return { outcome: 'filled-not-submitted' as const, text: full }
+    // The text is already in the input box: a failure to arm must not fail the reply.
+    try {
+      deps.armOrigin?.(sessionId)
+    } catch {
+      // No note for this prompt.
+    }
     deps.write(sessionId, '\r')
     return { outcome: 'submitted' as const, text: full }
   })

@@ -666,3 +666,78 @@ Two that come from spekterm, not the CLI:
 - **The probe stub fires `Stop` right after `SessionStart` at startup**; a real agent does not. A probe that
   asserts "a started session is not waiting" uses `startupStop: false`, and reports the start after another
   session is displayed — a start shown as it arrives is seen at once and proves nothing.
+
+## A prompt's hook context, slash commands sent as text, and the skill listing (`remote-phone-context`, CLI 2.1.304, 2026-10-20)
+
+Measured with a real `claude --model haiku` in a pty, driven the way spekterm drives it (the text, then the submit key
+500 ms later), hooks injected through `--settings` with matcher `''`. **Agent CLI behavior: re-measure after a CLI
+upgrade** — every row below fails silently (no note, no list, a reply that stays "not confirmed").
+
+### `UserPromptSubmit` hook context
+
+A `UserPromptSubmit` command printing `{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"…"}}`:
+
+| | Result |
+|---|---|
+| reaches the agent | yes — quoted back verbatim |
+| how it is recorded | an `attachment` record, `attachment.type: "hook_additional_context"`, `hookEvent: "UserPromptSubmit"`, `content: [text]`, after the `user` record; **the `user` record's text is exactly what was typed** |
+| a message sent while the agent works | the hook runs at submission; the message becomes a `queued_command` attachment, followed by its `hook_additional_context`; the agent's request carries `UserPromptSubmit hook additional context: …` beside the queued message |
+| a slash command (`/skill args`) | the hook runs; the context follows the command's records |
+| an unknown command (`/notacommand`) | no hook, no record: the CLI answers `Unknown command` locally |
+| a command that prints nothing and exits 0 | the prompt is untouched |
+| the terminal | shows only the spinner's `running UserPromptSubmit hook`, as for any hook; never the context |
+
+The hook's stdin carries `session_id`, `transcript_path`, `cwd`, `scratchpad_dir`, `prompt_id`, `permission_mode`,
+`hook_event_name`, `prompt`. The conversation projection admits no `hook_additional_context`, so the note
+(`agent-origin.ts`) shows in neither conversation view.
+
+To re-measure: inject such a hook, arm it for one prompt that asks the agent to quote any text starting with a unique
+marker, send one prompt unarmed, one armed while a `sleep` runs, and one armed `/skill args`; read the transcript's
+records after each.
+
+### Slash commands sent as text
+
+| Sent | Ran | Recorded |
+|---|---|---|
+| `/probe-echo a1 b1` | `probe-echo` with `a1 b1` | `user` record, `origin.kind: "human"`: `<command-message>probe-echo</command-message>\n<command-name>/probe-echo</command-name>\n<command-args>a1 b1</command-args>`, then the skill's body as an `isMeta` record |
+| `/probe-echo` (a prefix of the listed `probe-echo-long`) | `probe-echo`, empty arguments — **the completion list does not swap it** | as above, without `<command-args>` |
+| `/pns:echo c1` (a namespaced command) | `pns:echo` | as above |
+| `/probe-echo   sp1  sp2  ` | arguments `sp1  sp2`: **trimmed at both ends, inner spaces kept** | `<command-args>sp1  sp2</command-args>` |
+| `<a&b> "q"`, a newline in the arguments | verbatim, no escaping | verbatim |
+| `/probe-echo` + about 2,000 characters | **not run**: taken as a paste, recorded inside `<pasted_content>` as a plain prompt | `promptSource: "typed"` |
+| `/probe-echo busy1` while a tool runs | run after the turn | an ordinary `user` record (not `queued_command`) |
+| `/clear` | — | name first, indented: `<command-name>/clear</command-name>\n            <command-message>clear</command-message>\n            <command-args></command-args>`, beside an `isMeta` `<local-command-caveat>` record |
+| `/compact` | — | a plain `user` string `/compact` |
+
+So a device reply `/name args` works as typed; the desktop writes it trimmed with one space after the name, so its
+`r.text` is the line the projection restores (`remote-phone-context` C5).
+
+### The skill listing (`attachment.type: "skill_listing"`)
+
+| When | Written |
+|---|---|
+| a fresh session before its first prompt | nothing — the transcript does not exist yet |
+| with the first prompt | `isInitial: true`, every skill (52 here: user, repo, plugin; namespaced commands such as `pns:echo` too) |
+| a skill added, or a `SKILL.md`'s description edited | with a later prompt, `isInitial: false` naming **only** the added or changed skills, edited descriptions included (here one prompt late: the add and the edit arrived together) |
+| a skill removed | **nothing** — the agent is not told; the removed skill stays in what it was told until the next full listing |
+| `/clear` | a new transcript, with no listing until its first prompt |
+| `/compact` | a new `isInitial: true` record in the same transcript |
+| a resume | the same transcript; a new `isInitial: true` record with the first prompt after it |
+
+Hence the reading rule: **`isInitial: true` replaces, `isInitial: false` adds or updates** — the list is what the agent
+was told it can invoke, a removed skill included until the next full listing. Local transcripts also hold a few
+near-complete `isInitial: false` re-listings that leave out a removed name; the measurement did not produce one, and
+the union reads them as additions (the removed name stays, as the agent's own context does).
+
+### What fails silently in the product's use of these (`agent-origin.ts`, `transcript-skills.ts`)
+
+- **The origin hook must print nothing without a mark and always exit 0.** The agent adds a `UserPromptSubmit` hook's
+  stdout to the prompt, and an exit code of 2 blocks the user's prompt. `agent-origin.test.ts` runs the command with
+  `sh -c` in every case; a test that only reads the command string catches neither.
+- **The mark is armed only immediately before a device's submit key**, after every re-check. Armed earlier, a reply
+  whose key is withheld leaves a mark that the user's next desktop prompt takes — and the agent is told the user is on
+  the phone.
+- **The skill list exists only once the transcript holds a listing.** A fresh session, and one just cleared, report
+  `null` ("not known"), never `[]`; a client that showed `[]` would tell the user there are no skills.
+- **Removing a skill is not reported by the agent**, so the list keeps it until the next full listing. A rule that
+  read later records as full lists would drop every skill but the one just added.

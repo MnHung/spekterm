@@ -2685,6 +2685,146 @@ async function runBackground(_mode, _config, context) {
   await app.close()
 }
 
+/**
+ * remote-phone-context: a device's prompt carries the phone-origin note outside the message, and a watched
+ * conversation carries the agent's reported model and usage and its skills; a `/skill args` reply is confirmed.
+ *
+ * The note is the stdout of the second `UserPromptSubmit` command (the event bridge's is first and prints nothing).
+ * Control groups, run: replace `mv` with `cp` in `ORIGIN_COMMAND` (the mark is never taken) → the desktop prompt
+ * after the reply carries the note (red); drop the `mv` condition's success (`mv … && false`) → the reply has no
+ * note (red).
+ */
+async function runPhoneContext(_mode, _config, context) {
+  if (context.app) await context.app.close()
+  const repos = makeRepos()
+  const profile = seedProfile(repos, { remote: { enabled: true, port: LISTEN_A } })
+  const { app, stub } = await start(context, profile, { slashCommands: true, skillListing: ['probe-skill', 'pdf'] })
+  const { client } = await phone(app)
+  const agent = await remoteCreate(client, 'f', 'claude')
+  const sessionId = agent.r.sessionId
+  const conv = await conversationOf(profile, sessionId)
+  await pollFor({ read: () => stub.ready(), settled: Boolean, timeoutMs: 15_000, label: 'the stub ready' })
+  await sleep(1_000)
+  const watchFrom = client.events.length
+  await call(client, 'conversation.watch', { sessionId })
+  await client.waitEvent('conversation.wait', { from: watchFrom, match: (d) => d.state === 'ready', timeoutMs: 15_000, label: 'ready' })
+  const note = () => stub.hookStdout('UserPromptSubmit', 2)
+  const parsedNote = () => {
+    try {
+      return JSON.parse(note()).hookSpecificOutput
+    } catch {
+      return null
+    }
+  }
+  const userEntry = (from, needle) =>
+    client.waitEvent('conversation.update', { from, match: (d) => d.events.some((e) => e.kind === 'user' && e.text.includes(needle)), timeoutMs: 15_000, label: `the entry ${needle}` })
+
+  // ── the note: a device reply carries it, outside the message; the next desktop prompt does not ──
+  let from = client.events.length
+  const sent = await call(client, 'conversation.send', { sessionId, text: 'PHONE-REPLY' })
+  const replyEntry = await userEntry(from, 'PHONE-REPLY')
+  const replyNote = parsedNote()
+  const replyText = replyEntry?.d.events.find((e) => e.kind === 'user' && e.text.includes('PHONE-REPLY'))?.text
+  check(
+    results,
+    'a device reply reaches the agent with the phone-origin note as hook context, and its entry equals the reply text',
+    sent.r?.outcome === 'submitted' && replyNote?.hookEventName === 'UserPromptSubmit' && /from their phone/.test(replyNote?.additionalContext ?? '') &&
+      replyText === sent.r?.text && !replyText.includes('phone'),
+    `outcome=${sent.r?.outcome} note=${JSON.stringify(note().slice(0, 80))} entry=${JSON.stringify(replyText)}`,
+  )
+  await turnAfter(client, from, 'the phone reply')
+  from = client.events.length
+  await app.client.evaluate(`window.workspace.terminal.write(${JSON.stringify(sessionId)}, 'DESK-PROMPT\\r')`)
+  await userEntry(from, 'DESK-PROMPT')
+  check(results, 'the next prompt typed at the desktop carries no note', note() === '', JSON.stringify(note().slice(0, 80)))
+  await turnAfter(client, from, 'the desktop prompt')
+
+  // ── usage: sent at the watch's start, again on a new report, never in the session list ──
+  const statuses = () => client.eventsOf('conversation.status').map((e) => e.d)
+  const first = statuses()[0]
+  check(results, 'a watch starts with the agent status event, empty before any report', first?.sessionId === sessionId && Object.keys(first).length === 1, JSON.stringify(first))
+  const payload = (percent) => ({
+    session_id: 'x', cwd: '/home/me/secret', transcript_path: '/home/me/t.jsonl', version: '9.9.9',
+    model: { display_name: 'Probe Model' }, effort: { level: 'high' },
+    context_window: { used_percentage: percent, context_window_size: 200000 },
+    cost: { total_cost_usd: 0.5 },
+    rate_limits: { five_hour: { used_percentage: 7, resets_at: 1760000000 } },
+  })
+  from = client.events.length
+  stub.command(conv, stub.statusLine(payload(20)))
+  const reported = await client.waitEvent('conversation.status', { from, match: (d) => d.model === 'Probe Model', timeoutMs: 8_000, label: 'the reported status' })
+  check(
+    results,
+    "a watched conversation receives the agent's model, context, cost and rate limit, and no path",
+    JSON.stringify(reported?.d) === JSON.stringify({ sessionId, model: 'Probe Model', effort: 'high', context: { percent: 20, size: 200000 }, costUsd: 0.5, rateLimits: { fiveHour: { percent: 7, resetsAt: 1760000000000 } } }),
+    JSON.stringify(reported?.d),
+  )
+  from = client.events.length
+  const raisedAt = Date.now()
+  stub.command(conv, stub.statusLine(payload(55)))
+  const raised = await client.waitEvent('conversation.status', { from, match: (d) => d.context?.percent === 55, timeoutMs: 8_000, label: 'the raised context' })
+  const usageInList = client.eventsOf('sessions.changed').some((e) => e.d.sessions.some((x) => 'model' in x || 'context' in x || 'costUsd' in x || 'rateLimits' in x))
+  check(
+    results,
+    'a new report reaches the watching client within a few seconds, and no session list carries usage',
+    Boolean(raised) && raised.receivedAt - raisedAt < 5_000 && !usageInList,
+    `ms=${raised ? raised.receivedAt - raisedAt : null} usageInList=${usageInList}`,
+  )
+
+  // ── skills: the listing, a later addition, and a slash reply confirmed ──
+  const skills = () => client.eventsOf('conversation.skills').map((e) => e.d.skills)
+  const firstSkills = skills()[0]
+  check(
+    results,
+    "a watched conversation receives the agent's skills with their descriptions",
+    JSON.stringify(firstSkills) === JSON.stringify([{ name: 'probe-skill', description: 'STUB-SKILL probe-skill' }, { name: 'pdf', description: 'STUB-SKILL pdf' }]),
+    JSON.stringify(skills()),
+  )
+  from = client.events.length
+  stub.command(conv, stub.skillListing(['probe-new']))
+  const added = await client.waitEvent('conversation.skills', { from, timeoutMs: 8_000, label: 'the added skill' })
+  check(results, 'a later listing adds a skill', JSON.stringify(added?.d.skills?.map((x) => x.name)) === JSON.stringify(['probe-skill', 'pdf', 'probe-new']), JSON.stringify(added?.d))
+  from = client.events.length
+  const slash = await call(client, 'conversation.send', { sessionId, text: '  /probe-skill   SLASH-ARGS  two ' })
+  const slashEntry = await userEntry(from, 'SLASH-ARGS')
+  const slashText = slashEntry?.d.events.find((e) => e.kind === 'user' && e.text.includes('SLASH-ARGS'))?.text
+  check(
+    results,
+    'a slash reply is written in the shown form, and its entry equals the reply text',
+    slash.r?.text === '/probe-skill SLASH-ARGS  two' && slashText === slash.r?.text,
+    `r.text=${JSON.stringify(slash.r?.text)} entry=${JSON.stringify(slashText)}`,
+  )
+
+  // ── a device's send of a filled-in prompt carries the note ──
+  await turnAfter(client, from, 'the slash reply')
+  const inbox = join(profile, 'intake-inbox')
+  mkdirSync(inbox, { recursive: true })
+  writeFileSync(join(inbox, 'pc1.json.tmp'), JSON.stringify({ id: 'pc1', origin: { kind: 'slack', id: 'C1', label: '#dev' }, title: 'PC-ITEM', body: 'PC-BODY', actor: 'someone' }))
+  renameSync(join(inbox, 'pc1.json.tmp'), join(inbox, 'pc1.json'))
+  const item = await pollFor({ read: async () => (await call(client, 'inbox.list')).r.items.find((i) => i.id === 'pc1') ?? null, settled: Boolean, timeoutMs: 20_000, label: 'the item' })
+  from = client.events.length
+  const accepted = await call(client, 'inbox.accept', { adapter: item.adapter, id: 'pc1', folderId: 'g' })
+  const target = accepted.r?.sessionId
+  const listed = await client.waitEvent('sessions.changed', { from, match: (d) => Boolean(d.sessions.find((x) => x.id === target)?.prefill), timeoutMs: 20_000, label: 'the fill listed' })
+  const prefill = listed?.d.sessions.find((x) => x.id === target)?.prefill
+  // The stub keeps one hook stdout per command for all its sessions: a desktop prompt first clears the slash reply's
+  // note, so the note read below can only be the submit's.
+  from = client.events.length
+  await app.client.evaluate(`window.workspace.terminal.write(${JSON.stringify(sessionId)}, 'DESK-AGAIN\\r')`)
+  await userEntry(from, 'DESK-AGAIN')
+  const clearedBefore = note() === ''
+  await sleep(1_000)
+  const submitted = await call(client, 'sessions.submitPrefill', { sessionId: target, prefillId: prefill?.id })
+  await sleep(1_500)
+  check(
+    results,
+    "a device's send of a filled-in prompt carries the phone-origin note",
+    clearedBefore && submitted.r?.outcome !== undefined && /from their phone/.test(parsedNote()?.additionalContext ?? ''),
+    `clearedBefore=${clearedBefore} outcome=${JSON.stringify(submitted.r ?? submitted.e)} note=${JSON.stringify(note().slice(0, 60))}`,
+  )
+  await app.close()
+}
+
 const SECTIONS = [
   { name: 'runListener', run: runListener },
   { name: 'runPairing', run: runPairing },
@@ -2708,6 +2848,7 @@ const SECTIONS = [
   { name: 'runCloseOffer', run: runCloseOffer },
   { name: 'runSeen', run: runSeen },
   { name: 'runBackground', run: runBackground },
+  { name: 'runPhoneContext', run: runPhoneContext },
 ].map((section) => ({
   ...section,
   // A section that hangs leaves its app behind; the profile prefix finds it (character class: not this command).

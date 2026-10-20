@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { WaitState } from './agent-events'
 import { SUBMIT_KEY_DELAY_MS } from './intake-prefill'
-import { cleanReply, type ReplyDeps, resumeFrom, runQueued, sendReply } from './remote-conversation'
+import { cleanReply, type ReplyDeps, resumeFrom, runQueued, sendReply, slashForm } from './remote-conversation'
 import { RemoteError } from './remote-frames'
 import type { FollowUpdate } from './transcript-follow-service'
 import type { ViewEvent } from './transcript-follow'
@@ -229,4 +229,76 @@ test('with no fill a reply is written and submitted as before', async () => {
   const outcome = sendReply(r.deps, 's', 's', 'hi')
   await r.advance(SUBMIT_KEY_DELAY_MS)
   assert.equal((await outcome).outcome, 'submitted')
+})
+
+/** Records arming in the same log as the writes, so the order is visible. */
+function withOrigin(r: ReturnType<typeof rig>, arm: () => void = () => {}) {
+  r.deps.armOrigin = (id) => {
+    r.writes.push({ at: -1, data: `<arm ${id}>` })
+    arm()
+  }
+}
+
+test('a submitted reply arms the phone-origin note once, right before the submit key', async () => {
+  const r = rig('ready')
+  withOrigin(r)
+  const outcome = sendReply(r.deps, 's', 's', 'hi')
+  await r.advance(SUBMIT_KEY_DELAY_MS)
+  assert.equal((await outcome).outcome, 'submitted')
+  assert.deepEqual(r.writes.map((w) => w.data), ['hi', '<arm s>', '\r'])
+})
+
+test('a withheld submit key arms nothing: a choice or a fill during the delay', async () => {
+  const choice = rig('busy')
+  withOrigin(choice)
+  const first = sendReply(choice.deps, 's', 's', 'go on')
+  await choice.advance(100)
+  choice.setState('awaiting-choice')
+  await choice.advance(SUBMIT_KEY_DELAY_MS)
+  assert.equal((await first).outcome, 'filled-not-submitted')
+  assert.deepEqual(choice.writes.map((w) => w.data), ['go on'])
+
+  const fill = rig('ready')
+  withOrigin(fill)
+  const set = withFill(fill, null)
+  const second = sendReply(fill.deps, 's', 's', 'go on')
+  await fill.advance(100)
+  set({ edited: false })
+  await fill.advance(SUBMIT_KEY_DELAY_MS)
+  assert.equal((await second).outcome, 'filled-not-submitted')
+  assert.deepEqual(fill.writes.map((w) => w.data), ['go on'])
+})
+
+test('a refused reply arms nothing', async () => {
+  const r = rig('awaiting-choice')
+  withOrigin(r)
+  await assert.rejects(sendReply(r.deps, 's', 's', 'hi'), { code: 'WAIT_STATE' })
+  await assert.rejects(sendReply(r.deps, 'other', 's', 'hi'), { code: 'NOT_WATCHING' })
+  assert.deepEqual(r.writes, [])
+})
+
+test('an arm that throws still submits the reply', async () => {
+  const r = rig('ready')
+  withOrigin(r, () => {
+    throw new Error('disk full')
+  })
+  const outcome = sendReply(r.deps, 's', 's', 'hi')
+  await r.advance(SUBMIT_KEY_DELAY_MS)
+  assert.equal((await outcome).outcome, 'submitted')
+  assert.deepEqual(r.writes.map((w) => w.data), ['hi', '<arm s>', '\r'])
+})
+
+test('a slash reply is written trimmed with one space after the name, and r.text says so', async () => {
+  const r = rig('ready')
+  const outcome = sendReply(r.deps, 's', 's', '  /probe-echo   sp1  sp2  ')
+  await r.advance(SUBMIT_KEY_DELAY_MS)
+  assert.deepEqual(await outcome, { outcome: 'submitted', text: '/probe-echo sp1  sp2' })
+  assert.deepEqual(r.writes.map((w) => w.data), ['/probe-echo sp1  sp2', '\r'])
+})
+
+test('slashForm leaves other text alone and keeps a multi-line argument', () => {
+  assert.equal(slashForm('  hello  '), '  hello  ')
+  assert.equal(slashForm('/simplify  '), '/simplify')
+  assert.equal(slashForm('/probe-echo line1\nline2'), '/probe-echo line1\nline2')
+  assert.equal(slashForm('/probe-echo\n  line1'), '/probe-echo line1')
 })

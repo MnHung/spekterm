@@ -4,9 +4,10 @@ import test from 'node:test'
 import type { FSWatcher } from 'chokidar'
 
 import { TranscriptFollower, type FollowUpdate } from './transcript-follow-service'
+import type { SkillList } from './transcript-skills'
 
 /** 假 watcher：記下建立參數，並讓測試自己觸發事件。 */
-function harness() {
+function harness(onSkills?: (skills: SkillList) => void) {
   const files = new Map<string, string>()
   /** 存在的目錄。預設全部存在 —— 只有明確測試「尚不存在」的案例才會限制它。 */
   const exists = new Set<string>()
@@ -38,6 +39,7 @@ function harness() {
     },
     // 目錄的存在性：`exists` 為空 ⇒ 一律視為存在（多數測試不在乎這件事）。
     exists: (t) => files.has(t) || exists.size === 0 || exists.has(t),
+    onSkills,
   })
   return { files, watchers, updates, closed, exists, follower }
 }
@@ -236,4 +238,42 @@ test('poll() 在監看完全沒有觸發時仍取得新內容', () => {
   h.files.set('/p/proj/a.jsonl', rec('u1', 'one') + rec('u2', 'two'))
   h.follower.poll()
   assert.deepEqual(h.updates.at(-1)?.events.map((e) => e.uuid), ['u2'])
+})
+
+const skillRec = (names: string[], isInitial: boolean) =>
+  `${JSON.stringify({
+    type: 'attachment',
+    uuid: `l-${names.join('-')}`,
+    timestamp: '2026-10-20T00:00:00.000Z',
+    attachment: { type: 'skill_listing', content: names.map((n) => `- ${n}: about ${n}`).join('\n'), skillCount: names.length, isInitial, names },
+  })}\n`
+
+test('the skill listing: reported after the first read, again on a change only, and as no list on a new transcript', () => {
+  const reports: SkillList[] = []
+  const h = harness((skills) => reports.push(skills))
+  h.files.set('/p/proj/a.jsonl', rec('u1', 'hi') + skillRec(['pdf', 'docx'], true))
+  h.follower.relocate('/p/proj/a.jsonl')
+  assert.deepEqual(reports, [[{ name: 'pdf', description: 'about pdf' }, { name: 'docx', description: 'about docx' }]])
+  assert.equal(h.updates.at(-1)?.events.length, 1, 'the listing is not a view event')
+
+  h.files.set('/p/proj/a.jsonl', h.files.get('/p/proj/a.jsonl')! + rec('u2', 'more'))
+  h.follower.poll()
+  assert.equal(reports.length, 1, 'an unrelated append reports nothing')
+
+  h.files.set('/p/proj/a.jsonl', h.files.get('/p/proj/a.jsonl')! + skillRec(['probe-new'], false))
+  h.follower.poll()
+  assert.deepEqual(reports.at(-1)?.map((s) => s.name), ['pdf', 'docx', 'probe-new'])
+
+  h.files.set('/p/proj/b.jsonl', rec('u3', 'after clear'))
+  h.follower.relocate('/p/proj/b.jsonl')
+  assert.equal(reports.at(-1), null, 'a transcript without a listing has no list')
+  assert.equal(reports.length, 3)
+})
+
+test('a transcript that does not exist yet reports no list once', () => {
+  const reports: SkillList[] = []
+  const h = harness((skills) => reports.push(skills))
+  h.follower.relocate('/p/proj/new.jsonl')
+  h.follower.poll()
+  assert.deepEqual(reports, [null])
 })

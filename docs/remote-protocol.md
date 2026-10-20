@@ -292,12 +292,14 @@ order; each refusal writes nothing:
   was seen yet; the prompt stays listed, and sending again is allowed.
 - What follows is the desktop's own: the item leaves the inbox, the desktop's "not sent" label goes, and the session
   list loses `prefill` (`sessions.changed`).
+- The agent is told, outside the message, that the user sent the prompt from their phone, as for `conversation.send`.
 
 Errors: `BAD_PARAMS`, `NO_WINDOW`, `NOT_FOUND`, `PREFILL_GONE`, `PREFILL_EDITED`, `WAIT_STATE`.
 
 ### `conversation.watch`
 
-`p`: `{ "sessionId", "afterUuid"? }` → `r`: `{ "sessionId" }`, then events:
+`p`: `{ "sessionId", "afterUuid"? }` → `r`: `{ "sessionId" }`, and events. The first `conversation.update`,
+`conversation.wait`, `conversation.status` and `conversation.skills` of a watch may arrive **before** the answer.
 
 - `conversation.update`: `{ sessionId, status: "attaching"|"ok"|"unavailable", events: [Entry], truncated: bool, reset: bool }`
   - `reset: true` — replace what you hold with `events`. `false` — append.
@@ -322,6 +324,31 @@ while exactly one request is open, nothing was typed into the session since it w
 no other tool activity since, and no answer was written to it yet; for a question, also when it has one to four
 questions of one to eight options. Show the question, option and plan text as plain text: it is the agent's
 own, and may contain paths.
+- `conversation.status`: `{ sessionId, model?, effort?, context?: { percent?, size? }, costUsd?, rateLimits?: {
+  fiveHour?: { percent, resetsAt? }, sevenDay?: { percent, resetsAt? } } }` — the model and usage the session's agent
+  last reported to the desktop's status bar. Sent once when the watch starts (with `sessionId` alone when nothing was
+  reported yet) and again whenever a value changes, checked every 2 seconds; never when nothing changed, and never in
+  the session list.
+  - `model`: the model's display name. `effort`: the agent's effort level. Both plain text, at most 80 characters.
+  - `context.percent`: context used, 0–100 (may be fractional). `context.size`: the context window in tokens.
+  - `costUsd`: the session's cost in US dollars, as the agent computes it.
+  - `rateLimits`: the five-hour and seven-day windows, `percent` used and `resetsAt` (epoch milliseconds, absent
+    when unknown). They are the **account's** limits as this session's agent last reported them.
+  - **Every value may be absent**: the user turned the desktop's agent status off, their own status line could not be
+    chained, the agent has not reported yet, or it did not report that value. A desktop older than the event never
+    sends it: show none of it.
+- `conversation.skills`: `{ sessionId, skills: [{ name, description }] | null }` — the skills the session's agent was
+  told it can invoke (user, repository and plugin skills), as it recorded them in its transcript. Sent after the watch
+  first reads the transcript and whenever the list changes.
+  - `skills: null` — **no list is known**: the session has not received a message yet (the agent writes the list with
+    its first prompt), or it moved to a new transcript (`/clear`) and has not since. Do not show it as an empty list.
+  - `description` is the skill's description as plain text (at most 300 characters), or `null`. Show it as plain text
+    (obligation 15).
+  - A skill added or changed during the session is added or updated in place. **A removed skill stays listed** until
+    the agent next lists every skill (`/clear` and a message, `/compact`, a resume): the agent is not told of the
+    removal either.
+  - Not listed: the agent CLI's built-in commands (`/clear`, `/compact`, …) and skills only the user may invoke.
+  - Invoke a skill by sending `/name` or `/name arguments` as a reply (`conversation.send`).
 - `conversation.ended`: `{ sessionId, reason }` — the watch is over. `"window"`: the desktop's interface
   reloaded or closed. `"exited"`: the agent's process ended on its own. `"hibernated"` / `"closed"`: the
   session was hibernated or closed, by a device or at the desktop. Branch on `reason`; after `"hibernated"`,
@@ -335,6 +362,8 @@ A `user` entry is something the agent received as a user message. `meta: false` 
 including a message typed while the agent was working, which appears where the agent took it in. `meta: true`
 means the agent says the user did not type it: a skill's text, a message from another session, a
 background-task notice, a compacted conversation's summary. Show those as context, not as the user's words.
+A slash command is shown as the line typed — `/name` or `/name arguments` — not in the agent's own command markers;
+a built-in command's output (`<local-command-stdout>`) is shown as recorded.
 Entries arrive in the order the agent recorded them; `at` is not an ordering key.
 
 One connection watches at most one conversation; watching another ends the previous one. Errors:
@@ -364,6 +393,15 @@ One connection watches at most one conversation; watching another ends the previ
 - `r.text` is exactly what was written before the submit key. Match the conversation entry against it to clear
   your "not confirmed" state. An attachment counts as sent once the text is written, also for
   `filled-not-submitted`.
+- **The agent is told, outside the message, that the user sent it from their phone** and reads the answer there, so it
+  keeps the answer suited to a small screen. It is context of that one prompt: not in `r.text`, not in the recorded
+  message, not in either conversation view. A client does nothing for it.
+- **A reply starting with `/` is a slash command.** The desktop writes it trimmed, with one space after the name, and
+  `r.text` says so; the conversation entry is that same line. As measured with the agent: the command written runs (a
+  name that is the start of another is not swapped by the input box's completion); one sent while the agent works
+  runs after its turn; an unknown command is answered by the agent CLI locally and reaches neither the agent nor the
+  conversation, so it stays "not confirmed"; one long enough to be taken as a paste (about 2,000 characters) is not run
+  as a command and arrives as a plain message.
 - Control characters other than newline are removed.
 - The text is written, then the submit key **500 ms later**. Just before the submit key the wait state is read
   again: if the agent began waiting on a choice meanwhile, the key is withheld and the outcome is
@@ -676,8 +714,8 @@ open (on Android, a foreground service), and reconnect with backoff when the net
     reference resolves to nothing (the desktop shows a relative link as text). Open an `http(s)` link only when the
     user taps it, outside the app. Do not load remote images automatically. Show a `data` artifact as plain
     monospace text.
-15. **Show a background task's `label` as plain text**, never as a link or markup, and do not open what it names:
-    it is the agent's own text and may contain paths and URLs.
+15. **Show a background task's `label` and a skill's `description` as plain text**, never as a link or markup, and do
+    not open what they name: they are the agent's own text and may contain paths and URLs.
 16. **Send a filled-in prompt (`sessions.submitPrefill`) only on the user's explicit action for that session**,
     after showing — on that screen or the one just before — the full body of the item `prefill.intake` names (from
     `inbox.list`) and `prefill.text`, both as plain text. Never as part of accepting, never automatically, never from
