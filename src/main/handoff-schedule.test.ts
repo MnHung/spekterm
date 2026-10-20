@@ -357,6 +357,8 @@ describe('the opener (D3)', () => {
 
   it('a fired record is never fired again, also by a new opener after a restart', async () => {
     const w = world()
+    // An unscheduled handoff is due from its delivery time, read from the real clock: run the fake one ahead of it.
+    w.clock.now = Date.now() + MINUTE
     await w.deliver(good)
     assert.equal(w.opened.length, 1)
     const r = w.reload()
@@ -366,6 +368,7 @@ describe('the opener (D3)', () => {
 
   it('a handoff read while no window can receive opens when one can', async () => {
     const w = world()
+    w.clock.now = Date.now() + MINUTE
     w.window.receives = false
     await w.deliver(good)
     assert.equal(w.opened.length, 0)
@@ -523,6 +526,7 @@ describe('arrival when it opens (D4)', () => {
 
   it('an unscheduled handoff is announced on delivery, and not again when it opens', async () => {
     const w = world()
+    w.clock.now = Date.now() + MINUTE
     w.window.receives = false
     await w.deliver(good)
     assert.equal(w.arrivals.length, 1)
