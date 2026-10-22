@@ -152,11 +152,24 @@ does not touch your code.
 
 ## Updating
 
-There is no automatic update yet. Download the new version from the
-[latest release](https://github.com/spekhq/spekterm/releases/latest): on Linux, run the new AppImage in
-place of the old one; on macOS, drag the new Spekterm to Applications, replacing the old one, and
-[allow it once](#the-first-launch) as for the first install. Your data carries over. **Settings → About**
-shows which version you are running.
+spekterm checks GitHub for a newer release a minute after it starts and every six hours. **Settings →
+About** shows which version you are running, the result of the last check, and **Check now**. To stop the
+automatic check, turn off **Check for updates automatically** there; **Check now** still works.
+
+**On Linux**, when spekterm runs from an AppImage whose folder you can write to (as `npm run install:desktop`
+puts it in `~/.local/bin`), it downloads the new version in the background and tells you once, with a
+notification, when it is ready. Choose **Restart to update** in **Settings → About**: spekterm asks first,
+exactly as when you close the window with sessions running, then replaces the AppImage and starts again with
+your sessions restored. If you never choose it, the update is installed the next time you close the window
+(while the automatic check is on) — not when you log out or spekterm is stopped by a signal. If you renamed
+the AppImage with a version in its name, the new version is saved next to it under its own versioned name and
+the old file is removed, so a launcher pointing at the old name needs updating.
+
+**On macOS**, and on a Linux AppImage that cannot replace itself (its folder is not writable, or it was started
+with `--appimage-extract-and-run`), spekterm only tells you that a new version is available. **Download**
+opens its release page; install it as you did the first time: on Linux, run the new AppImage in place of the
+old one; on macOS, drag the new Spekterm to Applications, replacing the old one, and
+[allow it once](#the-first-launch). Your data carries over.
 
 On macOS, each build is a new app to the system, so after an update macOS may ask again for permissions you
 granted before, including the [privacy prompts](#privacy-prompts-that-name-spekterm).

@@ -142,6 +142,13 @@ agree on the approach (and, if appropriate, an OpenSpec change) before you inves
 - **Version bumps and releases.** You don't need to bump the version in your PR — packaging bumps it
   and commits the bump itself.
 
+  For maintainers, a release goes in this order: `npm run dist:linux` (bumps, commits and packages),
+  `npm run install:desktop`, push, then `npm run release:github -- --notes-file <notes.md>`. The last step
+  creates the `v<version>` release as a draft with the AppImage **and** `release/latest-linux.yml`, and
+  publishes it only once both are uploaded. Linux installs update themselves from that file, so a release
+  must never be made by hand without it. Run the same command on the build Mac after `npm run dist:mac` to
+  add the dmg to the existing release. Packaging never publishes anything by itself (`--publish never`).
+
 ### Review
 
 Maintainers review for **correctness** and whether the change does what it claims. We won't hold a PR

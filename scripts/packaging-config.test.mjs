@@ -249,6 +249,35 @@ function contentsTopProblems(build) {
   return problems
 }
 
+/**
+ * Packaging never publishes (`desktop-packaging`, "A release publishes the update metadata with its Linux
+ * artifact"). electron-builder publishes on its own when it sees CI and a tag, and the GitHub provider it infers
+ * from `repository` is the one the update check reads (`auto-update`): an accidental publish would put a release
+ * in front of every Linux install. Releases go through `npm run release:github`.
+ */
+function publishProblems(scripts, packageMacSource) {
+  const problems = []
+  if (!/electron-builder --linux --publish never(\s|$)/.test(scripts?.['dist:linux'] ?? '')) {
+    problems.push('dist:linux does not pass --publish never to electron-builder')
+  }
+  if (!/\['--mac', '--publish', 'never'/.test(packageMacSource)) {
+    problems.push('package-mac.mjs does not pass --publish never to electron-builder')
+  }
+  return problems
+}
+
+const packageMacSource = readFileSync(join(repoRoot, 'scripts', 'package-mac.mjs'), 'utf8')
+
+test('packaging passes --publish never', () => {
+  assert.deepEqual(publishProblems(pkg.scripts, packageMacSource), [])
+})
+
+test('control: packaging that may publish is caught', () => {
+  const linux = { ...pkg.scripts, 'dist:linux': pkg.scripts['dist:linux'].replace(' --publish never', '') }
+  assert.notDeepEqual(publishProblems(linux, packageMacSource), [])
+  assert.notDeepEqual(publishProblems(pkg.scripts, packageMacSource.replace("'--publish', 'never', ", '')), [])
+})
+
 /** `dist:mac`: release check first, packaging only through the checksum step, pruning last, no bump. */
 function distMacProblems(scripts) {
   const dist = scripts?.['dist:mac'] ?? ''
@@ -351,4 +380,27 @@ test('the README states how to build for macOS, in both languages', () => {
 test('control: a page without the facts is caught', () => {
   assert.equal(missingFacts('Download the dmg and drag it to Applications.', MAC_INSTALL_FACTS).length, 3)
   assert.equal(missingFacts('npm run dist:linux', MAC_BUILD_FACTS).length, 3)
+})
+
+/**
+ * app-update: "The documentation states how updates work". The install page, in both languages, names the Linux
+ * restart, the macOS limitation, the build that cannot replace itself, the versioned file name and the switch.
+ * Presence of the facts only; the prose is reviewed by hand.
+ */
+const UPDATE_FACTS = {
+  en: [/Restart to update/, /Check for updates automatically/, /--appimage-extract-and-run/, /versioned name/, /On macOS/],
+  'zh-TW': [/重新啟動以更新/, /自動檢查更新/, /--appimage-extract-and-run/, /帶版本號的檔名/, /在 macOS 上/],
+}
+
+test('the install page states how updates work, in both languages', () => {
+  for (const [language, page] of [
+    ['en', 'site/src/content/docs/docs/getting-started/install.md'],
+    ['zh-TW', 'site/src/content/docs/zh-tw/docs/getting-started/install.md'],
+  ]) {
+    assert.deepEqual(missingFacts(readFileSync(join(repoRoot, page), 'utf8'), UPDATE_FACTS[language]), [], page)
+  }
+})
+
+test('control: an install page without the update facts is caught', () => {
+  assert.notDeepEqual(missingFacts('There is no automatic update yet.', UPDATE_FACTS.en), [])
 })

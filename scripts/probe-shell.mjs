@@ -202,6 +202,9 @@ const PROBE_EXPRESSION = `(async () => {
           'setAgentView',
                     'setLanguage',
           'setAutoHibernate',
+          // setAutoUpdateCheck (auto-update, app-update): a boolean the store takes as off or the default; no
+          // path vocabulary.
+          'setAutoUpdateCheck',
           'listMonospaceFonts',
         ].includes(key),
     ),
@@ -243,6 +246,9 @@ const PROBE_EXPRESSION = `(async () => {
           // remote 於 mobile-remote-bridge 引入（remote-access 規格）：遠端存取（Settings 的一個分類）的狀態與控制，
           // 以及裝置請求的橋接（主行程 → renderer 的請求、renderer → 主行程的回覆）。
           'remote',
+          // update (auto-update, app-update): the update status, Check now, Restart to update, and opening the
+          // release page. Nothing goes in: no URL, version or path; the main process builds the link and holds the file.
+          'update',
         ].includes(key),
     ),
     // conversation 於 agent-transcript-view 引入（agent-transcript-stream / agent-input-bridge

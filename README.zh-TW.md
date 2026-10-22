@@ -12,7 +12,8 @@
 ![spekterm：Claude Code session 以對話檢視呈現，旁邊的側欄顯示它正在做的 OpenSpec change 的 tasks](site/src/assets/screenshots/zh-TW/hero.png)
 
 > **現況：** 早期版本。目前提供 Linux（x86_64）與 Apple Silicon 的 macOS 版本；Windows 與 Intel Mac
-> 尚未支援。還沒有自動更新，macOS 版也沒有經過 Apple 公證（它以 ad hoc 方式簽章 —— 見 [macOS](#macos)）。
+> 尚未支援。Linux 的 AppImage 會自己更新（向 GitHub 查詢、在背景下載，在你重新啟動或關閉它時安裝）；macOS 版只會告訴你有新版本，
+> 也沒有經過 Apple 公證（它以 ad hoc 方式簽章 —— 見 [macOS](#macos)）。
 
 ## 為什麼
 

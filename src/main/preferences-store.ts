@@ -74,10 +74,21 @@ export interface UiPreferences {
   language?: Language
 }
 
+/**
+ * The update check's preferences (`app-update`). A third block beside `terminal` and `ui`, for the reason `ui` is
+ * one: the update check is not a terminal preference. **Adding it SHALL NOT bump `PREFERENCES_VERSION`** (a
+ * mismatch quarantines the whole file); a file without `updates` has the block empty.
+ */
+export interface UpdatePreferences {
+  /** Check for updates automatically. **Unset = on**; stored only when off (`false`). */
+  autoUpdateCheck?: boolean
+}
+
 interface PersistedPreferences {
   version: number
   terminal: TerminalPreferences
   ui: UiPreferences
+  updates: UpdatePreferences
 }
 
 /**
@@ -245,6 +256,17 @@ const UI_PREFERENCE_FIELDS = {
 
 type UiPreferenceKey = keyof typeof UI_PREFERENCE_FIELDS
 
+/** The update preferences' **single source**, parallel to the two tables above and bound the same way. */
+const UPDATE_PREFERENCE_FIELDS = {
+  autoUpdateCheck: { sanitize: sanitizeBoolean, toRenderer: true },
+} satisfies {
+  [K in keyof Required<UpdatePreferences>]: FieldSpec<Required<UpdatePreferences>[K]>
+}
+
+type UpdatePreferenceKey = keyof typeof UPDATE_PREFERENCE_FIELDS
+
+const UPDATE_PREFERENCE_KEYS = Object.keys(UPDATE_PREFERENCE_FIELDS) as UpdatePreferenceKey[]
+
 const UI_PREFERENCE_KEYS = Object.keys(UI_PREFERENCE_FIELDS) as UiPreferenceKey[]
 
 type PreferenceKey = keyof typeof PREFERENCE_FIELDS
@@ -269,8 +291,8 @@ const PREFERENCE_KEYS = Object.keys(PREFERENCE_FIELDS) as PreferenceKey[]
  * 欄位的清理器與該欄位的值型別繫在一起，這裡只是把「走訪一個物件時失去的鍵—值關聯」補回來。
  */
 function assignField(
-  target: TerminalPreferences & UiPreferences,
-  key: PreferenceKey | UiPreferenceKey,
+  target: TerminalPreferences & UiPreferences & UpdatePreferences,
+  key: PreferenceKey | UiPreferenceKey | UpdatePreferenceKey,
   value: unknown,
 ): void {
   if (value === undefined) return
@@ -293,8 +315,13 @@ type UiRendererField = {
   [K in UiPreferenceKey]: (typeof UI_PREFERENCE_FIELDS)[K]['toRenderer'] extends true ? K : never
 }[UiPreferenceKey]
 
+type UpdateRendererField = {
+  [K in UpdatePreferenceKey]: (typeof UPDATE_PREFERENCE_FIELDS)[K]['toRenderer'] extends true ? K : never
+}[UpdatePreferenceKey]
+
 export type ProjectedPreferences = Pick<TerminalPreferences, RendererField> &
-  Pick<UiPreferences, UiRendererField>
+  Pick<UiPreferences, UiRendererField> &
+  Pick<UpdatePreferences, UpdateRendererField>
 
 /**
  * 送往 renderer 的投影：**逐欄位白名單**，且保持「未設定即省略」。
@@ -311,8 +338,9 @@ export type ProjectedPreferences = Pick<TerminalPreferences, RendererField> &
 export function projectPreferences(
   preferences: TerminalPreferences,
   ui: UiPreferences,
+  updates: UpdatePreferences,
 ): ProjectedPreferences {
-  const projected: TerminalPreferences & UiPreferences = {}
+  const projected: TerminalPreferences & UiPreferences & UpdatePreferences = {}
   for (const key of PREFERENCE_KEYS) {
     if (!PREFERENCE_FIELDS[key].toRenderer) continue
     assignField(projected, key, preferences[key])
@@ -320,6 +348,10 @@ export function projectPreferences(
   for (const key of UI_PREFERENCE_KEYS) {
     if (!UI_PREFERENCE_FIELDS[key].toRenderer) continue
     assignField(projected, key, ui[key])
+  }
+  for (const key of UPDATE_PREFERENCE_KEYS) {
+    if (!UPDATE_PREFERENCE_FIELDS[key].toRenderer) continue
+    assignField(projected, key, updates[key])
   }
   return projected
 }
@@ -339,7 +371,7 @@ export function parsePreferences(raw: string): PersistedPreferences | null {
   }
 
   if (typeof data !== 'object' || data === null) return null
-  const { version, terminal, ui } = data as Record<string, unknown>
+  const { version, terminal, ui, updates } = data as Record<string, unknown>
 
   if (version !== PREFERENCES_VERSION) return null
   if (typeof terminal !== 'object' || terminal === null) return null
@@ -347,6 +379,8 @@ export function parsePreferences(raw: string): PersistedPreferences | null {
   // 不可信** —— 與 `terminal` 同一條規則。缺席與壞掉是兩件事，不可混為一談：把後者也當成
   // 「沒設定」會讓一份被外部程式改壞的檔案靜默地以預設繼續，而使用者的其餘偏好也一併失效。
   if (ui !== undefined && (typeof ui !== 'object' || ui === null)) return null
+  // The same rule for `updates`: absent (every file written before it) is empty, malformed is untrusted.
+  if (updates !== undefined && (typeof updates !== 'object' || updates === null)) return null
 
   // 讀入的白名單**自 `PREFERENCE_FIELDS` 推導**，不是一份手寫的解構清單。此前它是手寫的，
   // 而型別檢查對它零感知 —— 漏在那裡的欄位寫得進磁碟卻讀不回來，症狀是「這個偏好不跨重啟」，
@@ -363,7 +397,13 @@ export function parsePreferences(raw: string): PersistedPreferences | null {
     assignField(parsedUi, key, UI_PREFERENCE_FIELDS[key].sanitize(uiSource[key]))
   }
 
-  return { version: PREFERENCES_VERSION, terminal: parsed, ui: parsedUi }
+  const updatesSource = (updates ?? {}) as Record<string, unknown>
+  const parsedUpdates: UpdatePreferences = {}
+  for (const key of UPDATE_PREFERENCE_KEYS) {
+    assignField(parsedUpdates, key, UPDATE_PREFERENCE_FIELDS[key].sanitize(updatesSource[key]))
+  }
+
+  return { version: PREFERENCES_VERSION, terminal: parsed, ui: parsedUi, updates: parsedUpdates }
 }
 
 /**
@@ -394,6 +434,7 @@ function quarantine(filePath: string): string | null {
 export class PreferencesStore {
   private preferences: TerminalPreferences = {}
   private uiPreferences: UiPreferences = {}
+  private updatePreferences: UpdatePreferences = {}
   /**
    * 這次啟動時，磁碟上**原本有沒有**偏好檔。
    *
@@ -422,6 +463,7 @@ export class PreferencesStore {
       this.existedOnLoad = !missing
       this.preferences = {}
       this.uiPreferences = {}
+      this.updatePreferences = {}
       return
     }
 
@@ -436,6 +478,7 @@ export class PreferencesStore {
       )
       this.preferences = {}
       this.uiPreferences = {}
+      this.updatePreferences = {}
       // **隔離之後立刻回寫一份預設檔。** 隔離是把原檔改名保留，於是**檔案就不存在了** ——
       // 而「偏好檔不存在」是首次啟動語言偵測的判準。少了這次回寫，一個曾經壞過一次偏好檔的
       // 使用者，會在下一次啟動時莫名其妙換了語言，而他從來沒有動過語言設定。
@@ -445,6 +488,7 @@ export class PreferencesStore {
 
     this.preferences = parsed.terminal
     this.uiPreferences = parsed.ui
+    this.updatePreferences = parsed.updates
   }
 
   /**
@@ -475,6 +519,26 @@ export class PreferencesStore {
 
     this.commit({ ui: next })
     return this.ui()
+  }
+
+  /** The current update preferences (a copy). */
+  updates(): UpdatePreferences {
+    return { ...this.updatePreferences }
+  }
+
+  /** Whether the update check runs on its own, the default applied. */
+  autoUpdateCheck(): boolean {
+    return this.updatePreferences.autoUpdateCheck !== false
+  }
+
+  /** Turn the automatic update check on or off. `null` or `true` = the default (on), stored by removing the field. */
+  setAutoUpdateCheck(enabled: boolean | null): UpdatePreferences {
+    const next: UpdatePreferences = { ...this.updatePreferences }
+    if (enabled === false) next.autoUpdateCheck = false
+    else delete next.autoUpdateCheck
+
+    this.commit({ updates: next })
+    return this.updates()
   }
 
   /** 當前的終端偏好（複本）。 */
@@ -576,13 +640,15 @@ export class PreferencesStore {
    * kept a value that never reached the disk in memory, where `get()` reported it and the next successful
    * write of any field stored it (`terminal-preferences`, "A change in Settings applies when it is made").
    */
-  private commit(next: { terminal?: TerminalPreferences; ui?: UiPreferences }): void {
+  private commit(next: { terminal?: TerminalPreferences; ui?: UiPreferences; updates?: UpdatePreferences }): void {
     const terminal = next.terminal ?? this.preferences
     const ui = next.ui ?? this.uiPreferences
-    writePreferencesFileAtomic(this.filePath, { version: PREFERENCES_VERSION, terminal, ui })
+    const updates = next.updates ?? this.updatePreferences
+    writePreferencesFileAtomic(this.filePath, { version: PREFERENCES_VERSION, terminal, ui, updates })
     this.existedOnLoad = true
     this.preferences = terminal
     this.uiPreferences = ui
+    this.updatePreferences = updates
   }
 
   private save(): void {
@@ -590,6 +656,7 @@ export class PreferencesStore {
       version: PREFERENCES_VERSION,
       terminal: this.preferences,
       ui: this.uiPreferences,
+      updates: this.updatePreferences,
     })
     this.existedOnLoad = true
   }

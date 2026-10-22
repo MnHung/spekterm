@@ -13,6 +13,7 @@ export const SETTINGS_CHANNELS = {
     setAgentView: 'workspace:settings:setAgentView',
   setAutoHibernate: 'workspace:settings:setAutoHibernate',
   setLanguage: 'workspace:settings:setLanguage',
+  setAutoUpdateCheck: 'workspace:settings:setAutoUpdateCheck',
   listMonospaceFonts: 'workspace:settings:listMonospaceFonts',
 } as const
 
@@ -69,9 +70,12 @@ function listMonospaceFonts(): Promise<string[]> {
  * **五個處理常式都要經過它，不只 `get`** —— 四個 setter 同樣把套用後的偏好回傳，漏掉任一個，
  * 那條路就是一個沒有白名單的出口。這條由 `scripts/settings-projection.test.mjs` 守著。
  */
-export function registerSettingsHandlers(store: PreferencesStore): void {
+export function registerSettingsHandlers(
+  store: PreferencesStore,
+  hooks: { autoUpdateCheckChanged?: () => void } = {},
+): void {
   ipcMain.handle(SETTINGS_CHANNELS.get, (): ProjectedPreferences =>
-    projectPreferences(store.get(), store.ui()),
+    projectPreferences(store.get(), store.ui(), store.updates()),
   )
 
   ipcMain.handle(
@@ -82,14 +86,14 @@ export function registerSettingsHandlers(store: PreferencesStore): void {
       fontSize: number | null,
       lineHeight: number | null,
     ): ProjectedPreferences =>
-      projectPreferences(store.setTerminalFont(fontFamily, fontSize, lineHeight), store.ui()),
+      projectPreferences(store.setTerminalFont(fontFamily, fontSize, lineHeight), store.ui(), store.updates()),
   )
 
   // 值的驗證同樣在 store（只認真正的布林；其餘一律當成未設定＝預設啟用）。
   ipcMain.handle(
     SETTINGS_CHANNELS.setAgentStatus,
     (_event, enabled: unknown): ProjectedPreferences =>
-      projectPreferences(store.setAgentStatus(typeof enabled === 'boolean' ? enabled : null), store.ui()),
+      projectPreferences(store.setAgentStatus(typeof enabled === 'boolean' ? enabled : null), store.ui(), store.updates()),
   )
 
   // 值的白名單同樣在 store（只認那兩個字面值；其餘一律當成未設定＝預設的終端 view）。
@@ -106,7 +110,7 @@ export function registerSettingsHandlers(store: PreferencesStore): void {
     async (_event, language: unknown): Promise<ProjectedPreferences> => {
       const applied = store.setLanguage(isSupportedLanguage(language) ? language : null)
       await setLanguage(applied.language ?? DEFAULT_LANGUAGE)
-      return projectPreferences(store.get(), applied)
+      return projectPreferences(store.get(), applied, store.updates())
     },
   )
 
@@ -116,21 +120,33 @@ export function registerSettingsHandlers(store: PreferencesStore): void {
       projectPreferences(
         store.setAgentView(view === 'terminal' || view === 'conversation' ? view : null),
         store.ui(),
+        store.updates(),
       ),
   )
 
   ipcMain.handle(
     SETTINGS_CHANNELS.setGpuAcceleration,
     (_event, enabled: boolean | null): ProjectedPreferences =>
-      projectPreferences(store.setGpuAcceleration(typeof enabled === 'boolean' ? enabled : null), store.ui()),
+      projectPreferences(store.setGpuAcceleration(typeof enabled === 'boolean' ? enabled : null), store.ui(), store.updates()),
   )
 
     // The value's whitelist lives in the store (non-negative whole seconds; anything else resets it).
   ipcMain.handle(
     SETTINGS_CHANNELS.setAutoHibernate,
     (_event, seconds: unknown): ProjectedPreferences =>
-      projectPreferences(store.setAutoHibernate(typeof seconds === 'number' ? seconds : null), store.ui()),
+      projectPreferences(store.setAutoHibernate(typeof seconds === 'number' ? seconds : null), store.ui(), store.updates()),
   )
+
+  // `app-update`: on is stored as the default (`null`), off as `false`; anything else is the default.
+  ipcMain.handle(SETTINGS_CHANNELS.setAutoUpdateCheck, (_event, enabled: unknown): ProjectedPreferences => {
+    const projected = projectPreferences(
+      store.get(),
+      store.ui(),
+      store.setAutoUpdateCheck(enabled === false ? false : null),
+    )
+    hooks.autoUpdateCheckChanged?.()
+    return projected
+  })
 
   ipcMain.handle(SETTINGS_CHANNELS.listMonospaceFonts, (): Promise<string[]> =>
     listMonospaceFonts(),

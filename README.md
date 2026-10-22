@@ -13,8 +13,9 @@ without opening an IDE.
 ![spekterm: a Claude Code session in the conversation view, next to the side panel showing the tasks of the OpenSpec change it is working on](site/src/assets/screenshots/en/hero.png)
 
 > **Status:** early. Builds are available for Linux (x86_64) and for macOS on Apple Silicon; Windows and
-> Intel Macs are not supported yet. Auto-update is not available yet, and the macOS build is not notarized
-> by Apple (it is signed ad hoc — see [macOS](#macos)).
+> Intel Macs are not supported yet. The Linux AppImage updates itself (it checks GitHub, downloads in the
+> background, and installs when you restart it or close it); the macOS build only tells you a new version is
+> out, and it is not notarized by Apple (it is signed ad hoc — see [macOS](#macos)).
 
 ## Why
 

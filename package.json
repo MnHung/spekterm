@@ -89,7 +89,8 @@
   "scripts": {
     "dev": "XDG_CONFIG_HOME=$HOME/.config/spekterm-dev electron-vite dev",
     "build": "electron-vite build && node scripts/third-party-licenses.mjs",
-    "dist:linux": "node scripts/release-bump.mjs && npm run build && electron-builder --linux && node scripts/prune-release.mjs",
+    "dist:linux": "node scripts/release-bump.mjs && npm run build && electron-builder --linux --publish never && node scripts/prune-release.mjs",
+    "release:github": "node scripts/release-github.mjs",
     "dist:mac": "node scripts/release-check.mjs && npm ci && npm run build && node scripts/package-mac.mjs && node scripts/prune-release.mjs",
     "install:desktop": "node scripts/install-desktop.mjs",
     "uninstall:desktop": "node scripts/uninstall-desktop.mjs",
@@ -160,6 +161,7 @@
     "@xterm/addon-webgl": "0.20.0-beta.298",
     "@xterm/xterm": "6.1.0-beta.302",
     "chokidar": "^5.0.0",
+    "electron-updater": "6.8.9",
     "i18next": "^26.3.6",
     "node-pty": "1.2.0-beta.14",
     "ws": "^8.22.0"

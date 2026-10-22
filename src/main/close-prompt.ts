@@ -39,10 +39,16 @@ export interface CloseFacts {
    * directory, its folder elsewhere (macOS). Default `'lastDirectory'`.
    */
   shellsRestartIn?: 'lastDirectory' | 'folder'
+  /**
+   * The close is the first step of "Restart to update" (`app-update`): the same questions, worded for a restart
+   * — the app starts again with the new version. Only on Linux, where closing the window ends the application.
+   */
+  restart?: boolean
 }
 
 /** The consequence sentence for what closes and where shells come back. */
 function consequenceKey(facts: CloseFacts) {
+  if (facts.restart) return facts.shellsRestartIn === 'folder' ? 'closeConfirm.consequenceRestartFolder' : 'closeConfirm.consequenceRestart'
   const window = facts.closesApp === false
   const folder = facts.shellsRestartIn === 'folder'
   if (window) return folder ? 'closeConfirm.consequenceWindowFolder' : 'closeConfirm.consequenceWindow'
@@ -98,6 +104,7 @@ export function closePrompt(facts: CloseFacts): ClosePrompt | null {
   const sessions = facts.sessions.length
   if (files === 0 && sessions === 0) return null
   const closesApp = facts.closesApp !== false
+  const restart = facts.restart === true
 
   if (sessions === 0) {
     // Unchanged from the unsaved-changes dialog this replaces: no session runs, so saving all and
@@ -106,8 +113,8 @@ export function closePrompt(facts: CloseFacts): ClosePrompt | null {
       message: t('unsaved.message', { count: files }),
       detail: describeFiles(facts.dirty),
       buttons: [
-        { role: 'saveAll', label: t('unsaved.saveAll') },
-        { role: 'discard', label: t('unsaved.discard') },
+        { role: 'saveAll', label: t(restart ? 'closeConfirm.saveAllAndRestart' : 'unsaved.saveAll') },
+        { role: 'discard', label: t(restart ? 'closeConfirm.restartWithoutSaving' : 'unsaved.discard') },
         { role: 'cancel', label: t('unsaved.cancel') },
       ],
       defaultRole: 'saveAll',
@@ -120,7 +127,7 @@ export function closePrompt(facts: CloseFacts): ClosePrompt | null {
       message: t('closeConfirm.message', { count: sessions }),
       detail: describeSessions(facts),
       buttons: [
-        { role: 'quit', label: t(closesApp ? 'closeConfirm.quit' : 'closeConfirm.closeWindow') },
+        { role: 'quit', label: t(restart ? 'closeConfirm.restart' : closesApp ? 'closeConfirm.quit' : 'closeConfirm.closeWindow') },
         { role: 'cancel', label: t('closeConfirm.cancel') },
       ],
       defaultRole: 'cancel',
@@ -133,8 +140,14 @@ export function closePrompt(facts: CloseFacts): ClosePrompt | null {
     message: t('unsaved.message', { count: files }),
     detail: `${describeFiles(facts.dirty)}\n\n${t('closeConfirm.message', { count: sessions })}\n${describeSessions(facts)}`,
     buttons: [
-      { role: 'saveAll', label: t(closesApp ? 'closeConfirm.saveAllAndQuit' : 'closeConfirm.saveAllAndClose') },
-      { role: 'discard', label: t(closesApp ? 'closeConfirm.quitWithoutSaving' : 'closeConfirm.closeWithoutSaving') },
+      {
+        role: 'saveAll',
+        label: t(restart ? 'closeConfirm.saveAllAndRestart' : closesApp ? 'closeConfirm.saveAllAndQuit' : 'closeConfirm.saveAllAndClose'),
+      },
+      {
+        role: 'discard',
+        label: t(restart ? 'closeConfirm.restartWithoutSaving' : closesApp ? 'closeConfirm.quitWithoutSaving' : 'closeConfirm.closeWithoutSaving'),
+      },
       { role: 'cancel', label: t('closeConfirm.cancel') },
     ],
     defaultRole: 'cancel',

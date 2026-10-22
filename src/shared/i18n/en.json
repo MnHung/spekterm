@@ -282,6 +282,11 @@
     "closeWindow": "Close Window",
     "saveAllAndClose": "Save All and Close",
     "closeWithoutSaving": "Close Without Saving",
+    "consequenceRestart": "Restarting to update ends them; spekterm then starts again with the new version. Running commands and any reply an agent is writing are lost; claude sessions resume their conversation and shells restart in their last directory when you wake them.",
+    "consequenceRestartFolder": "Restarting to update ends them; spekterm then starts again with the new version. Running commands and any reply an agent is writing are lost; claude sessions resume their conversation and shells restart in their folder when you wake them.",
+    "restart": "Restart",
+    "saveAllAndRestart": "Save All and Restart",
+    "restartWithoutSaving": "Restart Without Saving",
     "cancel": "Cancel"
   },
   "sessions": {
@@ -919,5 +924,44 @@
     "portNotApplied": "Not applied yet. Press Use port or Enter; changing the port disconnects connected devices.",
     "revokeConfirm": "It will have to pair again.",
     "revokeConfirmButton": "Confirm revoking {{name}}"
+  },
+  "update": {
+    "notifyReadyTitle": "spekterm {{version}} is ready",
+    "notifyReadyBody": "Restart spekterm to update.",
+    "notifyAvailableTitle": "spekterm {{version}} is available",
+    "notifyAvailableBody": "Open Settings to download it.",
+    "heading": "Updates",
+    "status": {
+      "idle": "Not checked yet.",
+      "checking": "Checking for updates…",
+      "upToDate": "spekterm is up to date.",
+      "downloading": "Downloading {{version}}… {{percent}}%",
+      "ready": "spekterm {{version}} is ready to install.",
+      "available": "spekterm {{version}} is available.",
+      "failed": "The last check failed: {{reason}}."
+    },
+    "failure": {
+      "network": "GitHub could not be reached",
+      "rateLimited": "GitHub asked to wait before the next check",
+      "unexpectedAnswer": "GitHub's answer was not a version",
+      "checksum": "the download did not match its checksum",
+      "other": "an error occurred"
+    },
+    "lastChecked": "Last checked {{when}}.",
+    "checkNow": "Check now",
+    "restart": "Restart to update",
+    "download": "Download",
+    "autoCheck": "Check for updates automatically",
+    "autoCheckHintInstalling": "spekterm asks GitHub for a newer release a minute after it starts and every six hours. It downloads it in the background and installs it when you restart to update or close spekterm.",
+    "autoCheckHintTelling": "spekterm asks GitHub for a newer release a minute after it starts and every six hours, and tells you when there is one. This build cannot install updates itself: download the new version from its release page.",
+    "lastInstallOk": "Updated to {{version}}.",
+    "lastInstallFailed": "The update to {{version}} was not installed: {{reason}}.",
+    "install": {
+      "download-missing": "the downloaded file was missing",
+      "appimage-missing": "the AppImage was missing",
+      "appimage-replaced": "the AppImage had been replaced since spekterm started",
+      "copy-failed": "the new version could not be copied next to the AppImage",
+      "replace-failed": "the AppImage could not be replaced"
+    }
   }
 }

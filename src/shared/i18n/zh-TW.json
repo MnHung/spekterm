@@ -276,6 +276,11 @@
     "closeWindow": "關閉視窗",
     "saveAllAndClose": "全部儲存並關閉",
     "closeWithoutSaving": "不儲存並關閉",
+    "consequenceRestart": "重新啟動以更新會結束它們，接著 spekterm 會以新版本重新啟動。執行中的指令與 agent 正在寫的回覆會遺失；喚醒時，claude session 會接續原本的對話，shell 會在最後的目錄重新啟動。",
+    "consequenceRestartFolder": "重新啟動以更新會結束它們，接著 spekterm 會以新版本重新啟動。執行中的指令與 agent 正在寫的回覆會遺失；喚醒時，claude session 會接續原本的對話，shell 會在它所屬的資料夾重新啟動。",
+    "restart": "重新啟動",
+    "saveAllAndRestart": "全部儲存並重新啟動",
+    "restartWithoutSaving": "不儲存並重新啟動",
     "cancel": "取消"
   },
   "sessions": {
@@ -895,5 +900,44 @@
     "portNotApplied": "尚未套用。按「使用這個 port」或 Enter；變更 port 會中斷已連線的裝置。",
     "revokeConfirm": "撤銷後需要重新配對。",
     "revokeConfirmButton": "確認撤銷 {{name}}"
+  },
+  "update": {
+    "notifyReadyTitle": "spekterm {{version}} 已就緒",
+    "notifyReadyBody": "重新啟動 spekterm 即可更新。",
+    "notifyAvailableTitle": "spekterm {{version}} 已推出",
+    "notifyAvailableBody": "打開 Settings 下載新版本。",
+    "heading": "更新",
+    "status": {
+      "idle": "尚未檢查。",
+      "checking": "正在檢查更新…",
+      "upToDate": "spekterm 已是最新版本。",
+      "downloading": "正在下載 {{version}}… {{percent}}%",
+      "ready": "spekterm {{version}} 已可安裝。",
+      "available": "spekterm {{version}} 已推出。",
+      "failed": "上一次檢查失敗：{{reason}}。"
+    },
+    "failure": {
+      "network": "連不上 GitHub",
+      "rateLimited": "GitHub 要求稍後再檢查",
+      "unexpectedAnswer": "GitHub 的回應不是一個版本號",
+      "checksum": "下載的檔案與校驗碼不符",
+      "other": "發生錯誤"
+    },
+    "lastChecked": "上次檢查：{{when}}。",
+    "checkNow": "立即檢查",
+    "restart": "重新啟動以更新",
+    "download": "下載",
+    "autoCheck": "自動檢查更新",
+    "autoCheckHintInstalling": "spekterm 會在啟動一分鐘後、之後每六小時向 GitHub 查詢是否有新版本，在背景下載，並在你重新啟動以更新或關閉 spekterm 時安裝。",
+    "autoCheckHintTelling": "spekterm 會在啟動一分鐘後、之後每六小時向 GitHub 查詢是否有新版本，有的話會通知你。這個版本無法自行安裝更新：請從 release 頁面下載新版本。",
+    "lastInstallOk": "已更新至 {{version}}。",
+    "lastInstallFailed": "沒有安裝 {{version}} 的更新：{{reason}}。",
+    "install": {
+      "download-missing": "下載的檔案不見了",
+      "appimage-missing": "AppImage 不見了",
+      "appimage-replaced": "AppImage 在 spekterm 啟動後被換過了",
+      "copy-failed": "無法把新版本複製到 AppImage 旁邊",
+      "replace-failed": "無法替換 AppImage"
+    }
   }
 }

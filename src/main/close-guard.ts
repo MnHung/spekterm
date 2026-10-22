@@ -35,6 +35,18 @@ export interface QuitState {
   quitting: boolean
 }
 
+/**
+ * Who started the close the guard let go ahead (`auto-update`, design U4): the update installs at a quit only when
+ * the user started it. Recorded **when the guard allows the close**, never read later: by `will-quit`,
+ * `quitting` is always `true` — on Linux `window-all-closed` calls `app.quit()` after any close.
+ *
+ * - `restart`: `closeForRestart()`.
+ * - `user`: a close of the window (✕, `closeForQuit`) that did not come after a `before-quit`.
+ * - `signal`: the close is part of a quit that started with `before-quit` (a logout, `kill`; measured: `SIGTERM`
+ *   quits with exit code 0, so the exit code cannot tell).
+ */
+export type CloseOrigin = 'user' | 'restart' | 'signal'
+
 export interface CloseGuardDeps {
   dirty: { list(contentsId: number): DirtyEntry[] }
   /** The window's sessions that hold a pty, in rail order. Read synchronously. */
@@ -61,6 +73,8 @@ export interface CloseGuardDeps {
   closeQuitsApp?: boolean
   /** Where shells restart when woken, for the dialog's wording (`ptyCwdReadable`). */
   shellsRestartIn?: 'lastDirectory' | 'folder'
+  /** Called, synchronously, each time the guard lets the window close, with who started that close. */
+  onAllowedClose?: (origin: CloseOrigin) => void
 }
 
 /** What the caller can ask of a guarded window. */
@@ -72,6 +86,13 @@ export interface GuardedWindow {
    * a quit.
    */
   closeForQuit(): void
+  /**
+   * Close the window as the first step of "Restart to update" (`app-update`): the same questions as a close, worded
+   * for a restart; if the close goes ahead it belongs to a quit (`onQuitClose`) whose origin is `restart`.
+   * Returns `false`, doing nothing, while a question is already open — that question is not about a restart, and
+   * one question is asked at a time.
+   */
+  closeForRestart(): boolean
 }
 
 export function guardWindowClose(window: ClosableWindow, deps: CloseGuardDeps): GuardedWindow {
@@ -83,13 +104,21 @@ export function guardWindowClose(window: ClosableWindow, deps: CloseGuardDeps): 
   let closeIsQuit = false
   /** The open prompt's close belongs to a quit — from the start, or upgraded by a quit while it was open. */
   let askingForQuit = false
+  /** Set by `closeForRestart()` for the one `close` event it causes, like `closeIsQuit`. */
+  let closeIsRestart = false
+  /** The open prompt is a restart's. */
+  let askingForRestart = false
 
-  const factsFor = (quitting: boolean, forQuit: boolean) => ({
+  const factsFor = (quitting: boolean, forQuit: boolean, restart: boolean) => ({
     dirty: deps.dirty.list(contentsId),
     sessions: quitting ? [] : deps.liveSessions(contentsId),
     closesApp: forQuit || deps.closeQuitsApp !== false,
     shellsRestartIn: deps.shellsRestartIn,
+    restart,
   })
+
+  const originOf = (restart: boolean, quitting: boolean): CloseOrigin =>
+    restart ? 'restart' : quitting ? 'signal' : 'user'
 
   /** Whether the window may close. Save All that fails asks again rather than deciding to discard. */
   const resolve = async (first: ClosePrompt, quitting: boolean): Promise<boolean> => {
@@ -102,7 +131,7 @@ export function guardWindowClose(window: ClosableWindow, deps: CloseGuardDeps): 
       if (await deps.saveAll()) return true
       // Saving failed or timed out (a conflict, a renderer that does not answer). Ask again with
       // what is true now; if nothing is left to ask about, closing loses nothing.
-      prompt = closePrompt(factsFor(quitting, askingForQuit))
+      prompt = closePrompt(factsFor(quitting, askingForQuit, askingForRestart))
     }
     return true
   }
@@ -110,7 +139,9 @@ export function guardWindowClose(window: ClosableWindow, deps: CloseGuardDeps): 
   window.on('close', (event) => {
     if (allowClose) return
 
-    const forQuit = closeIsQuit || deps.quit.quitting
+    const forRestart = closeIsRestart
+    closeIsRestart = false
+    const forQuit = closeIsQuit || forRestart || deps.quit.quitting
     closeIsQuit = false
 
     // Electron cancels a quit the moment a `close` is prevented. A `quitting` flag left set after
@@ -130,8 +161,9 @@ export function guardWindowClose(window: ClosableWindow, deps: CloseGuardDeps): 
     // Only a quit that did not start with closing the window skips the session question —
     // `closeForQuit()` starts with closing it, so it asks like any close.
     const quitting = deps.quit.quitting
-    const prompt = closePrompt(factsFor(quitting, forQuit))
+    const prompt = closePrompt(factsFor(quitting, forQuit, forRestart))
     if (!prompt) {
+      deps.onAllowedClose?.(originOf(forRestart, quitting))
       if (forQuit) deps.onQuitClose?.()
       return
     }
@@ -140,6 +172,7 @@ export function guardWindowClose(window: ClosableWindow, deps: CloseGuardDeps): 
     deps.quit.quitting = false
     asking = true
     askingForQuit = forQuit
+    askingForRestart = forRestart
 
     void resolve(prompt, quitting)
       .catch((error: unknown) => {
@@ -149,9 +182,13 @@ export function guardWindowClose(window: ClosableWindow, deps: CloseGuardDeps): 
       .then((shouldClose) => {
         asking = false
         const quit = askingForQuit
+        const restart = askingForRestart
         askingForQuit = false
+        askingForRestart = false
         if (!shouldClose || window.isDestroyed()) return
         allowClose = true
+        // The user answered: a quit that arrived while the question was open does not make it a signal's.
+        deps.onAllowedClose?.(originOf(restart, quitting))
         if (quit) deps.onQuitClose?.()
         window.close()
       })
@@ -171,6 +208,12 @@ export function guardWindowClose(window: ClosableWindow, deps: CloseGuardDeps): 
       // emits `close` inside that call or later is not something this module should depend on.
       closeIsQuit = true
       window.close()
+    },
+    closeForRestart(): boolean {
+      if (window.isDestroyed() || asking) return false
+      closeIsRestart = true
+      window.close()
+      return true
     },
   }
 }

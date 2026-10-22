@@ -24,6 +24,7 @@ import type { AttentionView } from '../main/ipc/wait'
 import type { DirEntry, FileContent } from '../main/fs-service'
 import type { SlackState, SlackTokenKind, SlackWriteResult } from '../main/slack-state'
 import type { ProjectedPreferences } from '../main/preferences-store'
+import type { UpdateView } from '../main/update-coordinator'
 import type { SessionStatusSnapshot } from '../main/session-status'
 import type { RendererSession } from '../main/session-store'
 import type {
@@ -311,6 +312,9 @@ const workspaceApi = {
     /** Automatic hibernation threshold in seconds; `0` = off, `null` = back to the default (24 hours). */
     setAutoHibernate: (seconds: number | null): Promise<ProjectedPreferences> =>
       ipcRenderer.invoke('workspace:settings:setAutoHibernate', seconds),
+    /** The automatic update check (`app-update`). `null` = the default (on); `false` = off. */
+    setAutoUpdateCheck: (enabled: false | null): Promise<ProjectedPreferences> =>
+      ipcRenderer.invoke('workspace:settings:setAutoUpdateCheck', enabled),
     /**
      * UI 語言。`null` ＝清為預設（＝英文）。
      *
@@ -746,6 +750,37 @@ const workspaceApi = {
     },
     reply: (requestId: string, outcome: RemoteOutcome): void =>
       ipcRenderer.send('workspace:remote:reply', requestId, outcome),
+  },
+  /**
+   * The update check (`app-update`). No URL, version or path goes from here to the main process: "Download" opens
+   * the link the main process built, and "Restart to update" acts on the update it holds.
+   */
+  update: {
+    /** `null` when this build does not check for updates (development mode). */
+    get: (): Promise<UpdateView | null> => ipcRenderer.invoke('workspace:update:get'),
+    check: (): Promise<UpdateView | null> => ipcRenderer.invoke('workspace:update:check'),
+    /** `false` when nothing is ready, or a close question is already open. */
+    restart: (): Promise<boolean> => ipcRenderer.invoke('workspace:update:restart'),
+    openRelease: (): Promise<void> => ipcRenderer.invoke('workspace:update:openRelease'),
+    onChanged: (listener: (view: UpdateView | null) => void): (() => void) => {
+      const handler = (_event: IpcRendererEvent, view: UpdateView | null): void => {
+        listener(view)
+      }
+      ipcRenderer.on('workspace:update:changed', handler)
+      return () => {
+        ipcRenderer.off('workspace:update:changed', handler)
+      }
+    },
+    /** The update notification was activated: show Settings at About. */
+    onShowAbout: (listener: () => void): (() => void) => {
+      const handler = (): void => {
+        listener()
+      }
+      ipcRenderer.on('workspace:update:showAbout', handler)
+      return () => {
+        ipcRenderer.off('workspace:update:showAbout', handler)
+      }
+    },
   },
 } as const
 

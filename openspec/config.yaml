@@ -12,7 +12,8 @@ context: |
   Authority: docs/PRD.md 是產品需求的單一權威來源；
              docs/workspace-mockup.html 是 UI 行為的權威雛型
   Status: Phase 0–5 已封存；Linux AppImage 可打包；Phase 7（收件匣、Slack 來件、agent 發起的
-          跨 repo 交接與母子 session）已交付；macOS／Windows 產物、自動更新與簽章尚未開始。
+          跨 repo 交接與母子 session）已交付；macOS 產物（ad hoc 簽章）已交付；Linux AppImage 會自動更新、macOS 只通知；
+          Windows 產物與 Developer ID 簽章尚未開始。
           現況的權威敘述在 CLAUDE.md 的「現況」一節
   Verification: 驗收走 scripts/probe-*.mjs（以 CDP 連進真正執行中的 app）與 npm test
                 （node:test 單元測試）。不在產品程式碼裡塞測試分支，也不為驗收而在

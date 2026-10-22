@@ -535,7 +535,8 @@ contributions (see `CONTRIBUTING.md`).
   mirror served it. On macOS the app has a minimal menu (the Edit roles and a Quit that closes the window
   first, so it asks like a close), and closing the window leaves the app running, as Terminal does.
   Accepted by `npm run probe:package:mac` on the Mac, from a desktop launch's environment.
-  **Not done**: Developer ID signing and notarization (paid account), auto-update (needs them), Intel
+  **Not done**: Developer ID signing and notarization (paid account), installing updates on macOS (needs them;
+  the macOS build only tells, see `auto-update` below), Intel
   Macs, building on CI; the macOS limitations (a pty's directory, idle hibernation, the font list,
   `Ctrl+↑/↓` vs Mission Control) are tracked as issues.
   **Windows 未動**：檔案邊界在 `O_NOFOLLOW` 缺席下退為 `lstat` 二次確認，從未實測。
@@ -559,7 +560,22 @@ contributions (see `CONTRIBUTING.md`).
   **session 的持久化已由 `session-restore` 落地**（不屬於任何 Phase）—— session 清單、
   使用者取的名字、順序、錨定的 change 與終端畫面快照皆跨重啟存活，claude 以 `--resume` 續接
   對話，shell 於最後已知的工作目錄重生。這裡剩下的是「開啟的檔案 tab」與 panel 尺寸。
-- （可選）自動更新、CHANGELOG 流程。
+- **Auto-update is delivered by `auto-update`** for the Linux AppImage: a packaged build asks GitHub Releases
+  for a newer version a minute after startup and every six hours (on by default, a switch in Settings → About),
+  downloads it in the background, and installs it — by copy and atomic rename, never with `electron-updater`'s
+  own installer — when the user chooses "Restart to update" (asked like a close) or next closes the window; a
+  signal or logout never installs. macOS, and a Linux build that cannot replace its file, only tell, with a link
+  to the release. Releases go through `npm run release:github`, which publishes the AppImage only with its
+  `latest-linux.yml`. CHANGELOG 流程仍為可選。
+- **(Future, not scheduled) Linux package repositories**, alongside the AppImage's self-update rather than
+  instead of it: `deb` / `rpm` (electron-builder builds them) served from a self-hosted, signed apt / rpm
+  repository, so `apt upgrade` / `dnf upgrade` carry spekterm; an AUR package is best left to the community.
+  The cost is the repository, not the package: a signing key, hosting, and a push at every release. Flatpak and
+  Snap are a poor fit: their sandbox works against the product's core (a pty running the user's shell and
+  `claude` on arbitrary repos), so it would need holes everywhere or Snap's classic confinement and its review.
+  Official distribution repositories are unrealistic for an Electron app. **When this is done, a build installed
+  by a package manager must detect it and stay silent about updates**: it has no `APPIMAGE`, so `auto-update`
+  would otherwise treat it as a build that only tells and send its users to GitHub at every release.
 
 ### 對話計量（不屬於任何 Phase）
 

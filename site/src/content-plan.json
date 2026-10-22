@@ -29,7 +29,9 @@
       "openspec",
       "openspec config set telemetry.enabled false",
       "login shell",
-      "remote access"
+      "remote access",
+      "GitHub",
+      "Check for updates automatically"
     ],
     "zh-TW": [
       "Slack",

@@ -84,8 +84,10 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     execFileSync('unzip', ['-q', '-o', '-j', zip, 'LICENSE', 'LICENSES.chromium.html', '-d', licences])
     // Arguments after `--` reach electron-builder: a trial or control build (`-- --dir`,
     // `-- -c.mac.identity=null`). A release goes through `dist:mac`, which passes none.
+    // `--publish never`: electron-builder publishes by itself when it sees CI and a tag, and the GitHub
+    // provider inferred from `repository` is real since `auto-update`. Releases go through `release:github`.
     const extra = process.argv.slice(2).filter((arg) => arg !== '--')
-    execFileSync(join(repoRoot, 'node_modules', '.bin', 'electron-builder'), ['--mac', `-c.electronDist=${zip}`, ...extra], {
+    execFileSync(join(repoRoot, 'node_modules', '.bin', 'electron-builder'), ['--mac', '--publish', 'never', `-c.electronDist=${zip}`, ...extra], {
       cwd: repoRoot,
       stdio: 'inherit',
       env: { ...process.env, ELECTRON_LICENCES_DIR: licences },

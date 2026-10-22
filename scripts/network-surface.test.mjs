@@ -2,7 +2,7 @@
  * workspace-app-shell: "The app's own code connects only where its allow-list says".
  *
  * The website states what the app connects to (https://spekterm.com/docs/reference/data-and-network/,
- * source `site/src/content/docs/docs/reference/data-and-network.mdx` and its zh-tw counterpart). This
+ * source `site/src/content/docs/docs/reference/data-and-network.md` and its zh-tw counterpart). This
  * test keeps that page honest about the app's own code: every network-capable API referenced in the main
  * process, the preload, or the code they share, and every package or built-in module they import, must be
  * on the lists below. **When a list changes, revisit that page in both languages.**
@@ -31,6 +31,10 @@ const API_ALLOW = [
   { file: 'src/main/slack-realtime.ts', api: 'WebSocket' },
   // The app's own page from the dev server (development only; production uses `loadFile`).
   { file: 'src/main/index.ts', api: 'loadURL' },
+  // The update check of a build that only tells (`app-update`): GitHub's latest-release endpoint, from a packaged
+  // build with the automatic check on, or after "Check now".
+  { file: 'src/main/update-net.ts', api: 'net' },
+  { file: 'src/main/update-net.ts', api: 'fetch' },
 ]
 
 /**
@@ -69,6 +73,9 @@ const MODULE_ALLOW = new Set([
 const MODULE_ALLOW_FILES = [
   { file: 'src/main/remote-server.ts', module: 'https' },
   { file: 'src/main/remote-server.ts', module: 'ws' },
+  // The update check and download of a Linux AppImage (`app-update`): GitHub Releases of spekhq/spekterm only,
+  // through Electron's `net`. It never installs (`update-install.ts` does).
+  { file: 'src/main/update-installer.ts', module: 'electron-updater' },
 ]
 
 function sourceFiles() {

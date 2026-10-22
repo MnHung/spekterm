@@ -51,6 +51,7 @@ import {
   readdirSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -63,6 +64,7 @@ import { MOUNTED_WITHOUT_VISIBILITY as MOUNTED, awaitMounted, describeMounted } 
 import { PROBE_PORTS } from './lib/ports.mjs'
 import { openSettings } from './lib/settings.mjs'
 import { seedLanguage } from './lib/probe-language.mjs'
+import { resolverRulesArg, startSniListener } from './lib/sni-listener.mjs'
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -280,6 +282,13 @@ const mountsBefore = mountPoints()
 
 let app = null
 let stderr = ''
+/**
+ * Every launch sends every host name except `localhost` to this listener (`app-update`, `workspace-app-shell`): the
+ * packaged build is the only one that checks for updates, so it is the only place to see that it really asks GitHub
+ * with the switch on — and asks nothing with it off. CDP connects over 127.0.0.1, which is not resolved.
+ */
+const listener = await startSniListener()
+const UPDATE_FIRST_CHECK_MS = 60_000
 
 console.log('desktop-packaging 驗收：\n')
 
@@ -347,12 +356,17 @@ try {
   // 被測 app 的語言是**被指定的**：全新的 profile 會觸發首次啟動的語言偵測，
   // 而在一台非英文的機器上，那會讓每一條 `aria-label` 選擇器選不到元素。
   seedLanguage(profileDir)
+  // **The automatic update check is off in this profile** (`app-update`): on, every run of this probe would ask
+  // GitHub for a release. The section at the end turns it on in a profile of its own.
+  const seeded = JSON.parse(readFileSync(join(profileDir, 'preferences.json'), 'utf8'))
+  writeFileSync(join(profileDir, 'preferences.json'), JSON.stringify({ ...seeded, updates: { autoUpdateCheck: false } }))
 
   const child = spawn(
     appImage,
     [
       `--remote-debugging-port=${DEBUG_PORT}`,
       `--user-data-dir=${profileDir}`,
+      resolverRulesArg(listener.port),
       ...electronExtraArgs(),
     ],
     { cwd: workDir, stdio: ['ignore', 'pipe', 'pipe'], env, detached: true },
@@ -372,6 +386,7 @@ try {
   check(results, '產物脫離 repo 仍可執行', !appImage.startsWith(repoRoot), appImage)
 
   await awaitMounted(client, { expression: MOUNTED })
+  const restoredAt = Date.now()
 
   // ── 授權文字（project-license）────────────────────────────────────────────
   /**
@@ -534,7 +549,45 @@ try {
     check(results, '設定介面呈現建置身分（版本／建置時刻／commit）', false, error.message)
   }
 
+  // ── app-update: with the switch off, nothing past the first check's window; with it on, GitHub ──────────
+  const remaining = UPDATE_FIRST_CHECK_MS + 10_000 - (Date.now() - restoredAt)
+  if (remaining > 0) await sleep(remaining)
+  const quiet = listener.connections.map((entry) => entry.sni ?? '(no SNI)')
+  check(results, 'update: the packaged build with the automatic check off opens no connection past the first check window',
+    quiet.length === 0, quiet.length === 0 ? 'listener received nothing' : `connections for: ${quiet.join(', ')}`)
   client.close()
+
+  try {
+    process.kill(-child.pid, 'SIGKILL')
+  } catch {
+    // already gone
+  }
+  try {
+    execFileSync('pkill', ['-9', '-f', profileDir], { stdio: 'ignore' })
+  } catch {
+    // nothing left to kill
+  }
+  await sleep(1_000)
+  const onProfile = join(workDir, 'profile-update-on')
+  seedLanguage(onProfile)
+  const onChild = spawn(
+    appImage,
+    [`--remote-debugging-port=${DEBUG_PORT}`, `--user-data-dir=${onProfile}`, resolverRulesArg(listener.port), ...electronExtraArgs()],
+    { cwd: workDir, stdio: ['ignore', 'pipe', 'pipe'], env, detached: true },
+  )
+  app = onChild
+  const onClient = await connectToApp(DEBUG_PORT, { targetTimeoutMs: STARTUP_TIMEOUT_MS })
+  await awaitMounted(onClient, { expression: MOUNTED })
+  const asked = await pollFor({
+    read: () => listener.connections.filter((entry) => entry.sni === 'github.com').length,
+    settled: (count) => count > 0,
+    timeoutMs: UPDATE_FIRST_CHECK_MS + 30_000,
+    label: 'the update check asks github.com',
+  })
+  const others = listener.connections.map((entry) => entry.sni).filter((sni) => sni !== 'github.com')
+  check(results, 'update: the packaged build with the automatic check on asks github.com (and nothing else) after the first window',
+    asked > 0 && others.length === 0, `github.com=${asked} others=${JSON.stringify(others)}`)
+  onClient.close()
 } catch (error) {
   console.error(`\nprobe 失敗：${error.message}`)
   if (stderr.trim()) console.error(`AppImage stderr:\n${stderr.trim().slice(0, 1200)}`)
@@ -546,6 +599,7 @@ try {
   } catch {
     // 行程已自行結束
   }
+  await listener.close()
   try {
     execFileSync('pkill', ['-9', '-f', profileDir], { stdio: 'ignore' })
   } catch {

@@ -158,7 +158,14 @@ OpenSpec 結構的側欄，讓使用者不必另外開 IDE 就能一邊駕駛 ag
 公開前已改寫全部 git 歷史）。**Linux 打包已可用**（`npm run dist:linux` → AppImage，`npm run install:desktop` 裝進應用程式
 選單）。**版號逐次遞增**且產物與執行中的 app 說得出同一個建置身分（Settings 的「About」段）。
 **macOS (Apple Silicon) is packaged too** (`macos-dmg-packaging`): `npm run dist:mac` on a Mac, from a release
-commit only, ad-hoc signed (not notarized). **尚未開始**：Windows 產物、Intel Mac、Developer ID 簽章與公證、自動更新（Phase 6 其餘）。
+commit only, ad-hoc signed (not notarized). **尚未開始**：Windows 產物、Intel Mac、Developer ID 簽章與公證（Phase 6 其餘）。
+**The Linux AppImage updates itself** (`auto-update`): a packaged build checks GitHub Releases (on by default,
+Settings → About), downloads in the background, and installs at "Restart to update" (asked like a close) or at
+the next window close the user starts — **never at a signal's quit**, and never over an AppImage replaced since
+startup. macOS only tells. **`electron-updater` only checks and downloads; `update-install.ts` installs** (copy
+next to it, atomic rename), and **`app.relaunch` starts nothing inside an AppImage** (measured), so the restart is
+a detached shell that waits for the old pid. A release must go through `npm run release:github` (the AppImage
+only with its `latest-linux.yml`, as a draft until both are up). See `docs/lessons/update.md`.
 **交接已交付**（agent → 另一個 repo，以及母、子、兄弟之間經 Claude Code 本機訊息功能的往來）；
 **以工具而非寫檔投遞**（MCP）仍未做；**the agent learns each file's outcome from a receipt** spekterm writes
 beside its outbox (`handoff-receipt`: accepted / scheduled / proposed / duplicate / rejected / held, written before
@@ -207,6 +214,7 @@ them apart by event order (`before-quit` comes first only for a signal), see `sr
 | `site/`、`scripts/capture-screenshots.mjs`、`scripts/network-surface.test.mjs`, or anything the website states about the app (network, platforms, features) | **`site/README.md`** |
 | `build.mac` / `build.dmg`, `scripts/package-mac.mjs`, `scripts/after-pack.cjs`, `scripts/release-check.mjs`, `scripts/probe-package-mac.mjs`, `src/main/app-menu.ts`, `src/main/close-guard.ts`'s quit intent, or anything run on the build Mac | **`docs/lessons/macos.md`** |
 | `src/main/transcript-*`、`src/main/agent-events.ts`、`src/main/agent-injection.ts`、`src/main/agent-origin.ts`、`src/main/insights*`、**`src/main/report.ts` 與 `src/main/report-*`**、`scripts/probe-insights.mjs`、`scripts/probe-agent-view.mjs`，或任何會讀 `~/.claude/projects`、**注入 `--settings`**、**或委派 `claude` CLI** 的東西 | **`docs/lessons/transcript.md`** |
+| `src/main/update-*`, `src/main/ipc/update.ts`, `scripts/release-github.mjs`, `scripts/probe-workspace-update.mjs`, the close guard's restart intent, or anything that replaces or relaunches the AppImage | **`docs/lessons/update.md`** |
 
 ## 開發指令
 

@@ -1093,8 +1093,11 @@ their coverage-table rows say they cannot see this class of defect.
   沒有它，「產生了一個真實 pty」恆紅 —— **而產品完全沒壞**。它躲了好幾個 change，因為 `probe:package` 不在
   `test:e2e` 裡、只在換版前跑。**一般形式：探針用來「認出自己造的東西」的標記，要避開產品會過濾的命名空間。**
 - **不要從環境變數或 `/proc/<pid>/exe` 找「這一輪」的 AppImage 掛載點。**
-  - 外層 Spekterm 是 AppImage 時，探針的環境裡有**它的** `APPDIR`，而 AppImage 的 runtime **不覆寫**繼承來的值 ——
-    讀到的是使用者正在用的那份產物。啟動前要清掉 `APPDIR`／`APPIMAGE`／`ARGV0`／`OWD`。
+  - 外層 Spekterm 是 AppImage 時，**探針自己的**環境裡有**它的** `APPDIR` —— 從探針這一側讀到的是使用者正在用的那份產物。
+    The probe still clears `APPDIR` / `APPIMAGE` / `ARGV0` / `OWD` before the launch, but **not because the runtime
+    keeps them**: measured for `auto-update` (2026-10-21, strace and a relaunch), the AppImage runtime sets `APPDIR`,
+    `APPIMAGE` and `ARGV0` for the image it starts, inherited or not; only `OWD` is inherited. An earlier version of
+    this line said the opposite (`docs/lessons/update.md`).
   - Electron 的行程把自己設成不可 dump，`/proc/<pid>/environ` 與 `exe` 都讀不到（權限錯誤，不是空值）。
   - 掛載表的來源只記檔名 `Spekterm.AppImage`，與使用者那份同名。
   - **能用的是「啟動後比啟動前多出來的那一個掛載點」**，且要求恰好一個 —— 多於一個就紅，不猜。

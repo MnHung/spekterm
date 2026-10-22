@@ -32,7 +32,7 @@
 import { execFileSync } from 'node:child_process'
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { VERSION_FILES, releaseSubject } from './lib/release-files.mjs'
+import { checkReleaseCommit } from './lib/release-files.mjs'
 
 /**
  * @param {{ repoRoot: string, platform?: string }} options
@@ -72,45 +72,9 @@ export function checkRelease({ repoRoot, platform = process.platform }) {
     }
   }
 
-  try {
-    git(['rev-parse', '--verify', '--quiet', 'HEAD^'])
-  } catch {
-    return {
-      ok: false,
-      reason:
-        'The parent of HEAD is not available (a shallow clone?) — the check compares the release commit with it.\n' +
-        '  Fetch more history: git fetch --deepen=1',
-    }
-  }
-
-  const version = JSON.parse(git(['show', 'HEAD:package.json'])).version
-  const subject = git(['log', '-1', '--format=%s', 'HEAD']).trim()
-  const expected = releaseSubject(version)
-  if (subject !== expected) {
-    const release = git(['log', '--format=%h', '-n', '1', '--fixed-strings', `--grep=${expected}`]).trim()
-    return {
-      ok: false,
-      reason:
-        `HEAD is not the release commit of ${version} (its subject is "${subject}", not "${expected}").\n` +
-        (release
-          ? `  Check out the release commit: git checkout ${release}\n`
-          : `  No commit "${expected}" was found; a release starts with \`npm run dist:linux\` on Linux.\n`) +
-        '  To try a build that is not a release: npm run build && node scripts/package-mac.mjs',
-    }
-  }
-
-  const changed = git(['diff', '--no-color', '--name-only', 'HEAD^', 'HEAD']).split('\n').filter(Boolean).sort()
-  if (JSON.stringify(changed) !== JSON.stringify([...VERSION_FILES].sort())) {
-    return {
-      ok: false,
-      reason:
-        `HEAD has the release subject but changes ${changed.join(', ') || 'nothing'}, not exactly ` +
-        `${VERSION_FILES.join(' and ')}.\n` +
-        '  A release commit changes only the version declarations; this one was made or amended by hand.',
-    }
-  }
-
-  return { ok: true, version, commit: git(['rev-parse', 'HEAD']).trim() }
+  return checkReleaseCommit(git, {
+    hint: '  To try a build that is not a release: npm run build && node scripts/package-mac.mjs',
+  })
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

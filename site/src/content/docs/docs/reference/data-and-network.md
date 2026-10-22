@@ -5,8 +5,8 @@ sidebar:
   order: 3
 ---
 
-spekterm has no account, no telemetry, and no update check. This page lists every connection it makes
-itself, and the programs it starts that make connections of their own.
+spekterm has no account and no telemetry. This page lists every connection it makes itself, including the
+update check, and the programs it starts that make connections of their own.
 
 ## What spekterm itself connects to
 
@@ -17,6 +17,13 @@ itself, and the programs it starts that make connections of their own.
   artifacts in the side panel, the conversation view) may contain `https:` images. spekterm loads them from
   where they point. It does not load plain `http:` images.
 - **Links you open** — a link you click is handed to your web browser; spekterm does not load it.
+- **GitHub, for the update check** — a minute after it starts and every six hours (and when you choose
+  **Check now**), spekterm asks GitHub for the latest release of `spekhq/spekterm`. On Linux, when it runs
+  from an AppImage it can replace, it then downloads the new AppImage from that release. The requests carry
+  nothing about you or your work, only what any download of a public file does. The check is **on by
+  default**; turn it off with **Settings → About → Check for updates automatically**. An update is only as
+  trustworthy as the GitHub release it comes from: the checksum it is verified against is published in the
+  same release. See [Install → Updating](/docs/getting-started/install/#updating).
 
 Nothing else. In particular, spekterm turns off the spell checker built into its browser engine, which would
 otherwise download a dictionary from a third-party server at startup.
@@ -83,4 +90,5 @@ view. It never writes there.
 On macOS, closing the window does not quit spekterm. While it runs without a window, the inbox keeps
 receiving deliveries, and if you saved Slack credentials, spekterm keeps checking Slack every five minutes.
 If remote access is on, spekterm keeps listening, and a paired phone can still connect and see the inbox
-(sessions need the window). Quit spekterm (`Cmd+Q`) to stop all of this.
+(sessions need the window). The update check keeps running on its schedule too. Quit spekterm (`Cmd+Q`) to
+stop all of this.

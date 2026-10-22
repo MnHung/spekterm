@@ -112,3 +112,39 @@ describe('closePrompt', () => {
   })
 })
 
+
+describe('closePrompt for a restart to update', () => {
+  it('nothing to ask ⇒ no prompt, the restart goes ahead', () => {
+    assert.equal(closePrompt({ dirty: [], sessions: [], restart: true }), null)
+  })
+
+  it('running sessions ⇒ restart or cancel, cancel the default, the restart consequence', () => {
+    const prompt = closePrompt({ dirty: [], sessions: [shell('shell 1')], restart: true })
+    assert.deepEqual(roles(prompt), ['quit', 'cancel'])
+    assert.equal(prompt?.buttons[0].label, t('closeConfirm.restart'))
+    assert.equal(prompt?.defaultRole, 'cancel')
+    assert.equal(prompt?.cancelRole, 'cancel')
+    assert.ok(prompt?.detail.endsWith(t('closeConfirm.consequenceRestart')), prompt?.detail)
+  })
+
+  it('both ⇒ the save answers are worded for a restart, cancel the default', () => {
+    const prompt = closePrompt({ dirty: [file], sessions: [shell('shell 1')], restart: true })
+    assert.deepEqual(
+      prompt?.buttons.map((button) => button.label),
+      [t('closeConfirm.saveAllAndRestart'), t('closeConfirm.restartWithoutSaving'), t('closeConfirm.cancel')],
+    )
+    assert.equal(prompt?.defaultRole, 'cancel')
+  })
+
+  it('unsaved files only ⇒ the save answers are worded for a restart', () => {
+    const prompt = closePrompt({ dirty: [file], sessions: [], restart: true })
+    assert.deepEqual(roles(prompt), ['saveAll', 'discard', 'cancel'])
+    assert.equal(prompt?.buttons[0].label, t('closeConfirm.saveAllAndRestart'))
+    assert.equal(prompt?.buttons[1].label, t('closeConfirm.restartWithoutSaving'))
+  })
+
+  it('shells restarting in their folder are said so', () => {
+    const prompt = closePrompt({ dirty: [], sessions: [shell('shell 1')], restart: true, shellsRestartIn: 'folder' })
+    assert.ok(prompt?.detail.endsWith(t('closeConfirm.consequenceRestartFolder')), prompt?.detail)
+  })
+})

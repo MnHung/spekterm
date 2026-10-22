@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
+import { t } from '@shared/i18n'
 import { type AskClose, type CloseGuardDeps, type ClosableWindow, guardWindowClose } from './close-guard'
 import type { CloseRole, ClosePrompt, LiveSession } from './close-prompt'
 import type { DirtyEntry } from './dirty-state'
@@ -235,5 +236,86 @@ describe('guardWindowClose', () => {
       assert.equal(window.closed, true)
       assert.equal(quits.finished, 0)
     })
+  })
+})
+
+describe('guardWindowClose: restart to update and the close origin', () => {
+  function withOrigins(facts: { dirty?: DirtyEntry[]; sessions?: LiveSession[] } = {}) {
+    const harness = setup(facts)
+    const origins: string[] = []
+    harness.deps.onAllowedClose = (origin) => origins.push(origin)
+    return { ...harness, origins }
+  }
+
+  it('nothing to ask ⇒ the restart closes at once, as a quit, with origin restart', () => {
+    const { window, dialog, guarded, quits, origins } = withOrigins()
+    assert.equal(guarded.closeForRestart(), true)
+    assert.equal(window.closed, true)
+    assert.equal(dialog.prompts.length, 0)
+    assert.equal(quits.finished, 1)
+    assert.deepEqual(origins, ['restart'])
+  })
+
+  it('a running session ⇒ asked in restart words; cancel keeps everything and records nothing', async () => {
+    const { window, dialog, guarded, quits, origins } = withOrigins({ sessions: running })
+    guarded.closeForRestart()
+    assert.equal(dialog.prompts[0].buttons[0].label, t('closeConfirm.restart'))
+    assert.equal(dialog.prompts[0].defaultRole, 'cancel')
+    await dialog.answer('cancel')
+    assert.equal(window.closed, false)
+    assert.equal(quits.finished, 0)
+    assert.deepEqual(origins, [])
+  })
+
+  it('a cancelled restart leaves no intent: a later ✕ asks as a plain close and records user', async () => {
+    const { window, dialog, guarded, origins } = withOrigins({ sessions: running })
+    guarded.closeForRestart()
+    await dialog.answer('cancel')
+    window.userClose()
+    assert.equal(dialog.prompts[1].buttons[0].label, t('closeConfirm.quit'))
+    await dialog.answer('quit')
+    assert.equal(window.closed, true)
+    assert.deepEqual(origins, ['user'])
+  })
+
+  it('confirming the restart closes the window as a quit with origin restart', async () => {
+    const { window, dialog, guarded, quits, origins } = withOrigins({ sessions: running })
+    guarded.closeForRestart()
+    await dialog.answer('quit')
+    assert.equal(window.closed, true)
+    assert.equal(quits.finished, 1)
+    assert.deepEqual(origins, ['restart'])
+  })
+
+  it('a restart requested while a close question is open does nothing', async () => {
+    const { window, dialog, guarded, origins } = withOrigins({ sessions: running })
+    window.userClose()
+    assert.equal(guarded.closeForRestart(), false)
+    assert.equal(dialog.prompts.length, 1)
+    await dialog.answer('quit')
+    assert.deepEqual(origins, ['user'])
+  })
+
+  it('a plain close with nothing to ask records user', () => {
+    const { window, origins } = withOrigins()
+    window.userClose()
+    assert.deepEqual(origins, ['user'])
+  })
+
+  it('a close that is part of a signal quit records signal', () => {
+    const { window, deps, origins } = withOrigins({ sessions: running })
+    deps.quit.quitting = true
+    window.userClose()
+    assert.equal(window.closed, true)
+    assert.deepEqual(origins, ['signal'])
+  })
+
+  it('a quit arriving while the user is asked does not turn the answer into a signal', async () => {
+    const { window, dialog, deps, origins } = withOrigins({ sessions: running })
+    window.userClose()
+    deps.quit.quitting = true
+    window.userClose()
+    await dialog.answer('quit')
+    assert.deepEqual(origins, ['user'])
   })
 })

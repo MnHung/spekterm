@@ -33,6 +33,10 @@ export interface PreferencesApi {
   updateAgentStatus: (enabled: boolean | null) => Promise<void>
   /** 狀態橋接當下是否**應該**啟用 —— 未設定即為啟用（同 `gpuEnabled`）。 */
   agentStatusEnabled: boolean
+  /** The automatic update check (`app-update`). `null` = the default (on), `false` = off. Callers await it. */
+  updateAutoUpdateCheck: (enabled: false | null) => Promise<void>
+  /** Whether the update check runs on its own — **unset is on**, the same rule as `gpuEnabled`. */
+  autoUpdateCheck: boolean
   /**
    * 切換 agent session 的呈現方式。**這是全域的** —— 切一個，所有 agent session 一起改變。
    *
@@ -134,6 +138,12 @@ export function PreferencesProvider({ children }: { children: React.ReactNode })
     [enqueue],
   )
 
+  const updateAutoUpdateCheck = useCallback(
+    (enabled: false | null) =>
+      enqueue(() => window.workspace.settings.setAutoUpdateCheck(enabled)).then(() => undefined),
+    [enqueue],
+  )
+
   const updateAgentView = useCallback(
     (view: 'terminal' | 'conversation' | null) =>
       enqueue(() => window.workspace.settings.setAgentView(view)).then(() => undefined),
@@ -166,6 +176,8 @@ export function PreferencesProvider({ children }: { children: React.ReactNode })
             updateAgentView,
       updateLanguage,
       updateAutoHibernate,
+      updateAutoUpdateCheck,
+      autoUpdateCheck: terminal.autoUpdateCheck !== false,
       autoHibernateSeconds: effectiveHibernateSeconds(terminal.autoHibernateSeconds),
       language: terminal.language ?? DEFAULT_LANGUAGE,
       gpuEnabled: terminal.gpuAcceleration ?? true,
@@ -182,6 +194,7 @@ export function PreferencesProvider({ children }: { children: React.ReactNode })
             updateAgentView,
       updateLanguage,
       updateAutoHibernate,
+      updateAutoUpdateCheck,
     ],
   )
 

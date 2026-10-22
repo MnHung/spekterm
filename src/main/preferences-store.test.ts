@@ -40,6 +40,7 @@ describe('parsePreferences：結構嚴格', () => {
       terminal: { fontFamily: 'Fira Code', fontSize: 15 },
       // 本區塊加入之前寫下的檔案沒有 `ui` —— 缺席是合法的，讀入為空區塊。
       ui: {},
+      updates: {},
     })
   })
 
@@ -61,6 +62,7 @@ describe('parsePreferences：結構嚴格', () => {
       version: 1,
       terminal: {},
       ui: {},
+      updates: {},
     })
   })
 })
@@ -237,6 +239,7 @@ describe('PreferencesStore：讀寫與持久化', () => {
       version: PREFERENCES_VERSION,
       terminal: { agentEvents: false },
       ui: {},
+      updates: {},
     })
     const store = new PreferencesStore(configPath)
     store.load()
@@ -397,6 +400,7 @@ describe('PreferencesStore：損毀韌性', () => {
       version: PREFERENCES_VERSION,
       terminal: {},
       ui: {},
+      updates: {},
     })
     assert.equal(store.existed(), true, '這一次載入不得被視為首次啟動')
   })
@@ -429,7 +433,7 @@ describe('PreferencesStore：損毀韌性', () => {
 
   it('writePreferencesFileAtomic 會建立缺少的目錄', () => {
     const nested = path.join(base, 'deep', 'preferences.json')
-    writePreferencesFileAtomic(nested, { version: PREFERENCES_VERSION, terminal: {}, ui: {} })
+    writePreferencesFileAtomic(nested, { version: PREFERENCES_VERSION, terminal: {}, ui: {}, updates: {} })
     assert.equal(fs.existsSync(nested), true)
   })
 })
@@ -479,6 +483,7 @@ describe('projectPreferences：送往 renderer 的逐欄位白名單', () => {
     const projected = projectPreferences(
       { fontFamily: 'Fira Code', agentStatus: false, agentEvents: false },
       {},
+      {},
     )
 
     assert.equal('agentEvents' in projected, false, 'agentEvents 不該送到 renderer')
@@ -489,15 +494,15 @@ describe('projectPreferences：送往 renderer 的逐欄位白名單', () => {
     // **不是風格問題**：`probe:workspace` 有一條以「空偏好的鍵數為 0」為判準的斷言
     // （`scripts/probe-workspace.mjs` 的「損毀的偏好以預設啟動（空偏好）」），
     // 把未設定欄位寫成 `undefined` 會讓它當場變紅。
-    assert.equal(Object.keys(projectPreferences({}, {})).length, 0)
+    assert.equal(Object.keys(projectPreferences({}, {}, {})).length, 0)
 
-    const partial = projectPreferences({ fontSize: 14 }, {})
+    const partial = projectPreferences({ fontSize: 14 }, {}, {})
     assert.deepEqual(Object.keys(partial), ['fontSize'])
   })
 
   it('投影不是同一個物件 —— 改它不影響主行程持有的偏好', () => {
     const source = { fontFamily: 'Fira Code' }
-    const projected = projectPreferences(source, {})
+    const projected = projectPreferences(source, {}, {})
     assert.notEqual(projected, source)
   })
 })
@@ -579,12 +584,12 @@ describe('UI 偏好：與終端並列的第二個區塊', () => {
   })
 
   it('語言出現在送往 renderer 的投影中', () => {
-    assert.deepEqual(projectPreferences({ fontSize: 14 }, { language: 'zh-TW' }), {
+    assert.deepEqual(projectPreferences({ fontSize: 14 }, { language: 'zh-TW' }, {}), {
       fontSize: 14,
       language: 'zh-TW',
     })
     // 「未設定即省略」的語意對新區塊同樣適用。
-    assert.deepEqual(Object.keys(projectPreferences({}, {})).length, 0)
+    assert.deepEqual(Object.keys(projectPreferences({}, {}, {})).length, 0)
   })
 
   it('existed()：偏好檔不存在時為 false，其餘一律為 true', () => {
@@ -630,7 +635,7 @@ describe('automatic hibernation (session-hibernation)', () => {
     store.setAutoHibernate(3600)
     store.setTerminalFont(null, 14, null)
     assert.equal(store.get().autoHibernateSeconds, 3600)
-    assert.equal(projectPreferences(store.get(), store.ui()).autoHibernateSeconds, 3600)
+    assert.equal(projectPreferences(store.get(), store.ui(), store.updates()).autoHibernateSeconds, 3600)
   })
 })
 
@@ -667,5 +672,50 @@ describe('a failed write leaves nothing behind (settings-sections)', () => {
     blockWrites()
     assert.throws(() => store.setLanguage('en'))
     assert.equal(store.ui().language, 'zh-TW')
+  })
+})
+
+describe('update preferences (app-update)', () => {
+  function storeAt(content?: string) {
+    const dir = fs.mkdtempSync(path.join(tmpdir(), 'spekterm-prefs-updates-'))
+    const file = path.join(dir, 'preferences.json')
+    if (content !== undefined) fs.writeFileSync(file, content)
+    const store = new PreferencesStore(file)
+    store.load()
+    return { store, file, dir }
+  }
+
+  it('is on by default, including in a file written before the block existed', () => {
+    assert.equal(storeAt().store.autoUpdateCheck(), true)
+    const old = storeAt(JSON.stringify({ version: PREFERENCES_VERSION, terminal: { fontSize: 15 }, ui: {} }))
+    assert.equal(old.store.autoUpdateCheck(), true)
+    assert.equal(old.store.get().fontSize, 15, 'the other preferences survive')
+  })
+
+  it('stores only off, and survives a restart', () => {
+    const { store, file } = storeAt()
+    store.setAutoUpdateCheck(false)
+    assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')).updates, { autoUpdateCheck: false })
+    const again = new PreferencesStore(file)
+    again.load()
+    assert.equal(again.autoUpdateCheck(), false)
+    again.setAutoUpdateCheck(null)
+    assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')).updates, {})
+  })
+
+  it('falls back to on for a junk value, and quarantines a malformed block', () => {
+    const junk = storeAt(JSON.stringify({ version: PREFERENCES_VERSION, terminal: {}, ui: {}, updates: { autoUpdateCheck: 'no' } }))
+    assert.equal(junk.store.autoUpdateCheck(), true)
+    const malformed = storeAt(JSON.stringify({ version: PREFERENCES_VERSION, terminal: { fontSize: 15 }, ui: {}, updates: 'off' }))
+    assert.equal(malformed.store.get().fontSize, undefined, 'the whole file is untrusted')
+    assert.ok(fs.readdirSync(malformed.dir).some((name) => name.includes('.corrupt-')))
+  })
+
+  it('is projected to the renderer, and changing it keeps the terminal preferences', () => {
+    const { store } = storeAt()
+    store.setGpuAcceleration(false)
+    const projected = projectPreferences(store.get(), store.ui(), store.setAutoUpdateCheck(false))
+    assert.equal(projected.autoUpdateCheck, false)
+    assert.equal(projected.gpuAcceleration, false)
   })
 })

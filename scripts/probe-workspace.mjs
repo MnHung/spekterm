@@ -23,6 +23,7 @@ import { quitAndWait } from './lib/quit.mjs'
 import { PROBE_PORTS } from './lib/ports.mjs'
 import { seedLanguage } from './lib/probe-language.mjs'
 import { SETTINGS_DIALOG, awaitApplied, closeSettings, inSettings, openSettings, showSection } from './lib/settings.mjs'
+import { runUpdateSections } from './probe-workspace-update.mjs'
 
 const DEBUG_PORT = PROBE_PORTS.workspace.main
 const results = []
@@ -2093,6 +2094,9 @@ try {
   // 下照樣通過），因此整段移除。正確的載體是 `probe:keyboard` —— 那裡的鍵盤驅動已被 134 條
   // 斷言證明有效 —— 搭配 `Emulation.setDeviceMetricsOverride` 壓矮 viewport，讓既有的 3-repo
   // fixture 就溢出。
+
+  // ── app-update: the update check, against local feeds (probe-workspace-update.mjs) ──
+  await runUpdateSections({ results, port: DEBUG_PORT, mkTemp })
 
   exitCode = results.every(Boolean) ? 0 : 1
 } catch (error) {

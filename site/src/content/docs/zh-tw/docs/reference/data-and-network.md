@@ -5,13 +5,14 @@ sidebar:
   order: 3
 ---
 
-spekterm 沒有帳號、沒有遙測（telemetry），也不檢查更新。這一頁列出 spekterm 自己發出的每一種連線，以及它啟動之後會自己連網的程式。
+spekterm 沒有帳號，也沒有遙測（telemetry）。這一頁列出 spekterm 自己發出的每一種連線（包括檢查更新），以及它啟動之後會自己連網的程式。
 
 ## spekterm 自己會連到哪裡
 
 - **Slack** —— 只在你於 **設定 → 整合** 存下 Slack 憑證之後才連線，而且只連到 Slack 的 API，或你在那裡設定的端點（設定畫面會提醒你，憑證會送到那個端點）。沒有憑證時，spekterm 的 Slack 整合什麼都不做。見[收件匣與 Slack](/zh-tw/docs/using/inbox-and-slack/)。
 - **markdown 裡的遠端圖片** —— spekterm 顯示的 markdown（你開的檔案、側欄裡的 OpenSpec artifact、對話檢視）可能含有 `https:` 圖片，spekterm 會從圖片所指的位置載入。純 `http:` 的圖片不會載入。
 - **你開啟的連結** —— 你點的連結會交給你的瀏覽器開啟；spekterm 自己不載入它。
+- **GitHub，用來檢查更新** —— 啟動一分鐘後、之後每六小時（以及你按下**立即檢查**時），spekterm 會向 GitHub 查詢 `spekhq/spekterm` 的最新版本。在 Linux 上，如果它是從一個可以替換的 AppImage 執行的，接著會從那個版本下載新的 AppImage。這些請求不帶任何關於你或你工作的資訊，和任何人下載一個公開檔案時送出的內容一樣。檢查更新**預設開啟**，可以在 **設定 → 關於 → 自動檢查更新** 關掉。更新可不可信，取決於它所來自的 GitHub 版本：用來驗證它的校驗碼，就公布在同一個版本裡。見[安裝 → 更新](/zh-tw/docs/getting-started/install/#更新)。
 
 除此之外沒有別的連線。像是瀏覽器引擎內建的拼字檢查，spekterm 也關掉了，否則它會在啟動時從第三方伺服器下載字典。
 
@@ -50,4 +51,4 @@ spekterm 也會**讀取** Claude Code 自己在 `~/.claude/projects` 的對話�
 
 ## spekterm 在沒有視窗的狀態下執行時（macOS）
 
-在 macOS 上，關掉視窗不會結束 spekterm。在沒有視窗的狀態下，收件匣照常接收投遞；如果你存了 Slack 憑證，spekterm 也照樣每五分鐘檢查一次 Slack。如果遠端存取開著，spekterm 也照樣等待連線，已配對的手機仍連得上、看得到收件匣（session 需要視窗）。要讓這些全部停下來，請結束 spekterm（`Cmd+Q`）。
+在 macOS 上，關掉視窗不會結束 spekterm。在沒有視窗的狀態下，收件匣照常接收投遞；如果你存了 Slack 憑證，spekterm 也照樣每五分鐘檢查一次 Slack。如果遠端存取開著，spekterm 也照樣等待連線，已配對的手機仍連得上、看得到收件匣（session 需要視窗）。檢查更新也照排程進行。要讓這些全部停下來，請結束 spekterm（`Cmd+Q`）。

@@ -150,6 +150,16 @@ export function ActivityBar(): React.JSX.Element {
     })
   }, [])
 
+  // The update notification was activated (`app-update`): Settings at About. **The inbox and the metrics close
+  // first** (`terminal-preferences`): two modal layers would compete for focus and for Esc.
+  useEffect(() => {
+    return window.workspace.update.onShowAbout(() => {
+      setIntakeOpener(null)
+      setInsightsOpener(null)
+      setSettings({ section: 'about' })
+    })
+  }, [])
+
   // Sessions 恆為當前 view；**Search 仍是停用的 placeholder**
   //（`workspace-layout`：尚未實作的入口為停用狀態）。Handoffs 已由 `agent-intake-inbox` 接上。
   // The entry the user is in: Sessions is the base view; Settings, the inbox and the metrics are while

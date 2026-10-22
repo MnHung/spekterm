@@ -15,6 +15,7 @@ import { registerOpenSpecHandlers } from './ipc/openspec'
 import { registerPanelHandlers } from './ipc/panel'
 import { broadcastLifecycle, registerHandoffHandlers, registerKeepCloseOffer, revealHandoffBrief } from './ipc/handoff'
 import { registerSettingsHandlers } from './ipc/settings'
+import { broadcastUpdate, registerUpdateHandlers, sendShowAbout } from './ipc/update'
 import { registerSlackHandlers } from './ipc/slack'
 import { registerShellHandlers } from './ipc/shell'
 import { displayedInFocus, noteWaitBatch, registerWaitHandlers, windowFocused } from './ipc/wait'
@@ -94,6 +95,8 @@ import { createReportService, reportsRoot } from './report'
 const REPORT_MODEL = 'claude-sonnet-5'
 import { applyUserEnvOnce } from './user-env'
 import { WorkspaceStore } from './workspace-store'
+import { type UpdateRuntime, startUpdates } from './update-service'
+import { openExternalUrl } from './navigation'
 
 const currentDir = dirname(fileURLToPath(import.meta.url))
 
@@ -121,6 +124,12 @@ const trustModel = {
  * signal or the OS comes after it — that is how the close guard tells them apart (`close-guard.ts`).
  */
 const quitState: QuitState = { quitting: false }
+
+/**
+ * The update check of this run (`auto-update`), once `whenReady` has assembled it; `null` before, and in a build
+ * that does not check. The close guard reports to its installer who started each close (`CloseOrigin`).
+ */
+let updates: UpdateRuntime | null = null
 
 app.on('before-quit', () => {
   quitState.quitting = true
@@ -198,6 +207,7 @@ function createWindow({ dirty, store, sessions, closeAsk, presence, onRendererGo
       onQuitClose: () => window.once('closed', () => app.quit()),
       closeQuitsApp: process.platform !== 'darwin',
       shellsRestartIn: ptyCwdReadable() ? 'lastDirectory' : 'folder',
+      onAllowedClose: (origin) => updates?.quitInstaller?.recordOrigin(origin),
     }),
   )
 
@@ -489,7 +499,49 @@ void app.whenReady().then(async () => {
   registerConversationHandlers()
   registerTerminalHandlers(store, sessionStore, preferencesStore)
   registerClipboardHandlers()
-  registerSettingsHandlers(preferencesStore)
+  // The update check (`app-update`). Its notifications have a backend of their own: a backend holds one activation
+  // handler, and the intake's opens the inbox.
+  updates = startUpdates({
+    packaged: app.isPackaged,
+    throwawayProfile: usingThrowawayProfile(),
+    userData: app.getPath('userData'),
+    version: app.getVersion(),
+    preferences: preferencesStore,
+    notifyBackend: usingThrowawayProfile()
+      ? createStubBackend({ root: join(app.getPath('userData'), 'update-notify-stub') })
+      : electronNotifyBackend(),
+    onShowAbout: () =>
+      void presence.ensure().then(() => {
+        const window = liveWindow()
+        if (window) sendShowAbout(window)
+      }),
+    onChange: (view) => broadcastUpdate(view),
+  })
+  registerUpdateHandlers({
+    view: () => updates?.coordinator.view() ?? null,
+    check: () => updates?.coordinator.checkNow() ?? Promise.resolve(),
+    restart: () => {
+      if (!updates?.quitInstaller || !updates.coordinator.ready()) return false
+      const window = liveWindow()
+      const guarded = window ? guardedWindows.get(window.webContents.id) : undefined
+      return guarded ? guarded.closeForRestart() : false
+    },
+    openRelease: () => {
+      const url = updates?.coordinator.releaseUrl()
+      if (url) void openExternalUrl(url)
+    },
+  })
+  if (updates) {
+    const { coordinator, quitInstaller } = updates
+    // The first opening only; the coordinator ignores the later ones (a reload, a new window).
+    onRestoreGateOpen(() => coordinator.start())
+    powerMonitor.on('resume', () => coordinator.resumed())
+    app.on('will-quit', () => {
+      coordinator.dispose()
+      quitInstaller?.willQuit()
+    })
+  }
+  registerSettingsHandlers(preferencesStore, { autoUpdateCheckChanged: () => updates?.coordinator.autoCheckChanged() })
   registerSlackHandlers({
     settings: slackSettingsStore,
     secrets: secretStore,

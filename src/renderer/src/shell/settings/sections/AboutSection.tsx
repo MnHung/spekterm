@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { buildInfo } from '../../../build-info'
+import { UpdateBlock } from './UpdateBlock'
 
 /**
  * 建置身分（`build-identity`）——「我手上跑的這份，是不是剛才那次打包的產物？」的答案。
@@ -43,6 +44,7 @@ export function AboutSection(): React.JSX.Element {
           </>
         )}
       </dl>
+      <UpdateBlock />
     </section>
   )
 }
