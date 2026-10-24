@@ -258,7 +258,8 @@ the run of whitespace after the name made one space, and `r.text` is then the li
 `conversation.send`. The protocol document states: a command sent while the agent works runs after its turn; an
 unknown command is answered by the CLI locally and reaches neither the agent nor the conversation (the reply stays
 "not confirmed"); a command whose text is long enough to be taken as a paste (about 2,000 characters measured) is
-not run, and arrives as a plain message; built-in commands and skills only the user may invoke are not listed.
+not run, and arrives as a plain message (bisected later: more than 800 characters, counted in characters, newlines
+not counted extra); built-in commands and skills only the user may invoke are not listed.
 
 ### D6. The protocol document
 
