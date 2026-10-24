@@ -217,6 +217,12 @@ not touch this requirement: with focus in the terminal they switch sessions and 
 effect with focus in the terminal, and the key SHALL NOT reach the pty (see "`Ctrl+Shift+M`
 maximizes and restores the side panel").
 
+**The zoom keys (`Ctrl+=`, `Ctrl++`, `Ctrl+-`, `Ctrl+0`; see `ui-appearance`) are a fifth group, owned by
+`ui-appearance`.** Their scope: they SHALL take effect with focus in the terminal and in the editor, and while a
+dialog or a menu is open, and the keys SHALL NOT reach the pty. xterm sends no byte for `Ctrl+=`, `Ctrl+-` or
+`Ctrl+0`, so taking them costs a program in the pty nothing; `Ctrl+Shift+-` (`^_`) is not one of them and keeps
+reaching the pty.
+
 #### Scenario: 終端持有焦點時切換 session
 
 - **WHEN** 使用者的焦點在終端中，按下 `Ctrl+Tab`
@@ -231,6 +237,11 @@ maximizes and restores the side panel").
 
 - **WHEN** 使用者的焦點在終端中，按下 `Ctrl+Tab`、`Ctrl+↑`／`Ctrl+↓`，或 `Shift+↑`／`Shift+↓`／`Shift+←`／`Shift+→`
 - **THEN** pty **未**收到任何對應的位元組（終端中沒有出現該按鍵的字元或控制序列）
+
+#### Scenario: The zoom keys do not reach the pty
+
+- **WHEN** focus is in the terminal and the user presses `Ctrl+=`, `Ctrl+-` and `Ctrl+0`
+- **THEN** the zoom changes and the pty receives no bytes for any of them
 
 ### Requirement: 編輯器持有焦點時快捷鍵仍生效
 
@@ -257,6 +268,9 @@ reordering shortcuts' cost.
 take effect with focus in the editor. It is a layout command with no text-editing meaning, so it has
 none of the reordering shortcuts' cost.
 
+The zoom keys take effect with focus in the editor too (see `ui-appearance`), taken before the editor sees them,
+as `Ctrl+Tab` is.
+
 #### Scenario: 編輯器持有焦點時切換 session
 
 - **WHEN** 使用者的焦點在 side panel 的編輯器中，按下 `Ctrl+Tab`
@@ -281,6 +295,9 @@ none of the reordering shortcuts' cost.
 
 > 對話框裡的輸入框同時也是可編輯文字元素 —— 排序快捷鍵因此有**兩道**讓路的理由（本條與「排序快捷鍵於可編輯文字持有焦點時不生效」）。這是刻意的冗餘：對話框裡沒有輸入框的情況（刪除確認、全視窗 overlay）只有本條擋得住。
 
+**The zoom keys are the exception** (see `ui-appearance`): they take effect while a dialog or a menu is open,
+because zooming neither moves focus nor answers anything, and the dialog stays open.
+
 The maximized side panel, including its Graph and Timeline views, is **not** a dialog: the shortcuts
 work while it is shown.
 
@@ -304,6 +321,11 @@ work while it is shown.
 
 - **WHEN** session 的命名對話框開啟中，使用者按下 `Shift+↓`
 - **THEN** rail 的順序不變，對話框維持開啟，且該按鍵照常抵達對話框的輸入框（選取行為不受影響）
+
+#### Scenario: The zoom keys work while a dialog is open
+
+- **WHEN** the session naming dialog is open and the user presses `Ctrl+=`
+- **THEN** the zoom grows one step and the dialog stays open with its input unchanged
 
 ### Requirement: 以鍵盤調整 repo 的順序
 

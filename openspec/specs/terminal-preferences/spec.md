@@ -131,7 +131,7 @@
 
 The interface SHALL be organized in sections, listed beside the content, with one section shown at a time:
 
-- **General**: the UI language.
+- **General**: the UI language, the theme and the interface zoom (see `ui-appearance`).
 - **Terminal**: font family, font size and line height, with the preview directly after them, and GPU
   acceleration.
 - **Agents & sessions**: agent status reporting, automatic hibernation, and the agent session view (see
@@ -184,6 +184,11 @@ preview was separated from the font fields it previews by three unrelated settin
 
 - **WHEN** 終端偏好設定介面開啟，使用者按下導航快捷鍵
 - **THEN** 該快捷鍵不生效（介面以對話框角色呈現，落入既有的抑制規則）
+
+#### Scenario: General holds the language, the theme and the zoom
+
+- **WHEN** the user shows the General section
+- **THEN** it offers the UI language, the theme (System, Light, Dark) and the interface zoom
 
 #### Scenario: Settings lists its sections
 
