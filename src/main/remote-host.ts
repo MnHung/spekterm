@@ -1,7 +1,16 @@
 import { preferredTitle } from '../shared/lineage/label'
 import { armOrigin } from './agent-origin'
 import { type AgentStatus, readAgentStatus } from './agent-status'
-import { backgroundOf, dismissRequest, markAnswered, openRequestsOf, refreshWait, subscribeWait, waitStateOf } from './agent-wait'
+import {
+  backgroundOf,
+  dismissRequest,
+  lastTranscriptPathOf,
+  markAnswered,
+  openRequestsOf,
+  refreshWait,
+  subscribeWait,
+  waitStateOf,
+} from './agent-wait'
 import type { FinishedCall, WaitState } from './agent-events'
 import { busyReason } from './hibernation-policy'
 import { lastKeystrokeAt } from './pty-input'
@@ -31,6 +40,8 @@ import { watchUsage } from './remote-agent-status'
 import { runQueued, sendReply } from './remote-conversation'
 import { RemoteError, type ErrorCode } from './remote-frames'
 import { remoteChange, remoteChanges, remoteSpec, remoteSpecs } from './remote-openspec'
+import { readChunk, SentFileIndex, type SentFileFs } from './remote-sent-files'
+import { transcriptPathFor } from './transcript-follow'
 import type { RemoteOutput } from './remote-output'
 import type { FolderView, HostAction, RemoteHost, SessionList, SessionView } from './remote-protocol'
 import type { SessionStore } from './session-store'
@@ -94,6 +105,10 @@ export interface HostDeps {
   readStatus?: (sessionId: string) => AgentStatus | undefined
   /** Arms the phone-origin note (`agent-origin.ts`); injected for tests. */
   armOrigin?: (sessionId: string) => boolean
+  /** File access for sent files (`remote-sent-files.ts`); injected for tests. */
+  sentFiles?: SentFileFs
+  /** The session's current transcript, as the follower finds it; injected for tests. */
+  transcriptOf?: (sessionId: string, source: { cwd: string; conversationId: string }) => string
 }
 
 /** How long a device's submit waits to see the agent start before answering `sent` (`remote-prefill-send` D3). */
@@ -179,6 +194,10 @@ export function createRemoteHost(deps: HostDeps): RemoteHost {
 
   const record = (sessionId: string) => deps.sessions.view().find((entry) => entry.session.id === sessionId)?.session
   const prefills = deps.prefills ?? { of: prefillOf, noteKey: notePrefillKey }
+  const transcriptOf =
+    deps.transcriptOf ?? ((sessionId, source) => lastTranscriptPathOf(sessionId) ?? transcriptPathFor(source.cwd, source.conversationId))
+  /** One scan index per session; a session no longer in the store loses its index at the next read. */
+  const sentFileIndexes = new Map<string, SentFileIndex>()
 
   /**
    * The fill a device may see and submit (`remote-prefill-send` D2): the desktop shows it as not sent, and its item
@@ -208,6 +227,7 @@ export function createRemoteHost(deps: HostDeps): RemoteHost {
           running: live.has(session.id),
           ...(target === 'claude' ? waitFields(session.id) : {}),
           ...(lifecycle.has(session.id) ? { lifecycle: lifecycle.get(session.id) } : {}),
+          ...(target === 'claude' && session.peerName ? { peerName: session.peerName } : {}),
           ...(session.lineage
             ? { lineage: { parentId: session.lineage.parentId, ...(session.lineage.parentTitle ? { title: session.lineage.parentTitle } : {}) } }
             : {}),
@@ -256,6 +276,20 @@ export function createRemoteHost(deps: HostDeps): RemoteHost {
           follow.stop()
         },
       }
+    },
+
+    async readSentFile(sessionId, p) {
+      const session = record(sessionId)
+      if (!session) throw new RemoteError('NOT_FOUND', `no session ${sessionId}`)
+      if (session.spawnTarget === 'shell') throw new RemoteError('NO_CONVERSATION', 'this session has no conversation (a shell)')
+      const source = service()?.agentSourceOf(sessionId)
+      if (!source) throw new RemoteError('NOT_FOUND', `session ${sessionId} has no running agent`)
+      const known = new Set(deps.sessions.view().map((entry) => entry.session.id))
+      for (const id of sentFileIndexes.keys()) if (!known.has(id)) sentFileIndexes.delete(id)
+      let index = sentFileIndexes.get(sessionId)
+      if (!index) sentFileIndexes.set(sessionId, (index = new SentFileIndex(deps.sentFiles)))
+      const file = await index.find(transcriptOf(sessionId, source), p.toolUseId, p.index)
+      return readChunk(file, { offset: p.offset, length: p.length, version: p.version }, deps.sentFiles)
     },
 
     putAttachment(sessionId, p) {

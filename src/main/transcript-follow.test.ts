@@ -95,7 +95,7 @@ test('投影不含絕對路徑（對照組：改為原樣轉手即應失敗）',
   assert.ok(!serialized.includes('/'), serialized)
 })
 
-test('工具只帶單一辨識參數，完整參數不外流', () => {
+test('a tool keeps its identifying argument, and fields off its white-list do not flow out', () => {
   const rec = {
     type: 'assistant',
     uuid: 'a1',
@@ -111,7 +111,34 @@ test('工具只帶單一辨識參數，完整參數不外流', () => {
   assert.equal(e.kind, 'tool')
   assert.equal(e.name, 'Read')
   assert.equal(e.arg, '/x/y.ts')
+  assert.deepEqual(e.input, { file_path: '/x/y.ts', offset: 3 })
   assert.ok(!JSON.stringify(e).includes('/private/key'))
+})
+
+function toolRec(name: string, input: Record<string, unknown>): Record<string, unknown> {
+  return {
+    type: 'assistant',
+    uuid: 'a9',
+    timestamp: '2026-10-24T00:00:00.000Z',
+    message: { role: 'assistant', content: [{ type: 'tool_use', id: 't9', name, input }] },
+  }
+}
+
+test('a message to a named session carries its selected input, and the same arg as before', () => {
+  const [e] = project(
+    toolRec('SendMessage', { to: 'api-server-8393', recipient: 'api-server-8393', recipient_kind: 'name', summary: 'Hi', message: 'Hello', content: 'He' }),
+  ) as [Extract<ViewEvent, { kind: 'tool' }>]
+  assert.deepEqual(e.input, { to: 'api-server-8393', recipient_kind: 'name', summary: 'Hi', message: 'Hello' })
+  assert.equal(e.arg, null)
+  assert.equal(e.inputTruncated, undefined)
+})
+
+test('an MCP tool carries no selected input; a long write names what was cut', () => {
+  const [mcp] = project(toolRec('mcp__chrome__navigate', { url: 'https://example.com' })) as [Extract<ViewEvent, { kind: 'tool' }>]
+  assert.equal(mcp.arg, 'https://example.com')
+  assert.ok(!('input' in mcp))
+  const [write] = project(toolRec('Write', { file_path: '/r/a', content: 'x'.repeat(4100) })) as [Extract<ViewEvent, { kind: 'tool' }>]
+  assert.deepEqual(write.inputTruncated, { content: 4100 })
 })
 
 test('assistant 的三種區塊各自投影，未知區塊被忽略', () => {
@@ -178,10 +205,27 @@ test('a message typed while tools ran is the user\'s message, text unchanged', (
   ])
 })
 
+test('mid-turn peer messages and task notices are shown as not typed, with their origin', () => {
+  const [notice] = project(queued({ commandMode: 'task-notification', prompt: '<task-notification>x</task-notification>', origin: { kind: 'task-notification' } }))
+  assert.deepEqual(notice, {
+    kind: 'user',
+    uuid: 'att-1',
+    at: Date.parse('2026-10-15T01:14:33.936Z'),
+    text: '<task-notification>x</task-notification>',
+    meta: true,
+    origin: { kind: 'task-notification' },
+  })
+  const [peer] = project(queued({ origin: { kind: 'peer', name: 'other-1234' } })) as [Extract<ViewEvent, { kind: 'user' }>]
+  assert.equal(peer.meta, true)
+  assert.deepEqual(peer.origin, { kind: 'peer', sender: 'other', name: 'other-1234' })
+})
+
 test('other mid-turn deliveries and other attachments are not shown', () => {
   const cases: [string, Record<string, unknown>][] = [
-    ['task notice', queued({ commandMode: 'task-notification', origin: { kind: 'task-notification' } })],
-    ['peer message', queued({ origin: { kind: 'peer', name: 'other-1234' } })],
+    ['task notice without origin', queued({ commandMode: 'task-notification', origin: undefined })],
+    ['notice mode with a peer origin', queued({ commandMode: 'task-notification', origin: { kind: 'peer' } })],
+    ['prompt with an unknown origin kind', queued({ origin: { kind: 'channel' } })],
+    ['another command mode', queued({ commandMode: 'bash' })],
     ['no origin', queued({ origin: undefined })],
     ['non-string prompt', queued({ prompt: [{ type: 'text', text: 'x' }] })],
     ['blank prompt', queued({ prompt: '   ' })],
@@ -210,6 +254,64 @@ test('records the user did not type are marked, typed ones are not', () => {
   assert.equal(meta({ promptSource: 'typed', origin: { kind: 'human' } }), false, 'typed prompt')
   assert.equal(meta({ promptSource: 'queued', origin: { kind: 'human' } }), false, 'queued prompt')
   assert.equal(meta({}, '<command-name>/clear</command-name>'), false, 'slash command, no origin fields')
+})
+
+// Shapes measured on CLI 2.1.30x (`remote-tool-detail` design, Context); bodies and names generic.
+const SOCKET = 'uds:/run/user/1000/cc-socks/4242.sock'
+const sessionOrigin = { kind: 'peer', from: SOCKET, verifiedPeerPid: 4242, verifiedPeerProcStart: '1', msg_id: 'm-1', name: 'api-server-8393', fromMode: 'prompting', body: 'Please rebase.' }
+const wrapped = (body: string): string =>
+  `Another Claude session sent a message:\n<cross-session-message from="${SOCKET}" from-name="api-server-8393" from-mode="prompting">\n${body}\n</cross-session-message>\n\nThis came from another Claude session.`
+
+function peerRec(origin: Record<string, unknown>, content: string): Record<string, unknown> {
+  return { ...userRec, isMeta: true, promptSource: 'system', origin, message: { role: 'user', content } }
+}
+
+test("a session's message names its sender and is shown as the sender wrote it", () => {
+  const [e] = project(peerRec(sessionOrigin, wrapped('Please rebase.'))) as [Extract<ViewEvent, { kind: 'user' }>]
+  assert.equal(e.meta, true)
+  assert.deepEqual(e.origin, { kind: 'peer', sender: 'session', name: 'api-server-8393' })
+  assert.equal(e.text, 'Please rebase.')
+  assert.ok(!JSON.stringify(e).includes('uds:'), JSON.stringify(e))
+  // The attachment form: wrapped without the lead line, delivered while the agent worked.
+  const [q] = project(queued({ prompt: `<cross-session-message from="${SOCKET}">\nPlease rebase.\n</cross-session-message>`, isMeta: true, origin: sessionOrigin }))
+  assert.deepEqual(q, { kind: 'user', uuid: 'att-1', at: Date.parse('2026-10-15T01:14:33.936Z'), text: 'Please rebase.', meta: true, origin: { kind: 'peer', sender: 'session', name: 'api-server-8393' } })
+})
+
+test("a session's message without a usable body keeps the recorded text; a body is kept as is", () => {
+  for (const body of [undefined, '  \n ']) {
+    const [e] = project(peerRec({ ...sessionOrigin, body }, wrapped('x'))) as [Extract<ViewEvent, { kind: 'user' }>]
+    assert.equal(e.text, wrapped('x'), String(body))
+  }
+  const paste = '\n\n<pasted_content id="p">\nhi\n</pasted_content id="p">\n'
+  const [p] = project(peerRec({ ...sessionOrigin, body: paste }, wrapped(paste))) as [Extract<ViewEvent, { kind: 'user' }>]
+  assert.equal(p.text, paste)
+  const [c] = project(peerRec({ ...sessionOrigin, body: '<command-name>/clear</command-name>' }, wrapped('x'))) as [Extract<ViewEvent, { kind: 'user' }>]
+  assert.equal(c.text, '<command-name>/clear</command-name>')
+})
+
+test("a subagent's report names its type and keeps its recorded text", () => {
+  const report = '  SECURITY WARNING: the report follows.\n\n  ## Findings'
+  const origin = { kind: 'peer', from: 'a0123456789abcdef', senderTaskId: 'a0123456789abcdef', name: 'general-purpose', body: report, handbackReportText: '## Findings' }
+  const [e] = project(peerRec(origin, `Another Claude session sent a message:\n<agent-message from="a0123456789abcdef">\n${report}\n</agent-message>`)) as [
+    Extract<ViewEvent, { kind: 'user' }>,
+  ]
+  assert.deepEqual(e.origin, { kind: 'peer', sender: 'subagent', name: 'general-purpose' })
+  assert.ok(e.text.includes('SECURITY WARNING'))
+  const [unnamed] = project(peerRec({ ...origin, name: undefined }, 'x')) as [Extract<ViewEvent, { kind: 'user' }>]
+  assert.deepEqual(unnamed.origin, { kind: 'peer', sender: 'subagent' })
+})
+
+test('origins: the kind is read from fields, other kinds add nothing, names are cleaned', () => {
+  const origin = (o: Record<string, unknown>): unknown => (project(peerRec(o, 'x'))[0] as Extract<ViewEvent, { kind: 'user' }>).origin
+  // A session's `from` that is not a socket is still a session: the kind is not read from `from`.
+  assert.deepEqual(origin({ kind: 'peer', from: 'tcp:host', msg_id: 'm', name: 'n' }), { kind: 'peer', sender: 'session', name: 'n' })
+  assert.deepEqual(origin({ kind: 'peer', from: SOCKET }), { kind: 'peer', sender: 'other' })
+  assert.deepEqual(origin({ kind: 'task-notification', producer: 'session-task' }), { kind: 'task-notification' })
+  assert.equal(origin({ kind: 'channel' }), undefined)
+  const long = origin({ kind: 'peer', msg_id: 'm', name: 'a\u0007' + 'b'.repeat(200) }) as { name: string }
+  assert.equal(long.name, 'a' + 'b'.repeat(79))
+  const [typed] = project({ ...userRec, origin: { kind: 'human' } }) as [Extract<ViewEvent, { kind: 'user' }>]
+  assert.ok(!('origin' in typed))
 })
 
 test('subagent 的記錄被略過', () => {

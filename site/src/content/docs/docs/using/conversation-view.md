@@ -54,6 +54,12 @@ What you send reaches the agent as plain text. It is never interpreted as termin
 
 A slash command you send, such as `/simplify` or a skill with arguments, appears as the line you typed.
 
+Messages the agent received that you did not type are labeled with where they came from: **From** and the
+name of the session that sent it, **From subagent** and its type, **Background task** for a notice, and
+**Context** for anything else, such as a skill's instructions. A message from another session is shown as
+that session wrote it. Messages from other sessions and background-task notices that arrive while the agent
+works appear too, where the agent took them in.
+
 A message you send is marked **Not confirmed yet** until it appears in Claude Code's own record. If it
 never appears, the view asks you to check the terminal view, because the message may not have arrived.
 

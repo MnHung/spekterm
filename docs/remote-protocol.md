@@ -84,13 +84,16 @@ Stable strings; branch on them, show `message` only as a detail.
 | `TIMEOUT` | The desktop's interface did not answer within 15 seconds. |
 | `PROMPT_GONE` | The prompt an answer names is not the one a device may answer now (section 5, `conversation.answer`). `detail.open` is the number of open requests. |
 | `NOT_ANSWERABLE` | The decision does not fit the prompt, or that answer is not offered to a device. |
-| `TOO_LARGE` | An attachment, a chunk or a session's stored attachments would exceed a limit, or an OpenSpec answer would exceed the frame cap (section 5); `detail.limit` is the limit in bytes. |
+| `TOO_LARGE` | An attachment, a chunk or a session's stored attachments would exceed a limit, an OpenSpec answer would exceed the frame cap, or a sent file is over its limit (section 5); `detail.limit` is the limit in bytes. |
 | `TOO_MANY` | A session already holds the most attachments not sent yet (`detail.limit`). |
 | `UNSUPPORTED_TYPE` | An uploaded file is not an image (PNG, JPEG, GIF, WebP), a PDF or UTF-8 text. |
 | `SESSION_BUSY` | Hibernating or closing a session that is not idle, without `force`. Nothing happened. `detail.reason` says why (section 5, `sessions.hibernate`). |
 | `PREFILL_GONE` | No filled-in prompt with that id waits in the session now: it was sent, its item was cleared, the session ended, or it was never filled in (section 5, `sessions.submitPrefill`). |
 | `PREFILL_EDITED` | Something was typed into the session around its filled-in prompt; only the desktop can show what its input box holds. Send it there. |
 | `APPROVE_ON_DESKTOP` | `inbox.accept` on a repeating proposal (section 5, `inbox.list`): it is approved on the desktop. It stays pending. |
+| `FILE_NOT_SENT` | `files.read` names no file the session's current conversation sent: no `SendUserFile` call with that id, no file at that index, or a recorded path that is not absolute. |
+| `FILE_GONE` | `files.read`: the sent file no longer exists, or is not a regular file (a directory, a named pipe), or cannot be read. |
+| `FILE_CHANGED` | `files.read`: the file changed since the `version` the request names. Start again from offset 0. |
 | `PREFILL_PENDING` | A reply to a session that holds a filled-in prompt nobody has sent; it would be sent together with it. `detail.prefillId` names the prompt when the session list shows it, `detail.edited` as there (section 5, `conversation.send`). |
 | `INTERNAL` | Anything else. |
 
@@ -125,7 +128,7 @@ has not authenticated.
 
 `operations`: the operations this desktop accepts, other than `hello` and `pair`. Show a control only when its
 operation is listed: an older desktop does not have `sessions.rename`, `sessions.hibernate`, `sessions.close`,
-`attachments.put`, `conversation.answer`, `openspec.watch` or `sessions.submitPrefill`, and answers them `UNKNOWN_OPERATION`. Protocol version 1 grows only by new fields,
+`attachments.put`, `conversation.answer`, `openspec.watch`, `sessions.submitPrefill` or `files.read`, and answers them `UNKNOWN_OPERATION`. Protocol version 1 grows only by new fields,
 operations, event values and error codes (section 9, obligation 7).
 
 ### `pair`
@@ -143,14 +146,21 @@ A paired device has the user's power over agents: it can type into any session, 
 an agent's offer to close its own session.
 Everything else — files outside OpenSpec, settings, Slack, credentials, resizing a terminal — is not an
 operation. The one file a device writes is an attachment, and only into the desktop's own attachment store,
-under a name the desktop chooses (`attachments.put`). No operation takes a path or a directory.
+under a name the desktop chooses (`attachments.put`). The one file outside OpenSpec and handoff briefs a device
+reads is one the session's agent sent to the user, addressed by the agent's call (`files.read`). No operation takes
+a path or a directory.
 
 ### `sessions.list`
 
 `p`: `{}` → `r`: `{ "window": bool, "folders": [Folder], "sessions": [Session] }`
 
 - `Folder`: `{ id, name, branch: string|null, pinned: bool, hasOpenSpec: bool }`, in rail order.
-- `Session`: `{ id, folderId: string|null (null = the global item), target: "claude"|"shell", label, running: bool, wait?, seen?, lifecycle?, lineage?, closeOffered?, background?, prefill? }`
+- `Session`: `{ id, folderId: string|null (null = the global item), target: "claude"|"shell", label, running: bool, wait?, seen?, lifecycle?, lineage?, closeOffered?, background?, prefill?, peerName? }`
+  - `peerName` (agent sessions that have one, running or dormant; never a shell): the name the session's agent is
+    started with for its local session messaging. It is what a conversation names a session by — a `SendMessage`
+    call's `input.to`, a message's `origin.name` — so show the `label` of the session whose `peerName` matches, and
+    the raw name only for a sender outside the workspace. It does not change when the session is renamed. A desktop
+    older than the field never sends it.
   - `wait` (agent sessions): `"ready"` (waiting for input), `"busy"`, `"awaiting-choice"` (a permission prompt), `"unknown"`.
   - `seen` (present, `true` or `false`, exactly while `wait` is `"ready"`; absent otherwise): whether someone has
     looked at the session since its agent's last turn ended. Looking is the session displayed in the desktop's
@@ -355,9 +365,55 @@ own, and may contain paths.
   session was hibernated or closed, by a device or at the desktop. Branch on `reason`; after `"hibernated"`,
   `sessions.wake` and watch again with `afterUuid`.
 
-`Entry` is one of: `{ kind: "user", uuid, at, text, meta }`, `{ kind: "text", uuid, at, text }`,
-`{ kind: "thinking", uuid, at, text }`, `{ kind: "tool", uuid, at, id, name, arg }`,
+`Entry` is one of: `{ kind: "user", uuid, at, text, meta, origin? }`, `{ kind: "text", uuid, at, text }`,
+`{ kind: "thinking", uuid, at, text }`, `{ kind: "tool", uuid, at, id, name, arg, input?, inputTruncated? }`,
 `{ kind: "result", uuid, at, id, text, error }`.
+
+A `tool` entry's `arg` is one identifying string (a path, a command, a URL, a query, a description) or `null`.
+`input` is the call's arguments, **selected field by field per tool**; a tool not listed here, an MCP tool
+(`mcp__…`) included, has no `input`:
+
+| Tool | `input` fields |
+|---|---|
+| `Bash` | `command`, `description`, `run_in_background` |
+| `Edit` | `file_path`, `old_string`, `new_string`, `replace_all` |
+| `Write` | `file_path`, `content` |
+| `Read` | `file_path`, `offset`, `limit` |
+| `Grep` | `pattern`, `path`, `glob` |
+| `Glob` | `pattern`, `path` |
+| `SendMessage` | `to` (only when `recipient_kind` is `"name"`), `recipient_kind`, `summary`, `message` |
+| `Agent`, `Task` | `description`, `subagent_type`, `prompt`, `run_in_background` |
+| `Skill` | `skill`, `args` |
+| `SendUserFile` | `files`, `caption` |
+| `AskUserQuestion` | `questions`: up to 4 of `{ question?, header?, multiSelect?, options?: up to 8 of { label?, description? } }` |
+| `ToolSearch`, `WebSearch` | `query` |
+| `WebFetch` | `url`, `prompt` |
+| `Monitor` | `description`, `command` |
+| `TaskStop` | `task_id` |
+| `ScheduleWakeup` | `delaySeconds`, `reason` |
+| `CronCreate` | `cron`, `prompt` |
+| `Artifact` | `action`, `file_path`, `url`, `description` |
+| `ExitPlanMode` | `plan` |
+
+- A field is present only when the agent recorded it, **with the type it recorded**: a flag such as
+  `run_in_background` may be a boolean or a string (`"true"`); accept either.
+- `files` is present only when every item is a string; its positions are the call's (`files.read`'s `index`), the
+  first 20 at most.
+- `SendMessage`'s `recipient_kind` is `"name"` (a session or teammate by name), `"session"` (another session by
+  address) or `"agent"` (a subagent). Only a named recipient's `to` is sent: match it against `Session.peerName`.
+- **Bounds**: each string at most 4,000 UTF-16 code units, one call's strings at most 12,000 together, taken in the
+  table's order. `inputTruncated`, present only when something was cut, maps each shortened field to its original
+  length (for `files` and `questions` that lost items, the original number of items). Say a field is shortened.
+
+A `user` entry's `origin`, only on an entry with `meta: true`, says where it came from:
+`{ kind: "peer", sender: "session"|"subagent"|"other", name? }` — another session (`name` is its messaging name,
+match it against `Session.peerName`), a subagent this session delegated to (`name` is the subagent's type), another
+sender — or `{ kind: "task-notification" }`, a background-task notice. A `meta` entry without `origin` is anything
+else the user did not type (a skill's text, a compacted conversation's summary). The sender's address is never sent.
+A message from another session has **the sender's message as its `text`**, without the agent's wrapper; in the rare
+record without that message (measured, 1 in 794) the text is as recorded, wrapper included. A subagent's report is
+as recorded: the agent's preamble before it can carry the agent's own warning. Messages from other sessions and
+background-task notices that arrived while the agent worked are entries too.
 
 A `user` entry is something the agent received as a user message. `meta: false` means the user typed it,
 including a message typed while the agent was working, which appears where the agent took it in. `meta: true`
@@ -461,6 +517,30 @@ session is not required.
   per session, uploads in progress included (`TOO_MANY`).
 - Unsent attachments are removed after 24 hours, and an upload in progress does not survive the desktop
   quitting. Sent ones are kept until the session is closed, or 30 days.
+
+### `files.read`
+
+`p`: `{ "sessionId", "toolUseId", "index", "offset"?, "length"?, "version"? }` →
+`r`: `{ name, size, mediaType, version, offset, data, complete }`
+
+Reads a file the session's agent sent to the user. `toolUseId` is a `SendUserFile` tool entry's `id`, `index` the
+file's position in its `input.files`. Watching the session is not required.
+
+- The file is the path the call recorded in the session's **current** conversation: a call from before the agent
+  cleared or switched its conversation is not one (`FILE_NOT_SENT`). Whatever the agent listed is read, whatever it
+  holds.
+- `data` is base64 of at most `length` bytes (1 to 524,288, default 524,288) from `offset` (default 0). `complete`
+  is `true` when the chunk reaches `size`. Continue from `offset` + the bytes received.
+- `version` changes when the file is replaced or its size or modification time changes. Pass the first answer's
+  `version` on every later chunk; a different current one is `FILE_CHANGED`, start again from 0. A rewrite of the
+  same size within one tick of the file system's clock is not detected.
+- `name` is the file's base name; `mediaType` comes from its extension (case-insensitive): `md`/`markdown`
+  `text/markdown`, `txt`/`log`/`yaml`/`yml` `text/plain`, `json` `application/json`, `csv` `text/csv`,
+  `html`/`htm` `text/html`, `png`, `jpg`/`jpeg` `image/jpeg`, `gif`, `webp`, `svg` `image/svg+xml`, `pdf`, `mp4`,
+  `webm`, `mp3` `audio/mpeg`, `zip`; otherwise `application/octet-stream`.
+- Limit: 32 MiB (`TOO_LARGE`, `detail.limit`).
+- Errors: `NOT_FOUND` (no such session, or its agent is not running), `NO_CONVERSATION` (a shell), `FILE_NOT_SENT`,
+  `FILE_GONE`, `FILE_CHANGED`, `TOO_LARGE`, `BAD_PARAMS` (`offset` past `size`, `length` out of range).
 
 ### `terminal.watch`
 
@@ -742,3 +822,8 @@ open (on Android, a foreground service), and reconnect with backoff when the net
     times and its body before anything else, and do not offer accept as an approval: the desktop refuses it
     (`APPROVE_ON_DESKTOP`); say it is approved on the desktop, and offer ignore as Decline. For an occurrence, say
     that ignoring skips this time only.
+18. **Treat a tool entry's `input`, a message's `origin` and a sent file as untrusted.** `input` and `origin.name` are
+    the agent's own text: show them as plain text, never as links or markup, and never open a `files` entry as a
+    path — open a sent file only through `files.read`. A sent file's content is the agent's: render Markdown with raw
+    HTML shown as text, and plain text and raster images in the app; hand SVG, HTML and every other type to the
+    system, never render them in the app's own web view.

@@ -1429,10 +1429,11 @@ async function runTextOnlyBusy(_mode, _config, context) {
 /** Every user entry in the conversation view: its label (as written, not as CSS-transformed) and its text. */
 const USER_ENTRIES = `(() => {
   const stage = document.querySelector('[aria-label="${copy('stage.terminal')}"]')
-  const labels = new Set([${JSON.stringify(copy('conversation.userMessage'))}, ${JSON.stringify(copy('conversation.metaMessage'))}])
+  const labels = new Set(${JSON.stringify(['userMessage', 'metaMessage', 'fromAnotherSession', 'fromASubagent', 'backgroundTask'].map((key) => copy(`conversation.${key}`)))})
+  const prefixes = ${JSON.stringify([prefixOf('conversation.fromSession'), prefixOf('conversation.fromSubagent')])}
   return [...(stage?.querySelectorAll('.conversation-enter') ?? [])]
     .map((row) => ({ label: row.firstElementChild?.textContent ?? '', text: row.textContent ?? '' }))
-    .filter((entry) => labels.has(entry.label))
+    .filter((entry) => labels.has(entry.label) || prefixes.some((prefix) => entry.label.startsWith(prefix)))
 })()`
 
 /**
@@ -1491,8 +1492,97 @@ async function runMidTurnDelivery(_mode, _config, context) {
   check(
     results,
     'a background-task notice is not shown as the user\'s message',
-    notice?.label === copy('conversation.metaMessage'),
+    notice?.label === copy('conversation.backgroundTask'),
     `label=${JSON.stringify(notice?.label ?? null)}`,
+  )
+}
+
+/**
+ * **A message the user did not type is labeled with where it came from, and never confirms a reply**
+ * (`agent-conversation-view`, `remote-tool-detail` D4a / D4b / D5).
+ *
+ * Records are appended as the agent writes them (CLI 2.1.30x shapes, generic bodies): a session's message wrapped
+ * with a socket address and carrying its `origin.body`, and a skill's meta text with no origin. Then a reply is
+ * sent while the stub withholds its echo, and a mid-turn delivery from another session with **the same text**
+ * arrives first: it must show labeled with the sender and leave "not confirmed" in place.
+ * Control groups (run by hand, recorded here): drop `!e.meta` from the confirmation match → "not confirmed"
+ * clears on the peer's entry (red); label every meta entry `metaMessage` → the session label check is red.
+ */
+async function runOriginLabels(_mode, _config, context) {
+  if (context.app) await context.app.close()
+  const repo = mkTemp('spekterm-agentview-repoO-')
+  const configDir = mkTemp('spekterm-agentview-configO-')
+  const stub = makeStubAgent(mkTemp, configDir, { echoDelaySeconds: 8 })
+  const profile = seedProfile(repo)
+  const app = await launch({ profile, configDir, stub, port: PORT })
+  context.app = app
+
+  await openConversation(app, repo.split('/').pop())
+  const conversation = stub.peerNames().at(-1)?.conversation
+  const socket = 'uds:/run/user/1000/cc-socks/4242.sock'
+  const origin = (body) => ({ kind: 'peer', from: socket, verifiedPeerPid: 4242, msg_id: `m-${body}`, name: 'api-server-8393', fromMode: 'prompting', body })
+  const sessionMessage = {
+    type: 'user',
+    uuid: 'peer-1',
+    timestamp: '2026-09-06T00:00:03.000Z',
+    isMeta: true,
+    promptSource: 'system',
+    origin: origin('ORIGIN-PROBE please rebase'),
+    message: { role: 'user', content: `Another Claude session sent a message:\n<cross-session-message from="${socket}" from-name="api-server-8393">\nORIGIN-PROBE please rebase\n</cross-session-message>` },
+  }
+  const skillText = { type: 'user', uuid: 'skill-1', timestamp: '2026-09-06T00:00:03.000Z', isMeta: true, message: { role: 'user', content: 'SKILL-PROBE base directory text' } }
+  const append = (records) =>
+    stub.command(conversation, records.map((r) => `printf '%s\\n' '${JSON.stringify(r)}' >> "$tp"`).join('; '))
+  append([sessionMessage, skillText])
+  const shown = await pollFor({
+    read: () => app.client.evaluate(USER_ENTRIES),
+    settled: (entries) => entries.some((e) => e.text.includes('ORIGIN-PROBE')) && entries.some((e) => e.text.includes('SKILL-PROBE')),
+    timeoutMs: 15_000,
+    label: 'the session message and the skill text arrive',
+  })
+  const peer = shown.find((e) => e.text.includes('ORIGIN-PROBE'))
+  const skill = shown.find((e) => e.text.includes('SKILL-PROBE'))
+  check(
+    results,
+    "a session's message is labeled with the sender's name and shown without the agent's wrapper",
+    peer?.label === copy('conversation.fromSession', { name: 'api-server-8393' }) && !peer.text.includes('uds:') && !peer.text.includes('cross-session-message'),
+    `label=${JSON.stringify(peer?.label ?? null)} text=${JSON.stringify(peer?.text.slice(0, 80) ?? null)}`,
+  )
+  check(
+    results,
+    'a not-typed message without an origin keeps the generic label',
+    skill?.label === copy('conversation.metaMessage'),
+    `label=${JSON.stringify(skill?.label ?? null)}`,
+  )
+
+  await sendFromConversation(app, 'SAME-TEXT-PROBE')
+  const marker = copy('conversation.unconfirmed').toUpperCase()
+  await pollFor({
+    read: () => app.client.evaluate(VIEW_STATE),
+    settled: (state) => state.text.toUpperCase().includes(marker),
+    timeoutMs: 10_000,
+    label: 'the reply is marked not confirmed',
+  })
+  append([
+    {
+      type: 'attachment',
+      uuid: 'peer-2',
+      timestamp: '2026-09-06T00:00:04.000Z',
+      attachment: { type: 'queued_command', prompt: `<cross-session-message from="${socket}">\nSAME-TEXT-PROBE\n</cross-session-message>`, commandMode: 'prompt', isMeta: true, origin: origin('SAME-TEXT-PROBE') },
+    },
+  ])
+  const arrived = await pollFor({
+    read: () => app.client.evaluate(`({ view: ${VIEW_STATE}, entries: ${USER_ENTRIES} })`),
+    settled: (state) => state.entries.some((e) => e.text.includes('SAME-TEXT-PROBE')),
+    timeoutMs: 6_000,
+    label: "the other session's mid-turn message with the same text",
+  })
+  const echo = arrived.entries.filter((e) => e.text.includes('SAME-TEXT-PROBE'))
+  check(
+    results,
+    "another session's message with the reply's text is not the user's, and leaves the reply not confirmed",
+    echo.length === 1 && echo[0].label === copy('conversation.fromSession', { name: 'api-server-8393' }) && arrived.view.text.toUpperCase().includes(marker),
+    `entries=${JSON.stringify(echo.map((e) => e.label))} stillUnconfirmed=${arrived.view.text.toUpperCase().includes(marker)}`,
   )
 }
 
@@ -2477,6 +2567,7 @@ const SECTIONS = [
   { name: 'runBusyIndicator', run: runBusyIndicator },
   { name: 'runTextOnlyBusy', run: runTextOnlyBusy },
   { name: 'runMidTurnDelivery', run: runMidTurnDelivery },
+  { name: 'runOriginLabels', run: runOriginLabels },
   { name: 'runSubagentPrompt', run: runSubagentPrompt },
   { name: 'runPasteRecorded', run: runPasteRecorded },
   { name: 'runSlashCommandLine', run: runSlashCommandLine },

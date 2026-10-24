@@ -743,3 +743,60 @@ the union reads them as additions (the removed name stays, as the agent's own co
   `null` ("not known"), never `[]`; a client that showed `[]` would tell the user there are no skills.
 - **Removing a skill is not reported by the agent**, so the list keeps it until the next full listing. A rule that
   read later records as full lists would drop every skill but the one just added.
+
+## Tool input, message origins and sent files (`remote-tool-detail`, CLI 2.1.30x–2.1.310, 2026-10-24)
+
+Measured over two weeks of one machine's main transcripts (subagent directories excluded). **Re-measure on a CLI
+upgrade**: for each record of `type` `assistant`, collect each `tool_use` block's `name` and each input key with its
+JSON type; for `user` records and `attachment` / `queued_command` records, count `origin.kind` with `commandMode` and
+which origin keys are present; for `SendUserFile`, whether every `input.files` item is absolute and what the result
+record's `toolUseResult.attachments` holds. A short Python script over `~/.claude/projects/**/*.jsonl` does it in
+seconds.
+
+### Tool input
+
+- **Field types are not stable.** Agent's `run_in_background` is a string (`"true"`) in every call that sets it;
+  Monitor's `timeout` sometimes. `transcript-tool-input.ts` passes a scalar with its recorded type and a client
+  accepts either: coercing would invent a value for a type it has not seen.
+- **`SendMessage` carries the message twice**: `to` / `message` and `recipient` / `content`, where `content` is a
+  shorter cut of `message` (896 of 897). Select `message`.
+- **`SendMessage.to` has three forms**: a messaging name (`recipient_kind: "name"`), a socket address
+  `uds:/run/user/…/….sock` (`"session"`, but **absent in 6 of 151**), a subagent id (`"agent"`, absent in 1 of 86). Only
+  a named recipient's `to` is selected; the kind field, not the value's form, decides, and a missing kind loses `to`.
+  The call's **result** still names the socket address (every one measured): results are delivered as written.
+- Strings over 4,000 characters: Bash `command` (heredocs) and Write `content` hundreds of times, Agent `prompt`
+  dozens. Those are what `inputTruncated` names.
+
+### Who sent a message
+
+- **Two peer shapes, told apart by which fields exist**: a session's message carries `verifiedPeerPid` and `msg_id`
+  and a `from` that is a socket path; a subagent's report carries `senderTaskId` (and `from` is that task id),
+  `name` being the subagent's type (absent in about 2%). They were never seen together. Reading the kind from
+  `from`'s form would break the first time the CLI addresses sessions another way.
+- **A session's message is wrapped**, and the wrapper names the socket: the `user` form is a lead line ("Another
+  Claude session sent a message:"), `<cross-session-message from="uds:…" from-name=… from-mode=…>`, the message, the
+  closing tag and a trailing instruction paragraph; the `attachment` form has only the tags. **`origin.body` holds the
+  message** (793 of 794; with the body removed, what is left is one of the two fixed wrappers). That field is the
+  entry's text; without it the text stays as recorded, socket path included (1 of 794, cause unknown).
+- **A subagent's report keeps its recorded text**: the CLI's preamble is where it writes its own warnings
+  ("SECURITY WARNING: auto mode blocked this subagent's report…", seen once). `handbackReportText` would drop them.
+- **Mid-turn deliveries other than the user's**: a session's message arriving while the agent works is an
+  `attachment` / `queued_command` with `commandMode: "prompt"` and a peer origin (209 in two weeks, most with no
+  `user` record of the same message); a background-task notice is `commandMode: "task-notification"` with a
+  `task-notification` origin (687), and a few carry no origin at all (12, not shown). Both are shown, as not typed.
+
+### Sent files (`remote-sent-files.ts`)
+
+- **`SendUserFile.input.files` holds absolute paths** (no relative one seen). The result record's
+  `toolUseResult.attachments[]` has `path`, `size`, `media_type`, `isImage`, `pathValidated`. **The CLI refuses a
+  file over 30 MiB** (`upload_error: file_too_large`) — the call still lists it.
+- **A tool id appears in more than its `assistant` record**: in the result's `user` record and in `api-request` /
+  `api-request-blob` records (up to 62 lines and 3.3 MB for one id). A scan must require `type === "assistant"`.
+- **Transcripts reach 112 MB and grow while the agent works.** A cache keyed by size misses on every chunk; record
+  every call found and scan only what was appended, leaving an unterminated last line unparsed.
+- **Opening a named pipe without `O_NONBLOCK` blocks forever**, holding one of libuv's four pool threads, and a
+  Node process with one stuck does not exit even on `process.exit` (killed after 120 s). `stat` first, then open with
+  `O_NONBLOCK`.
+- **`mtimeNs` does not change between back-to-back equal-size writes** on ext4 (197 of 200): the kernel's coarse
+  clock. A version of size and mtime misses such a rewrite; the inode catches a replace by rename, nothing catches an
+  in-place rewrite within one tick.

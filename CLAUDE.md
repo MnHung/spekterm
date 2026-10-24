@@ -144,6 +144,9 @@ OpenSpec 結構的側欄，讓使用者不必另外開 IDE 就能一邊駕駛 ag
     state on awaiting-choice through the agent's own `Stop`. Attachments go only into
     `<userData>/remote-attachments` under desktop-chosen names; agents read it through an injected `Read` rule.
     The key plans and event orders are measured (`docs/lessons/transcript.md`): re-measure on a CLI upgrade.
+  - **A device reads a file only as one an agent's `SendUserFile` call lists, addressed by the call** (`files.read`,
+    `remote-tool-detail`), never by a path; whatever the agent listed is read (the user's decision). A tool entry's
+    `input` is a per-tool white-list (`transcript-tool-input.ts`), never a copy of the CLI's input: an MCP tool gets none.
   - **A device's model and usage are a per-watch event (`conversation.status`), never a session list field**: context
     and cost change with every API call, and the list goes to every device. A device's prompt carries the phone-origin
     note as hook context, not text (`agent-origin.ts`); the skill list is the transcript's `skill_listing`
@@ -213,7 +216,7 @@ them apart by event order (`before-quit` comes first only for a signal), see `sr
 | `src/shared/i18n/`（含 `locale.ts`、`languages.ts`、任一份字典）、`scripts/dictionary-completeness.test.mjs` / `locale-source.test.mjs` / `probe-language.test.mjs`、任何探針的**啟動路徑**、或任何會**格式化時間／數字／排序字串**的東西 | **`docs/lessons/i18n.md`** |
 | `site/`、`scripts/capture-screenshots.mjs`、`scripts/network-surface.test.mjs`, or anything the website states about the app (network, platforms, features) | **`site/README.md`** |
 | `build.mac` / `build.dmg`, `scripts/package-mac.mjs`, `scripts/after-pack.cjs`, `scripts/release-check.mjs`, `scripts/probe-package-mac.mjs`, `src/main/app-menu.ts`, `src/main/close-guard.ts`'s quit intent, or anything run on the build Mac | **`docs/lessons/macos.md`** |
-| `src/main/transcript-*`、`src/main/agent-events.ts`、`src/main/agent-injection.ts`、`src/main/agent-origin.ts`、`src/main/insights*`、**`src/main/report.ts` 與 `src/main/report-*`**、`scripts/probe-insights.mjs`、`scripts/probe-agent-view.mjs`，或任何會讀 `~/.claude/projects`、**注入 `--settings`**、**或委派 `claude` CLI** 的東西 | **`docs/lessons/transcript.md`** |
+| `src/main/transcript-*`、`src/main/remote-sent-files.ts`、`src/main/agent-events.ts`、`src/main/agent-injection.ts`、`src/main/agent-origin.ts`、`src/main/insights*`、**`src/main/report.ts` 與 `src/main/report-*`**、`scripts/probe-insights.mjs`、`scripts/probe-agent-view.mjs`，或任何會讀 `~/.claude/projects`、**注入 `--settings`**、**或委派 `claude` CLI** 的東西 | **`docs/lessons/transcript.md`** |
 | `src/main/update-*`, `src/main/ipc/update.ts`, `scripts/release-github.mjs`, `scripts/probe-workspace-update.mjs`, the close guard's restart intent, or anything that replaces or relaunches the AppImage | **`docs/lessons/update.md`** |
 
 ## 開發指令

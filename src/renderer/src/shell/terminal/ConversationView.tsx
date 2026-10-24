@@ -1,3 +1,4 @@
+import type { TFunction } from 'i18next'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -51,14 +52,31 @@ interface Props {
  * 而 preload 會跟著注入 —— 那個頁面將取得完整的 `window.workspace.fs`。
  */
 
+type UserEvent = Extract<ViewEvent, { kind: 'user' }>
+
+/**
+ * The label of a message the agent received. A session's message is shown as the sender wrote it, without the
+ * agent's wrapper that named the sender (`remote-tool-detail` D4a), so the label names where it came from.
+ */
+function userLabel(event: UserEvent, t: TFunction): string {
+  if (!event.meta) return t('conversation.userMessage')
+  const origin = event.origin
+  if (origin?.kind === 'task-notification') return t('conversation.backgroundTask')
+  if (origin?.kind === 'peer' && origin.sender === 'subagent') {
+    return origin.name ? t('conversation.fromSubagent', { name: origin.name }) : t('conversation.fromASubagent')
+  }
+  if (origin?.kind === 'peer') {
+    return origin.name ? t('conversation.fromSession', { name: origin.name }) : t('conversation.fromAnotherSession')
+  }
+  return t('conversation.metaMessage')
+}
+
 function Row({ event }: { event: ViewEvent }): React.JSX.Element | null {
   const { t } = useTranslation()
   if (event.kind === 'user') {
     return (
       <div className="conversation-enter rounded border border-hairline bg-panel px-3 py-2">
-        <div className="mb-1 text-2xs uppercase tracking-wide text-ink-faint">
-          {event.meta ? t('conversation.metaMessage') : t('conversation.userMessage')}
-        </div>
+        <div className="mb-1 text-2xs uppercase tracking-wide text-ink-faint">{userLabel(event, t)}</div>
         <MarkdownView text={event.text} dense />
       </div>
     )
@@ -159,7 +177,8 @@ export function ConversationView({ sessionId, active, dormant, covered = false }
       setEvents((previous) => (update.reset ? update.events : [...previous, ...update.events]))
       // 送出的內容一旦出現在紀錄中，「未確認」的標示即消失 —— 那才是它真的到達 agent 的證據。
       setUnconfirmed((current) =>
-        current && update.events.some((e) => e.kind === 'user' && e.text.trim() === current.text.trim())
+        // A message the user did not type never confirms one: another session may send the same words.
+        current && update.events.some((e) => e.kind === 'user' && !e.meta && e.text.trim() === current.text.trim())
           ? null
           : current,
       )

@@ -21,6 +21,7 @@ import path from 'node:path'
 
 import { resolveProjectsDir, type SourceEnv } from './insights-source'
 import { encodeProjectDir } from './transcript-project'
+import { toolInput, type ToolInputValue } from './transcript-tool-input'
 
 /**
  * 算出來源紀錄的位置。
@@ -95,12 +96,31 @@ export function consume(
   }
 }
 
+/**
+ * Where a message the user did not type came from (`remote-tool-detail` D4). Only the kind and the name are
+ * selected: the origin's `from` is a socket path for a session and an internal id for a subagent.
+ */
+export type MessageOrigin =
+  | { kind: 'peer'; sender: 'session' | 'subagent' | 'other'; name?: string }
+  | { kind: 'task-notification' }
+
 /** 一則要呈現的內容。**每一種都只帶呈現得到的欄位** —— 見下方的邊界說明。 */
 export type ViewEvent =
-  | { kind: 'user'; uuid: string; at: number; text: string; meta: boolean }
+  | { kind: 'user'; uuid: string; at: number; text: string; meta: boolean; origin?: MessageOrigin }
   | { kind: 'text'; uuid: string; at: number; text: string }
   | { kind: 'thinking'; uuid: string; at: number; text: string }
-  | { kind: 'tool'; uuid: string; at: number; id: string; name: string; arg: string | null }
+  | {
+      kind: 'tool'
+      uuid: string
+      at: number
+      id: string
+      name: string
+      arg: string | null
+      /** The tool's arguments, white-listed per tool and bounded (`transcript-tool-input.ts`). */
+      input?: Record<string, ToolInputValue>
+      /** Each shortened field of `input` → its original length (or item count). Absent when nothing was cut. */
+      inputTruncated?: Record<string, number>
+    }
   | { kind: 'result'; uuid: string; at: number; id: string; text: string; error: boolean }
 
 /**
@@ -144,24 +164,68 @@ function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null
 }
 
+const NAME_LIMIT = 80
+
 /**
- * A message the user typed while the agent was running tools, or `null`.
+ * A record's origin as a client may show it, or `undefined` (`remote-tool-detail` D4).
  *
- * The agent does not write it as a `user` record (measured, CLI 2.1.300): it writes an `attachment` record
- * of subtype `queued_command`, when it absorbs the message into the running turn. The same subtype also
- * carries background-task notices (`commandMode: "task-notification"`) and messages from other sessions
- * (`origin.kind: "peer"`), so **all four conditions** are required. A record missing any of them is not shown:
- * the white-list's failure direction.
- *
- * **The text is returned unchanged** — a client confirms its message arrived by matching this text against
- * what it sent (`ConversationView`'s "not confirmed yet", and the phone's).
+ * The sender's kind is read from **which fields exist**, not from the form of `from` (`docs/lessons/transcript.md`
+ * §1): a subagent hand-back carries `senderTaskId` (checked first; measured, never together with the session
+ * markers), a session's message `verifiedPeerPid` or `msg_id`. Any other origin kind adds nothing.
  */
-function queuedPrompt(r: Record<string, unknown>): string | null {
+export function originOf(origin: unknown): MessageOrigin | undefined {
+  const o = record(origin)
+  if (!o) return undefined
+  if (o.kind === 'task-notification') return { kind: 'task-notification' }
+  if (o.kind !== 'peer') return undefined
+  const sender =
+    typeof o.senderTaskId === 'string' ? 'subagent' : o.verifiedPeerPid !== undefined || o.msg_id !== undefined ? 'session' : 'other'
+  // eslint-disable-next-line no-control-regex
+  const name = typeof o.name === 'string' ? o.name.replace(/[\x00-\x1f\x7f]/g, '').slice(0, NAME_LIMIT) : ''
+  return name ? { kind: 'peer', sender, name } : { kind: 'peer', sender }
+}
+
+/**
+ * The text a not-typed message is shown with (`remote-tool-detail` D4a).
+ *
+ * A session's message is recorded inside the agent's wrapper, which names the sender's socket path; the origin also
+ * holds the message itself (`body`). That field is the text, **as is** — not through `unwrapPaste` or
+ * `commandLine`, which restore what the user typed. No wrapper is parsed: without a usable `body` the text stays as
+ * recorded. A subagent's report keeps its recorded text: the agent's preamble is where its warnings appear.
+ */
+function deliveredText(text: string, rawOrigin: unknown, origin: MessageOrigin | undefined): string {
+  if (origin?.kind !== 'peer' || origin.sender !== 'session') return text
+  const body = record(rawOrigin)?.body
+  return typeof body === 'string' && body.trim() ? body : text
+}
+
+/**
+ * A mid-turn delivery as a `user` entry, or `null`.
+ *
+ * The agent does not write a message typed while it runs tools as a `user` record (measured, CLI 2.1.300): it
+ * writes an `attachment` record of subtype `queued_command`, when it absorbs the message into the running turn.
+ * The same subtype carries messages from other sessions and background-task notices. Exactly three shapes are
+ * admitted, each by its `commandMode` **and** its origin's kind:
+ *
+ * - `prompt` + `human` — the user's message, `meta: false`. **The text is returned unchanged**: a client confirms
+ *   its message arrived by matching this text against what it sent.
+ * - `prompt` + `peer` — a message from another session or a subagent, `meta: true` with its origin.
+ * - `task-notification` + `task-notification` — a background-task notice, `meta: true` with its origin.
+ *
+ * Anything else is not shown: the white-list's failure direction (a notice with no origin included).
+ */
+function queuedEntry(r: Record<string, unknown>): { text: string; meta: boolean; origin?: MessageOrigin } | null {
   const attachment = record(r.attachment)
-  if (!attachment || attachment.type !== 'queued_command' || attachment.commandMode !== 'prompt') return null
-  if (record(attachment.origin)?.kind !== 'human') return null
+  if (!attachment || attachment.type !== 'queued_command') return null
   const prompt = attachment.prompt
-  return typeof prompt === 'string' && prompt.trim() ? prompt : null
+  if (typeof prompt !== 'string' || !prompt.trim()) return null
+  const kind = record(attachment.origin)?.kind
+  if (attachment.commandMode === 'prompt' && kind === 'human') return { text: prompt, meta: false }
+  const peer = attachment.commandMode === 'prompt' && kind === 'peer'
+  const notice = attachment.commandMode === 'task-notification' && kind === 'task-notification'
+  if (!peer && !notice) return null
+  const origin = originOf(attachment.origin)
+  return { text: deliveredText(prompt, attachment.origin, origin), meta: true, ...(origin ? { origin } : {}) }
 }
 
 /**
@@ -261,8 +325,8 @@ export function project(raw: unknown): ViewEvent[] {
   const uuid = str(r.uuid) ?? ''
   const at = Date.parse(str(r.timestamp) ?? '') || 0
   if (type === 'attachment') {
-    const text = queuedPrompt(r)
-    return text === null ? [] : [{ kind: 'user', uuid, at, text, meta: false }]
+    const entry = queuedEntry(r)
+    return entry === null ? [] : [{ kind: 'user', uuid, at, ...entry }]
   }
   const message = r.message
   if (message === null || typeof message !== 'object') return []
@@ -271,9 +335,11 @@ export function project(raw: unknown): ViewEvent[] {
   if (type === 'user') {
     // 使用者的訊息可能是字串，也可能是帶 `tool_result` 的陣列 —— 後者不是使用者打的字。
     if (typeof content === 'string') {
-      const text = commandLine(content) ?? unwrapPaste(content)
+      const meta = notTypedByUser(r)
+      const origin = meta ? originOf(r.origin) : undefined
+      const text = deliveredText(commandLine(content) ?? unwrapPaste(content), r.origin, origin)
       return text.trim()
-        ? [{ kind: 'user', uuid, at, text, meta: notTypedByUser(r) }]
+        ? [{ kind: 'user', uuid, at, text, meta, ...(origin ? { origin } : {}) }]
         : []
     }
     if (!Array.isArray(content)) return []
@@ -310,7 +376,17 @@ export function project(raw: unknown): ViewEvent[] {
     } else {
       const name = str(b.name)
       if (name) {
-        out.push({ kind: 'tool', uuid, at, id: str(b.id) ?? '', name, arg: identifyingArg(b.input) })
+        const selected = toolInput(name, b.input)
+        out.push({
+          kind: 'tool',
+          uuid,
+          at,
+          id: str(b.id) ?? '',
+          name,
+          arg: identifyingArg(b.input),
+          ...(selected ? { input: selected.input } : {}),
+          ...(selected && Object.keys(selected.truncated).length > 0 ? { inputTruncated: selected.truncated } : {}),
+        })
       }
     }
   }

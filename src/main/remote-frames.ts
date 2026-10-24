@@ -44,6 +44,9 @@ export const ERROR_CODES = [
   'PREFILL_EDITED',
   'PREFILL_PENDING',
   'APPROVE_ON_DESKTOP',
+  'FILE_NOT_SENT',
+  'FILE_GONE',
+  'FILE_CHANGED',
   'INTERNAL',
 ] as const
 

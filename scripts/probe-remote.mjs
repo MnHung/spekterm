@@ -2756,6 +2756,130 @@ async function runBackground(_mode, _config, context) {
   await app.close()
 }
 
+
+/**
+ * remote-tool-detail: a tool call's selected input, a message's origin, a session's message without the agent's
+ * wrapper, mid-turn deliveries, `files.read` on a connection that watches nothing, and `sessions.list`'s `peerName`.
+ * The transcript is a fixture in the CLI 2.1.30x shapes (generic bodies), written by the stub on start.
+ * Control groups (run by hand, recorded here): require a watch for `files.read` (the second connection's read
+ * red); select `origin.from` (the `uds:` assertion red); admit every `queued_command` (the other-mode record shows,
+ * red); answer a missing file `NOT_FOUND` (red).
+ */
+async function runToolDetail(_mode, _config, context) {
+  if (context.app) await context.app.close()
+  const repos = makeRepos()
+  const files = mkTemp('spekterm-remote-sent-')
+  const sentFile = join(files, 'report.md')
+  writeFileSync(sentFile, '# SENT-FILE-PROBE')
+  const socket = 'uds:/run/user/1000/cc-socks/4242.sock'
+  const at = '2026-10-24T00:00:00.000Z'
+  const tool = (id, name, input) => ({ type: 'assistant', uuid: `a-${id}`, timestamp: at, message: { role: 'assistant', content: [{ type: 'tool_use', id, name, input }] } })
+  const result = (id, text) => ({ type: 'user', uuid: `r-${id}`, timestamp: at, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: text }] } })
+  const sessionOrigin = (body) => ({ kind: 'peer', from: socket, verifiedPeerPid: 4242, msg_id: `m-${body}`, name: 'api-server-8393', fromMode: 'prompting', body })
+  const queued = (uuid, commandMode, prompt, origin) => ({ type: 'attachment', uuid, timestamp: at, attachment: { type: 'queued_command', prompt, commandMode, isMeta: true, origin } })
+  const records = [
+    tool('send-1', 'SendMessage', { to: 'api-server-8393', recipient: 'api-server-8393', recipient_kind: 'name', type: 'message', summary: 'Rebase', message: 'Please rebase', content: 'Please' }),
+    result('send-1', `{"success":true,"message":"delivered to api-server-8393 at ${socket}"}`),
+    tool('edit-1', 'Edit', { file_path: '/r/a.ts', old_string: 'OLD-PROBE', new_string: 'NEW-PROBE', replace_all: false }),
+    tool('write-1', 'Write', { file_path: '/r/b.md', content: 'w'.repeat(4100) }),
+    tool('mcp-1', 'mcp__browser__navigate', { url: 'https://example.com', token: 'MCP-SECRET' }),
+    tool('file-1', 'SendUserFile', { files: [sentFile], caption: 'Report', status: 'normal' }),
+    {
+      type: 'user', uuid: 'peer-1', timestamp: at, isMeta: true, promptSource: 'system', origin: sessionOrigin('PEER-USER-PROBE'),
+      message: { role: 'user', content: `Another Claude session sent a message:\n<cross-session-message from="${socket}" from-name="api-server-8393">\nPEER-USER-PROBE\n</cross-session-message>` },
+    },
+    queued('peer-2', 'prompt', `<cross-session-message from="${socket}">\nPEER-QUEUED-PROBE\n</cross-session-message>`, sessionOrigin('PEER-QUEUED-PROBE')),
+    queued('notice-1', 'task-notification', '<task-notification><task-id>b1</task-id><status>completed</status></task-notification>', { kind: 'task-notification' }),
+    queued('other-1', 'bash', 'OTHER-MODE-PROBE', { kind: 'peer', msg_id: 'm' }),
+  ]
+  const fixture = join(files, 'transcript.jsonl')
+  writeFileSync(fixture, records.map((r) => `${JSON.stringify(r)}\n`).join(''))
+  const profile = seedProfile(repos, { remote: { enabled: true, port: LISTEN_A } })
+  const { app, stub } = await start(context, profile, { transcriptFixture: fixture })
+  const paired = await phone(app)
+  const { client } = paired
+  const agent = await remoteCreate(client, 'f', 'claude')
+  const sessionId = agent.r.sessionId
+  await pollFor({ read: () => stub.ready(), settled: Boolean, timeoutMs: 15_000, label: 'the stub ready' })
+
+  const watchFrom = client.events.length
+  await call(client, 'conversation.watch', { sessionId })
+  const update = await client.waitEvent('conversation.update', { from: watchFrom, match: (d) => d.events.some((e) => e.id === 'file-1'), timeoutMs: 15_000, label: 'the fixture entries' })
+  const events = update?.d.events ?? []
+  const byId = (id) => events.find((e) => e.kind === 'tool' && e.id === id)
+  const send = byId('send-1')
+  const edit = byId('edit-1')
+  const write = byId('write-1')
+  const mcp = byId('mcp-1')
+  check(
+    results,
+    'tool entries carry their selected input: a message to a named session, an edit, a long write marked cut, none for an MCP tool',
+    JSON.stringify(send?.input) === JSON.stringify({ to: 'api-server-8393', recipient_kind: 'name', summary: 'Rebase', message: 'Please rebase' }) &&
+      edit?.input?.old_string === 'OLD-PROBE' && edit?.input?.new_string === 'NEW-PROBE' && edit?.inputTruncated === undefined &&
+      write?.input?.content?.length === 4000 && write?.inputTruncated?.content === 4100 &&
+      mcp !== undefined && !('input' in mcp) && mcp.arg === 'https://example.com' && !JSON.stringify(events).includes('MCP-SECRET'),
+    `send=${JSON.stringify(send?.input)} edit=${JSON.stringify(edit?.inputTruncated)} write=${JSON.stringify(write?.inputTruncated)} mcp=${JSON.stringify(mcp)}`,
+  )
+  const users = events.filter((e) => e.kind === 'user')
+  const peerUser = users.find((e) => e.uuid === 'peer-1')
+  const peerQueued = users.find((e) => e.uuid === 'peer-2')
+  const notice = users.find((e) => e.uuid === 'notice-1')
+  const sessionFrom = { kind: 'peer', sender: 'session', name: 'api-server-8393' }
+  check(
+    results,
+    "messages from another session name their sender and are the sender's message; a mid-turn notice is shown; another mode is not",
+    JSON.stringify(peerUser?.origin) === JSON.stringify(sessionFrom) && peerUser?.text === 'PEER-USER-PROBE' && peerUser?.meta === true &&
+      JSON.stringify(peerQueued?.origin) === JSON.stringify(sessionFrom) && peerQueued?.text === 'PEER-QUEUED-PROBE' &&
+      notice?.meta === true && notice?.origin?.kind === 'task-notification' &&
+      !JSON.stringify(events).includes('OTHER-MODE-PROBE'),
+    `peer=${JSON.stringify(peerUser)} queued=${JSON.stringify(peerQueued?.origin)} notice=${JSON.stringify(notice?.origin)}`,
+  )
+  // The `SendMessage` result names the socket, as the CLI's results do: results are delivered as written.
+  const leaks = events.filter((e) => JSON.stringify([e.input ?? null, e.origin ?? null, e.kind === 'user' ? e.text : null]).includes('uds:'))
+  check(results, 'no socket address in any input, origin or session message text', leaks.length === 0, JSON.stringify(leaks.map((e) => e.uuid)))
+
+  // A second connection that watches nothing reads the sent file.
+  const other = await helloRemote(paired.target, paired.credential)
+  const read = await call(other.client, 'files.read', { sessionId, toolUseId: 'file-1', index: 0, length: 65536 })
+  check(
+    results,
+    'a connection that watches nothing reads the sent file whole, with its name and media type',
+    read.ok === true && Buffer.from(read.r?.data ?? '', 'base64').toString() === '# SENT-FILE-PROBE' && read.r?.complete === true &&
+      read.r?.name === 'report.md' && read.r?.mediaType === 'text/markdown',
+    JSON.stringify(read.e ?? { ...read.r, data: undefined }),
+  )
+  const notSent = await call(other.client, 'files.read', { sessionId, toolUseId: 'edit-1', index: 0 })
+  rmSync(sentFile)
+  const goneRead = await call(other.client, 'files.read', { sessionId, toolUseId: 'file-1', index: 0 })
+  check(
+    results,
+    'another call is not a sent file, and a deleted one is gone',
+    notSent.e?.code === 'FILE_NOT_SENT' && goneRead.e?.code === 'FILE_GONE',
+    `${JSON.stringify(notSent.e)} ${JSON.stringify(goneRead.e)}`,
+  )
+  const operations = paired.response.r?.operations ?? []
+  check(results, 'the authentication answer lists files.read', operations.includes('files.read'), JSON.stringify(operations))
+
+  const started = stub.peerNames().at(-1)?.argv
+  const listed = (await list(other.client)).sessions.find((s) => s.id === sessionId)
+  await call(other.client, 'sessions.rename', { sessionId, name: 'Auto-update' })
+  const renamed = await pollFor({
+    read: async () => (await list(other.client)).sessions.find((s) => s.id === sessionId),
+    settled: (s) => s?.label === 'Auto-update',
+    timeoutMs: 10_000,
+    label: 'the rename listed',
+  })
+  check(
+    results,
+    'the session list carries the messaging name the agent was started with, and a rename keeps it',
+    Boolean(started) && started !== '-' && listed?.peerName === started && renamed?.peerName === started,
+    `started=${started} listed=${listed?.peerName} renamed=${renamed?.peerName}`,
+  )
+  other.client.close()
+  client.close()
+  await app.close()
+}
+
 /**
  * remote-phone-context: a device's prompt carries the phone-origin note outside the message, and a watched
  * conversation carries the agent's reported model and usage and its skills; a `/skill args` reply is confirmed.
@@ -2921,6 +3045,7 @@ const SECTIONS = [
   { name: 'runSeen', run: runSeen },
   { name: 'runBackground', run: runBackground },
   { name: 'runPhoneContext', run: runPhoneContext },
+  { name: 'runToolDetail', run: runToolDetail },
 ].map((section) => ({
   ...section,
   // A section that hangs leaves its app behind; the profile prefix finds it (character class: not this command).

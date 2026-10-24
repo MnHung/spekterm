@@ -128,9 +128,11 @@ test('a connection watches one folder’s OpenSpec: replaced, stopped, never rec
 })
 
 test('the allow-list has no way to resize a terminal, write a file, or touch settings and credentials', () => {
-  for (const name of Object.keys(OPERATIONS)) {
+  // The one file operation reads a file the agent sent to the user, addressed by its call (`remote-sent-files`).
+  for (const name of Object.keys(OPERATIONS).filter((n) => n !== 'files.read')) {
     assert.doesNotMatch(name, /resize|write|file|setting|slack|secret|credential|delete|kill/i, name)
   }
+  assert.ok(Object.keys(OPERATIONS).includes('files.read'))
   // Ending a session is exactly these two, both through the idle check (`remote-hibernate-close`).
   assert.deepEqual(
     Object.keys(OPERATIONS).filter((name) => /^(hibernate|close|end|stop|exit|remove)$/i.test(name.split('.').at(-1) ?? '')),
@@ -362,4 +364,41 @@ test('a repeating proposal: accepting is refused before anything else and leaves
   } finally {
     rmSync(base, { recursive: true, force: true })
   }
+})
+
+test('files.read checks its parameters, defaults offset and length, and goes to the host (remote-tool-detail D6)', async () => {
+  const asked: unknown[] = []
+  const host = {
+    readSentFile: async (sessionId: string, p: unknown) => {
+      asked.push([sessionId, p])
+      return { name: 'a.md', size: 1, mediaType: 'text/markdown', version: 'v', offset: 0, data: 'eA==', complete: true }
+    },
+  } as Partial<RemoteHost> as RemoteHost
+  const conn = connection()
+  const session = openRemoteSession(host, conn)
+  const ok = await call(session, conn, 'files.read', { sessionId: 's1', toolUseId: 't1', index: 0 })
+  assert.equal(ok.ok, true)
+  assert.equal(ok.r?.name, 'a.md')
+  await call(session, conn, 'files.read', { sessionId: 's1', toolUseId: 't1', index: 2, offset: 10, length: 65536, version: 'v1' })
+  assert.deepEqual(asked, [
+    ['s1', { toolUseId: 't1', index: 0, offset: 0, length: 524288, version: undefined }],
+    ['s1', { toolUseId: 't1', index: 2, offset: 10, length: 65536, version: 'v1' }],
+  ])
+  const bad = [
+    { toolUseId: 't1', index: 0 },
+    { sessionId: 's1', index: 0 },
+    { sessionId: 's1', toolUseId: 't1' },
+    { sessionId: 's1', toolUseId: 't1', index: -1 },
+    { sessionId: 's1', toolUseId: 't1', index: 1.5 },
+    { sessionId: 's1', toolUseId: 't1', index: 0, offset: -1 },
+    { sessionId: 's1', toolUseId: 't1', index: 0, length: 0 },
+    { sessionId: 's1', toolUseId: 't1', index: 0, length: 524289 },
+    { sessionId: 's1', toolUseId: 't1', index: 0, version: 3 },
+    { sessionId: 's1', toolUseId: 't1', index: 0, path: '/etc/passwd' },
+  ]
+  for (const p of bad.slice(0, -1)) assert.equal((await call(session, conn, 'files.read', p)).e?.code, 'BAD_PARAMS', JSON.stringify(p))
+  // A path parameter is not one: it is ignored, and the call is the one addressed by id.
+  await call(session, conn, 'files.read', bad.at(-1) as Record<string, unknown>)
+  assert.equal(asked.length, 3)
+  assert.deepEqual((asked[2] as unknown[])[1], { toolUseId: 't1', index: 0, offset: 0, length: 524288, version: undefined })
 })

@@ -1,6 +1,7 @@
 import type { BackgroundTask, WaitState } from './agent-events'
 import { type AnswerDecision, type AnswerOutcome, DECISIONS, type PromptView } from './remote-answer'
 import { LIMITS, type PutParams, type PutResult } from './remote-attachments'
+import { CHUNK_LIMIT, type SentChunk } from './remote-sent-files'
 import type { AttentionEvent, AttentionPosition } from './remote-attention'
 import type { UsageView } from './remote-agent-status'
 import type { SkillList } from './transcript-skills'
@@ -48,6 +49,11 @@ export interface SessionView {
   lineage?: { parentId: string; title?: string }
   /** The agent asked to close its own session, and the user has not answered (`remote-close-offer`). */
   closeOffered?: true
+  /**
+   * The name the agent session is started with for the agent's session messaging (`agent-peer-name`), once it has
+   * one, running or dormant: what a conversation's `to` and `origin.name` say (`remote-tool-detail` D6a).
+   */
+  peerName?: string
   /**
    * The background tasks in flight as of the agent's last report (`remote-background-tasks`): present only for a
    * running agent session with at least one, in the agent's order.
@@ -110,6 +116,8 @@ export interface RemoteHost {
   submitPrefill(sessionId: string, prefillId: string): Promise<{ outcome: 'confirmed' | 'sent' }>
   /** One chunk of an attachment upload (`remote-attachments.ts`). */
   putAttachment(sessionId: string, p: PutParams): PutResult
+  /** One chunk of a file the session's agent sent to the user (`remote-sent-files.ts`). */
+  readSentFile(sessionId: string, p: SentFileRequest): Promise<SentChunk>
   /** Answers the watched session's open prompt (`remote-answer.ts`). */
   answer(
     watching: string | null,
@@ -156,6 +164,25 @@ interface ConnectionState {
 }
 
 type Operation = (state: ConnectionState, p: Record<string, unknown>) => unknown | Promise<unknown>
+
+/** `files.read`'s parameters, checked (`remote-tool-detail` D6). */
+export interface SentFileRequest {
+  toolUseId: string
+  index: number
+  offset: number
+  length: number
+  version?: string
+}
+
+/** A non-negative integer parameter, `fallback` when absent. */
+function count(p: Record<string, unknown>, key: string, fallback?: number): number {
+  const value = p[key]
+  if ((value === undefined || value === null) && fallback !== undefined) return fallback
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    throw new RemoteError('BAD_PARAMS', `\`${key}\` must be a non-negative integer`)
+  }
+  return value
+}
 
 function str(p: Record<string, unknown>, key: string): string {
   const value = p[key]
@@ -278,6 +305,18 @@ export const OPERATIONS: Record<string, Operation> = {
     // Text may be empty when attachments carry the reply.
     const text = optionalStr(p, 'text') ?? ''
     return state.host.reply(state.conversation?.sessionId ?? null, str(p, 'sessionId'), text, raw as string[])
+  },
+
+  'files.read': (state, p) => {
+    const length = count(p, 'length', CHUNK_LIMIT)
+    if (length < 1 || length > CHUNK_LIMIT) throw new RemoteError('BAD_PARAMS', `\`length\` must be 1 to ${CHUNK_LIMIT}`)
+    return state.host.readSentFile(str(p, 'sessionId'), {
+      toolUseId: str(p, 'toolUseId'),
+      index: count(p, 'index'),
+      offset: count(p, 'offset', 0),
+      length,
+      version: optionalStr(p, 'version'),
+    })
   },
 
   'attachments.put': (state, p) =>

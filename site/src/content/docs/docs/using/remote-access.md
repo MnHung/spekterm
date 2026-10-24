@@ -9,7 +9,8 @@ Remote access lets the spekterm app on your phone reach spekterm on your compute
 no relay, no push service. From the phone you can:
 
 - see every folder and session;
-- read an agent's conversation and reply to it, with photos and files attached;
+- read an agent's conversation and reply to it, with photos and files attached, see what each tool call did, and open
+  the files the agent sends you;
 - answer an agent's permission prompts and questions;
 - start, wake, rename, hibernate, or close a session;
 - handle the inbox and follow your handoffs;
@@ -28,7 +29,9 @@ It is **off** until you turn it on.
 A paired phone can do what you can do in a session: read your agents and shells, and **type into them**.
 Agents have a shell, so treat a paired phone like your keyboard. The phone cannot edit files outside a
 session, change settings, or see your Slack connection or any credential. The only files it can put on your
-computer are attachments, and only into spekterm's own data folder, under names spekterm chooses.
+computer are attachments, and only into spekterm's own data folder, under names spekterm chooses. The only
+files it can read, besides your OpenSpec changes, are the ones an agent sent you: whatever the agent sent,
+the phone can open.
 
 ### Background work
 
@@ -88,6 +91,23 @@ and rate limits. That is what the computer's status bar shows when **Show agent 
 is on. The phone can also list the skills the agent can run: send `/name` or `/name arguments` as a reply
 to run one. The list appears once the session has received its first message. The agent's built-in
 commands, such as `/clear`, are not in it.
+
+### What the agent did, and who wrote to it
+
+The phone shows what each tool call did, not only its name: the command an agent ran, the change it made to
+a file, the message it sent to another session and to whom, the subagent it started and its instructions, the
+skill and its arguments, the question and its options. Long text is shortened, and the phone says so. Calls
+to MCP servers show only their name and main argument.
+
+A message from another session, or a report from a subagent, is shown as such, with who sent it; a message
+from another session shows the label you gave that session. Messages from other sessions and background-task
+notices that arrive while the agent works are shown too.
+
+### Files the agent sends you
+
+When an agent sends you a file, the phone can open it: text, Markdown and images in the app, other files
+with the phone's own apps. Files up to 32 MB. A file the agent has since deleted or changed is reported as
+such.
 
 ### Attaching files
 

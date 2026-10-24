@@ -507,3 +507,65 @@ test('a device reply is refused while any fill stands (remote-prefill-send D5)',
   const unlisted = (await code(prefilled({ offered: false }).host.reply('a', 'a', 'hi', []))) as { detail?: unknown }
   assert.deepEqual(unlisted.detail, { edited: false }, 'no id for a fill a device cannot see')
 })
+
+test('the list carries an agent session’s messaging name, running or dormant, and a rename keeps it (remote-tool-detail D6a)', () => {
+  const sessions = (customTitle: string) => ({
+    view: () => [
+      { session: { id: 'a', folderId: 'f1', spawnTarget: 'claude', ordinal: 1, customTitle, peerName: 'api-server-1a2b' }, provisional: false },
+      { session: { id: 'b', folderId: null, spawnTarget: 'shell', ordinal: 2, peerName: 'not-for-a-shell' }, provisional: false },
+      { session: { id: 'c', folderId: 'f1', spawnTarget: 'claude', ordinal: 3, peerName: 'api-server-3c4d' }, provisional: false },
+      { session: { id: 'd', folderId: 'f1', spawnTarget: 'claude', ordinal: 4 }, provisional: false },
+    ],
+    readHandoffBrief: () => null,
+  })
+  const names = (title: string) =>
+    host({ sessions: sessions(title) as unknown as HostDeps['sessions'] }).host.sessionList().sessions.map((s) => [s.id, s.label, s.running, s.peerName])
+  assert.deepEqual(names('Fix login'), [
+    ['a', 'Fix login', true, 'api-server-1a2b'],
+    ['b', 'shell 2', true, undefined],
+    ['c', 'claude 3', false, 'api-server-3c4d'],
+    ['d', 'claude 4', false, undefined],
+  ])
+  assert.deepEqual(names('Auto-update')[0], ['a', 'Auto-update', true, 'api-server-1a2b'])
+})
+
+test('a sent file is read from the session’s current transcript; a shell, an unknown or a stopped session is refused', async () => {
+  const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const dir = mkdtempSync(join(tmpdir(), 'spekterm-host-sent-'))
+  try {
+    const file = join(dir, 'note.md')
+    writeFileSync(file, '# sent')
+    const line = (id: string) =>
+      `${JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id, name: 'SendUserFile', input: { files: [file] } }] } })}\n`
+    writeFileSync(join(dir, 'old.jsonl'), line('old'))
+    writeFileSync(join(dir, 'current.jsonl'), line('now'))
+    let current = 'old.jsonl'
+    const asked: unknown[] = []
+    const h = host({
+      terminal: (() => ({
+        liveSessionIds: () => ['a'],
+        agentSourceOf: (id: string) => (id === 'a' ? { cwd: dir, conversationId: 'conv' } : null),
+      })) as unknown as HostDeps['terminal'],
+      transcriptOf: (sessionId, source) => {
+        asked.push([sessionId, source])
+        return join(dir, current)
+      },
+    }).host
+    const request = { toolUseId: 'now', index: 0, offset: 0, length: 1024 }
+    await assert.rejects(h.readSentFile('a', request), { code: 'FILE_NOT_SENT' })
+    // The agent moved to another transcript (`/clear`): the follower's location is the one read.
+    current = 'current.jsonl'
+    const chunk = await h.readSentFile('a', request)
+    assert.equal(Buffer.from(chunk.data, 'base64').toString(), '# sent')
+    assert.equal(chunk.mediaType, 'text/markdown')
+    await assert.rejects(h.readSentFile('a', { ...request, toolUseId: 'old' }), { code: 'FILE_NOT_SENT' }, 'the old transcript is not read')
+    assert.deepEqual(asked[0], ['a', { cwd: dir, conversationId: 'conv' }])
+    await assert.rejects(h.readSentFile('b', request), { code: 'NO_CONVERSATION' })
+    await assert.rejects(h.readSentFile('zz', request), { code: 'NOT_FOUND' })
+    await assert.rejects(h.readSentFile('c', request), { code: 'NOT_FOUND' }, 'no running agent')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
