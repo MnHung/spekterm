@@ -5,6 +5,7 @@ import type { VizKind } from '../maximize-state'
 import { useChanges, useGraphData } from './data'
 import { ErrorNote, Loading } from './ui'
 import { useTranslation } from 'react-i18next'
+import { useColorScheme } from '../../color-scheme'
 
 interface VizViewProps {
   folderId: string
@@ -52,6 +53,8 @@ function GraphPane({
   const { t } = useTranslation()
 
   const { data, loading, error } = useGraphData(folderId)
+  // Graph writes resolved colors into its SVG and redraws only when `themeKey` changes (`ui-appearance`).
+  const colorScheme = useColorScheme()
 
   if (error) return <ErrorNote message={error} />
   if (loading || !data) return <Loading />
@@ -62,7 +65,7 @@ function GraphPane({
   // 圖會填滿父容器 —— 父容器要有明確高度，且 relative 才放得下圖例。
   return (
     <div className="relative h-full min-h-[400px] overflow-hidden rounded border border-hairline bg-shell">
-      <SpecGraph data={data} onSelectSpec={onSelectSpec} onSelectChange={onSelectChange} />
+      <SpecGraph data={data} onSelectSpec={onSelectSpec} onSelectChange={onSelectChange} themeKey={colorScheme} />
     </div>
   )
 }

@@ -2088,6 +2088,380 @@ async function runAttentionUnreported(_mode, _config, context) {
   )
 }
 
+// ── The main stage header's workspace summary (`session-wait-indicator`) ─────
+
+const SUMMARY_BUCKETS = ['needsYou', 'error', 'working', 'running', 'idle', 'hibernated', 'ended']
+const BUCKET_OF_WORDS = new Map(SUMMARY_BUCKETS.map((bucket) => [copy(`stage.summaryState.${bucket}`), bucket]))
+
+/** The header: its first line, the summary's controls (bucket, count, tooltip, rect), and its layout. */
+const SUMMARY_STATE = `(() => {
+  const header = document.querySelector('main${label('stage.label')} > header')
+  const group = header?.querySelector('[role="group"]${label('stage.summary')}')
+  const controls = [...(group?.querySelectorAll('button') ?? [])].map((button) => {
+    const r = button.getBoundingClientRect()
+    return { label: button.getAttribute('aria-label'), title: button.getAttribute('title'), text: button.innerText.replace(/\\s+/g, ' ').trim(), x: r.x + r.width / 2, y: r.y + r.height / 2 }
+  })
+  const fold = group?.querySelector('[role="img"]')
+  return {
+    first: header ? header.innerText.split('\\n')[0].trim() : null,
+    text: header?.innerText ?? '',
+    controls,
+    fold: fold ? { label: fold.getAttribute('aria-label'), title: fold.getAttribute('title') } : null,
+    focus: document.hasFocus(),
+  }
+})()`
+
+/** `{ bucket: count }` from the controls' accessible names ("needs you: 2"). */
+function countsOf(state) {
+  const counts = {}
+  for (const control of state?.controls ?? []) {
+    const match = control.label?.match(/^(.*?)[:：]\s*(\d+)$/)
+    const bucket = match && BUCKET_OF_WORDS.get(match[1])
+    if (bucket) counts[bucket] = Number(match[2])
+  }
+  return counts
+}
+
+const SELECTED_TAB_TEXT = `document.querySelector('[role="tablist"]${label('sessions.tabs')} [role="tab"][aria-selected="true"]')?.innerText.replace(/\\s+/g, ' ').trim() ?? null`
+
+/** A rail session row by its label, and whether it lies inside its scrolling list's view. */
+const RAIL_ROW = (text) => `(() => {
+  const row = [...document.querySelectorAll('aside${label('rail.label')} ul ul > li > [role="button"]')]
+    .find((el) => el.innerText.includes(${JSON.stringify(text)}))
+  if (!row) return null
+  const list = row.closest('aside > ul')
+  const a = list.getBoundingClientRect()
+  const b = row.getBoundingClientRect()
+  return { visible: b.top >= a.top - 0.5 && b.bottom <= a.bottom + 0.5 }
+})()`
+const ITEM_ROW = (name) => `(() => {
+  const row = document.querySelector('aside${label('rail.label')} [role="button"][aria-label="${name}"]')
+  if (!row) return null
+  const list = row.closest('aside > ul')
+  const a = list.getBoundingClientRect()
+  const b = row.getBoundingClientRect()
+  return { visible: b.top >= a.top - 0.5 && b.bottom <= a.bottom + 0.5, rows: row.closest('li')?.querySelectorAll('ul > li').length ?? 0 }
+})()`
+/** The session rows' labels in DOM order (the rail's row order). */
+const RAIL_ROW_LABELS = `[...document.querySelectorAll('aside${label('rail.label')} ul ul > li > [role="button"]')].map((el) => el.innerText.replace(/\\s+/g, ' ').trim())`
+const SCROLL_RAIL_TOP = `(() => { for (const ul of document.querySelectorAll('aside${label('rail.label')} > ul')) ul.scrollTop = 0; return true })()`
+const SCROLL_RAIL_BOTTOM = `(() => { for (const ul of document.querySelectorAll('aside${label('rail.label')} > ul')) ul.scrollTop = ul.scrollHeight; return true })()`
+const HEADER_LAYOUT = `(() => {
+  const header = document.querySelector('main${label('stage.label')} > header')
+  const h = header.getBoundingClientRect()
+  const children = [...header.children].filter((el) => getComputedStyle(el).position !== 'absolute' && el.getBoundingClientRect().width > 0)
+  const name = header.firstElementChild.getBoundingClientRect()
+  const buttons = [...header.querySelectorAll('button, [role="tab"]')].filter((el) => !el.closest('[aria-hidden="true"]'))
+  return {
+    nameWidth: Math.round(name.width),
+    // One line: every visible child shares the name's row (their vertical ranges overlap it).
+    oneLine: children.every((el) => { const r = el.getBoundingClientRect(); return r.top < name.bottom && r.bottom > name.top }),
+    inside: buttons.every((el) => { const r = el.getBoundingClientRect(); return r.left >= h.left - 0.5 && r.right <= h.right + 0.5 }),
+    summary: header.querySelector('[role="group"]${label('stage.summary')}')?.innerText.replace(/\\s+/g, ' ').trim() ?? null,
+    width: Math.round(h.width),
+  }
+})()`
+
+async function clickAt(app, at) {
+  for (const type of ['mouseMoved', 'mousePressed', 'mouseReleased']) {
+    await app.client.send('Input.dispatchMouseEvent', {
+      type,
+      x: at.x,
+      y: at.y,
+      button: type === 'mouseMoved' ? 'none' : 'left',
+      buttons: type === 'mousePressed' ? 1 : 0,
+      clickCount: 1,
+    })
+  }
+}
+
+/** A real click on the summary control of `bucket`; `false` when it is not listed. */
+async function clickBucket(app, bucket) {
+  const state = await app.client.evaluate(SUMMARY_STATE)
+  const words = copy(`stage.summaryState.${bucket}`)
+  const control = state.controls.find((c) => c.label?.startsWith(`${words}:`) || c.label?.startsWith(`${words}：`))
+  if (!control) return false
+  await clickAt(app, control)
+  return true
+}
+
+/**
+ * The header summary: two folders (one pinned), a handed-off child, hibernated, ended and errored sessions, and
+ * agents in several states, with the global item selected. Dormant sessions come from a seeded `sessions.json`
+ * (their order, a child in it, and their titles are then fixed); live ones are created through the UI.
+ */
+async function runSummary(_mode, _config, context) {
+  if (context.app) await context.app.close()
+  // Short folder names: a long one in the header leaves the summary less room, and the probe clicks its controls.
+  const sumBase = mkTemp('spekterm-agentview-sum-')
+  const folder = (name) => {
+    mkdirSync(join(sumBase, name))
+    return join(sumBase, name)
+  }
+  const pinned = folder('pin')
+  const plain = folder('plain')
+  const removed = folder('gone')
+  // W, after U, holds running shells: with them below U in the scrolling list, U's row can be scrolled out of view.
+  // Its long name is the one the narrow-header check truncates.
+  const lower = folder('lower-folder-with-a-rather-long-name')
+  const names = { p: pinned.split('/').pop(), u: plain.split('/').pop(), r: removed.split('/').pop(), w: lower.split('/').pop() }
+  const configDir = mkTemp('spekterm-agentview-configS-')
+  const stub = makeStubAgent(mkTemp, configDir, { startupStop: false })
+  const profile = mkTemp('spekterm-agentview-profile-')
+  writeFileSync(
+    join(profile, 'workspace.json'),
+    JSON.stringify({
+      version: 1,
+      folders: [
+        { id: 'fu', path: plain, addedAt: '2026-10-01T00:00:00.000Z' },
+        { id: 'fp', path: pinned, addedAt: '2026-10-01T00:00:00.000Z', pinned: true },
+        { id: 'fr', path: removed, addedAt: '2026-10-01T00:00:00.000Z' },
+        { id: 'fw', path: lower, addedAt: '2026-10-01T00:00:00.000Z' },
+      ],
+    }),
+  )
+  const id = (n) => `0a1b2c3d-0000-4000-8000-00000000000${n}`
+  // P's single order puts the child last; on the rail it sits under its parent: H-P1, H-P2 (child), H-P3.
+  writeFileSync(
+    join(profile, 'sessions.json'),
+    JSON.stringify({
+      version: 1,
+      sessions: [
+        { id: id(1), folderId: 'fp', spawnTarget: 'shell', ordinal: 1, customTitle: 'H-P1' },
+        { id: id(3), folderId: 'fp', spawnTarget: 'shell', ordinal: 3, customTitle: 'H-P3' },
+        {
+          id: id(2),
+          folderId: 'fp',
+          spawnTarget: 'shell',
+          ordinal: 2,
+          customTitle: 'H-P2',
+          lineage: { parentId: id(1), origin: { kind: 'folder', folderId: 'fp', folderName: names.p } },
+        },
+        { id: id(4), folderId: 'fu', spawnTarget: 'shell', ordinal: 1, customTitle: 'H-U1' },
+      ],
+    }),
+  )
+  const app = await launch({ profile, configDir, stub, port: PORT })
+  context.app = app
+  const state = () => app.client.evaluate(SUMMARY_STATE)
+  const selectGlobal = () =>
+    app.client.evaluate(`document.querySelector('aside${label('rail.label')} [role="button"]${label('rail.globalName')}')?.click() ?? false`)
+
+  // Live sessions: a running shell in R (removed later), four in W, two agents in U, an ended and an errored shell in P.
+  await createSessionOf(app, names.r, 'shell')
+  for (let i = 0; i < 4; i += 1) await createSessionOf(app, names.w, 'shell')
+  await createSessionOf(app, names.u, 'claude')
+  await createSessionOf(app, names.u, 'claude')
+  const started = await pollFor({ read: () => stub.peerNames(), settled: (list) => list.length >= 2, timeoutMs: 30_000, label: 'two agents' })
+  const [a, b] = started.map((entry) => entry.conversation)
+  for (const code of [0, 3]) {
+    await createSessionOf(app, names.p, 'shell')
+    await new Promise((resolve) => setTimeout(resolve, 1200))
+    await app.client.evaluate(`(() => {
+      const box = [...document.querySelectorAll('[aria-label="${copy('stage.terminal')}"] .xterm-helper-textarea')]
+        .find((el) => el.closest('.xterm')?.getBoundingClientRect().width > 0)
+      box?.focus()
+      return Boolean(box)
+    })()`)
+    await app.client.send('Input.insertText', { text: `exit ${code}` })
+    await pressKey(app.client, 'Enter')
+  }
+  await selectGlobal()
+  // A ends a turn unseen (needs you); B works.
+  stub.command(a, TURN())
+  stub.command(b, 'fire UserPromptSubmit')
+  const listed = await pollFor({
+    read: state,
+    settled: (s) => {
+      const c = countsOf(s)
+      return c.needsYou === 1 && c.working === 1 && c.error === 1 && c.ended === 1 && c.hibernated === 4 && c.running === 5
+    },
+    timeoutMs: 30_000,
+    label: 'the summary lists every state',
+  })
+  const counts = countsOf(listed)
+  check(
+    results,
+    '[summary] the header counts the whole workspace by state, with the global item selected',
+    listed.first === copy('rail.globalName') &&
+      JSON.stringify(Object.keys(counts)) === JSON.stringify(['needsYou', 'error', 'working', 'running', 'hibernated', 'ended']),
+    `${listed.first}: ${JSON.stringify(counts)}`,
+  )
+  check(
+    results,
+    '[summary] the header shows no path',
+    ![pinned, plain, removed].some((path) => listed.text.includes(path)),
+    JSON.stringify(listed.text.slice(0, 160)),
+  )
+
+  // R is removed while its shell keeps running: no longer counted.
+  await app.client.evaluate(`document.querySelector(${JSON.stringify(`button${label('rail.removeFolder', { name: names.r })}`)})?.click() ?? false`)
+  const afterRemoval = await pollFor({ read: state, settled: (s) => countsOf(s).running === 4, timeoutMs: 8_000, label: 'R removed' })
+  check(results, "[summary] a removed folder's running session is not counted", countsOf(afterRemoval).running === 4, JSON.stringify(countsOf(afterRemoval)))
+
+  // B, not displayed, ends its turn: one fewer working, one more needing you.
+  stub.command(b, 'fire Stop')
+  const turned = await pollFor({ read: state, settled: (s) => countsOf(s).needsYou === 2, timeoutMs: 15_000, label: 'B ends its turn' })
+  check(
+    results,
+    '[summary] a working session that ends a turn unseen moves from working to needs you',
+    countsOf(afterRemoval).working === 1 && countsOf(turned).working === undefined && countsOf(turned).needsYou === 2,
+    `${JSON.stringify(countsOf(afterRemoval))} → ${JSON.stringify(countsOf(turned))}`,
+  )
+
+  // The tooltip names the sessions; "needs you" says which ask for a choice. B asks for permission.
+  stub.command(
+    b,
+    [
+      `firej PreToolUse '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_use_id":"t-ask","tool_input":{"command":"rm x"}}'`,
+      `firej PermissionRequest '{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"rm x"}}'`,
+    ].join('\n'),
+  )
+  const asking = await pollFor({
+    read: state,
+    // The needs-you tooltip's line for a session that asks for a choice ends with this.
+    settled: (s) => s.controls.some((c) => c.title?.includes(copy('stage.summaryChoice', { session: '%S%', item: names.u }).split('%S%')[1])),
+    timeoutMs: 15_000,
+    label: 'B asks',
+  })
+  const needs = asking.controls.find((c) => c.label?.startsWith(copy('stage.summaryState.needsYou')))
+  // The lines name each session with its rail item; the session titles are read back from them.
+  const lines = (needs?.title ?? '').split('\n').slice(1).map((line) => line.replace(/^• /, ''))
+  const titleOf = (key) => {
+    const [before, after] = copy(key, { session: '%S%', item: names.u }).split('%S%')
+    const line = lines.find((l) => l.endsWith(after))
+    return line ? line.slice(before.length, line.length - after.length) : null
+  }
+  const aTitle = titleOf('stage.summaryTurnEnded')
+  const bTitle = titleOf('stage.summaryChoice')
+  check(
+    results,
+    '[summary] the tooltip lists the sessions with their rail items and says which asks for a choice',
+    lines.length === 2 && aTitle !== null && bTitle !== null && aTitle !== bTitle,
+    JSON.stringify(needs?.title),
+  )
+
+  // Activating "needs you" after a click on the rail and with the target scrolled away: U is selected, A is
+  // focused, and A's rail row is scrolled into view. The viewport is made short so that the rail overflows.
+  //
+  // The clicks are what made the old pointer exception fail: a click on a row inside U's block set U's flag, which
+  // only a key cleared, so U's session row was never scrolled to after it. Now the click on the global row (outside
+  // U's block) and the click on the header clear it.
+  const centerOf = (selector) =>
+    app.client.evaluate(`(() => { const r = document.querySelector(${JSON.stringify(selector)})?.getBoundingClientRect(); return r ? { x: r.x + r.width / 2, y: r.y + r.height / 2 } : null })()`)
+  const u1 = await app.client.evaluate(`(() => {
+    const row = [...document.querySelectorAll('aside${label('rail.label')} ul ul > li > [role="button"]')].find((el) => el.innerText.includes('H-U1'))
+    row?.scrollIntoView({ block: 'nearest' })
+    const r = row?.getBoundingClientRect()
+    return r ? { x: r.x + r.width / 2, y: r.y + r.height / 2 } : null
+  })()`)
+  await clickAt(app, u1)
+  await new Promise((resolve) => setTimeout(resolve, 300))
+  await clickAt(app, await centerOf(`aside${label('rail.label')} [role="button"]${label('rail.globalName')}`))
+  await app.client.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 330, deviceScaleFactor: 0, mobile: false })
+  await new Promise((resolve) => setTimeout(resolve, 600))
+  await app.client.evaluate(SCROLL_RAIL_TOP)
+  await new Promise((resolve) => setTimeout(resolve, 300))
+  const hiddenBefore = await app.client.evaluate(RAIL_ROW(aTitle))
+  await clickBucket(app, 'needsYou')
+  const jumped = await pollFor({
+    read: async () => ({ first: (await state()).first, tab: await app.client.evaluate(SELECTED_TAB_TEXT), row: await app.client.evaluate(RAIL_ROW(aTitle)) }),
+    settled: (v) => v.first === names.u && v.tab?.includes(aTitle) && v.row?.visible === true,
+    timeoutMs: 6_000,
+    label: 'the jump to A',
+  })
+  check(
+    results,
+    '[summary] activating "needs you" selects the folder, focuses the session and the rail shows its row, even after a click on the rail',
+    hiddenBefore?.visible === false && jumped.first === names.u && jumped.tab?.includes(aTitle) && jumped.row?.visible === true,
+    `row hidden before=${hiddenBefore?.visible === false}; ${JSON.stringify(jumped)}`,
+  )
+  const keyboardInSession = await app.client.evaluate(`document.activeElement?.closest('section${label('stage.terminal')}') !== null && document.activeElement?.closest('section${label('stage.terminal')}') !== undefined`)
+  check(results, '[summary] the jump gives the session keyboard focus, as a rail row does', keyboardInSession === true, String(keyboardInSession))
+  if (asking.focus) {
+    const lowered = await pollFor({ read: state, settled: (s) => countsOf(s).needsYou === 1, timeoutMs: 8_000, label: 'A looked at' })
+    check(results, '[summary] looking at the session lowers the needs-you count', countsOf(lowered).needsYou === 1, JSON.stringify(countsOf(lowered)))
+  } else {
+    console.log('  (the window has no focus: "looking at the session lowers the count" is carried by looked-at.test.ts — a recorded gap)')
+  }
+
+  // "hibernated" clicked once per hibernated session: the order of their rows on the rail.
+  await app.client.send('Emulation.clearDeviceMetricsOverride')
+  await new Promise((resolve) => setTimeout(resolve, 400))
+  const railOrder = (await app.client.evaluate(RAIL_ROW_LABELS)).filter((text) => /^H-/.test(text)).map((text) => text.slice(0, 4))
+  const visited = []
+  for (let i = 0; i < 5; i += 1) {
+    await clickBucket(app, 'hibernated')
+    const tab = await pollFor({
+      read: () => app.client.evaluate(SELECTED_TAB_TEXT),
+      settled: (v) => /H-/.test(v ?? '') && v.slice(v.indexOf('H-'), v.indexOf('H-') + 4) !== visited.at(-1),
+      timeoutMs: 4_000,
+      label: `hibernated #${i + 1}`,
+    })
+    visited.push(tab?.slice(tab.indexOf('H-'), tab.indexOf('H-') + 4) ?? null)
+  }
+  check(
+    results,
+    "[summary] repeated activations follow the rail's row order (pinned folder, its child under its parent, then the rest) and wrap",
+    JSON.stringify(railOrder) === JSON.stringify(['H-P1', 'H-P2', 'H-P3', 'H-U1']) &&
+      JSON.stringify(visited) === JSON.stringify([...railOrder, railOrder[0]]),
+    `rail ${JSON.stringify(railOrder)}; visited ${JSON.stringify(visited)}`,
+  )
+
+  // "error" and "ended" reach their sessions.
+  await clickBucket(app, 'error')
+  const errorTab = await pollFor({ read: () => app.client.evaluate(SELECTED_TAB_TEXT), settled: (v) => /shell/.test(v ?? ''), timeoutMs: 4_000, label: 'the errored shell' })
+  const errorTitle = await app.client.evaluate(`document.querySelector('[role="tablist"]${label('sessions.tabs')} [role="tab"][aria-selected="true"]')?.getAttribute('title') ?? ''`)
+  await clickBucket(app, 'ended')
+  await new Promise((resolve) => setTimeout(resolve, 400))
+  const endedTitle = await app.client.evaluate(`document.querySelector('[role="tablist"]${label('sessions.tabs')} [role="tab"][aria-selected="true"]')?.getAttribute('title') ?? ''`)
+  check(
+    results,
+    '[summary] ended sessions are counted and reachable: "error" and "ended" each focus their session',
+    errorTitle.includes(copy('sessions.statusExitedWithCode', { code: 3 })) && endedTitle.includes(copy('sessions.statusExited')) && !endedTitle.includes('3'),
+    `error → ${errorTab} (${errorTitle}); ended → ${endedTitle}`,
+  )
+
+  // A collapsed folder: the jump scrolls the folder's row into view and leaves it collapsed. The focused session is
+  // P's ended shell, so the next hibernated one is U's H-U1; U is collapsed and scrolled out of view under W's rows.
+  await app.client.evaluate(`document.querySelector('${label('rail.collapseSessions', { name: names.u })}')?.click()`)
+  await pollFor({ read: () => app.client.evaluate(ITEM_ROW(names.u)), settled: (v) => v?.rows === 0, timeoutMs: 4_000, label: 'U collapsed' })
+  await app.client.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 330, deviceScaleFactor: 0, mobile: false })
+  await new Promise((resolve) => setTimeout(resolve, 600))
+  await app.client.evaluate(SCROLL_RAIL_BOTTOM)
+  await new Promise((resolve) => setTimeout(resolve, 300))
+  const uBefore = await app.client.evaluate(ITEM_ROW(names.u))
+  await clickBucket(app, 'hibernated')
+  const uAfter = await pollFor({ read: () => app.client.evaluate(ITEM_ROW(names.u)), settled: (v) => v?.visible === true, timeoutMs: 4_000, label: "U's row in view" })
+  const collapsedTab = await app.client.evaluate(SELECTED_TAB_TEXT)
+  check(
+    results,
+    "[summary] a jump into a collapsed folder shows the folder's row and leaves it collapsed",
+    uBefore?.visible === false && uAfter?.visible === true && uAfter.rows === 0 && /H-U1/.test(collapsedTab ?? ''),
+    `before ${JSON.stringify(uBefore)} → ${JSON.stringify(uAfter)}; focused ${collapsedTab}`,
+  )
+  await app.client.send('Emulation.clearDeviceMetricsOverride')
+
+  // A narrow header, at 100% and at 175%: one line, the name keeps some width, every control stays inside.
+  await app.client.evaluate(selectRepoExpression(names.w))
+  const layouts = []
+  for (const [zoom, width] of [[100, 820], [175, 1280]]) {
+    await app.client.evaluate(`window.workspace.settings.setZoom(${zoom})`)
+    await app.client.send('Emulation.setDeviceMetricsOverride', { width, height: 700, deviceScaleFactor: 0, mobile: false })
+    await new Promise((resolve) => setTimeout(resolve, 800))
+    layouts.push({ zoom, ...(await app.client.evaluate(HEADER_LAYOUT)) })
+  }
+  await app.client.evaluate('window.workspace.settings.setZoom(null)')
+  await app.client.send('Emulation.clearDeviceMetricsOverride')
+  check(
+    results,
+    '[summary] a narrow header stays one line, keeps the name and keeps every control inside',
+    // At least the name's first few characters: 60 px is about six at this size (its minimum is 8ch).
+    layouts.every((l) => l.oneLine && l.inside && l.nameWidth >= 60),
+    JSON.stringify(layouts),
+  )
+}
+
 const SECTIONS = [
   { name: 'runViewAndSend', run: runViewAndSend },
   { name: 'runRebuiltWidth', run: runRebuiltWidth, requires: ['runViewAndSend'] },
@@ -2110,6 +2484,7 @@ const SECTIONS = [
   { name: 'runCloseConfirmAgent', run: runCloseConfirmAgent },
   { name: 'runAttention', run: runAttention },
   { name: 'runAttentionUnreported', run: runAttentionUnreported },
+  { name: 'runSummary', run: runSummary },
 ]
 
 const outcome = await runSections({

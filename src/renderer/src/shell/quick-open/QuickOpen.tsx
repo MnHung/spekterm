@@ -124,7 +124,7 @@ export function QuickOpen({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex justify-center bg-black/40 pt-[10vh]"
+      className="fixed inset-0 z-50 flex justify-center bg-scrim pt-[10vh]"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose()
       }}

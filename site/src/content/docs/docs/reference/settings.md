@@ -24,8 +24,19 @@ section back to its defaults. It does not change the other sections or the langu
 
 ## General
 
-The interface language (English or Traditional Chinese). Text that spekterm writes for the agent to read
-stays in English.
+- **Language** — the interface language (English or Traditional Chinese). Text that spekterm writes for the
+  agent to read stays in English.
+- **Theme** — **System** (the default), **Light** or **Dark**. System follows your operating system's light or
+  dark appearance, also when it changes while spekterm runs. The terminal, the editor and the side panel's
+  Graph and Timeline switch with the rest.
+  - Programs in a terminal keep their own colors: Claude Code's colors follow Claude Code's own theme
+    setting (`/config`), which spekterm does not change. In Light, spekterm darkens text that would be too
+    faint to read on the light background.
+  - The operating system's own dialogs, such as the question asked when you close the window with running
+    sessions, follow the operating system's theme, not this choice.
+- **Zoom** — the size of the whole interface, from 50% to 175%; 100% is the default. Text, spacing and the
+  terminal grow together, as in a browser. The keys `Ctrl+=` / `Ctrl+-` / `Ctrl+0` and `Ctrl` with the mouse
+  wheel change it too (see [Keyboard shortcuts](/docs/reference/keyboard-shortcuts/)).
 
 ## Terminal
 

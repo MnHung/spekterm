@@ -205,6 +205,11 @@ const PROBE_EXPRESSION = `(async () => {
           // setAutoUpdateCheck (auto-update, app-update): a boolean the store takes as off or the default; no
           // path vocabulary.
           'setAutoUpdateCheck',
+          // setTheme / setZoom / stepZoom (ui-theme-zoom-and-session-summary, ui-appearance): a theme value,
+          // a number or a direction, each whitelisted or snapped by the store; no path vocabulary.
+          'setTheme',
+          'setZoom',
+          'stepZoom',
           'listMonospaceFonts',
         ].includes(key),
     ),

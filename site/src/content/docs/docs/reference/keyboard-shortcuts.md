@@ -37,6 +37,19 @@ these keys before the terminal does. A key spekterm uses never reaches the progr
 | `Ctrl+Shift+C` / `Ctrl+Shift+V` | Copy / paste |
 | `Ctrl+C` | Always an interrupt, even with a selection on screen |
 
+## Zoom
+
+| Shortcut | Action |
+| --- | --- |
+| `Ctrl+=` (or `Ctrl++`) / `Ctrl+-` | Zoom the whole interface in / out one step (50% to 175%) |
+| `Ctrl+0` | Reset the zoom to 100% |
+| `Ctrl` + mouse wheel | Zoom in (wheel up) or out (wheel down), one step per notch |
+
+They work anywhere in the window, also in the terminal, in the editor and while a dialog is open, and the keys
+never reach the terminal. `Ctrl+Shift+-` is not a zoom key: it goes to the terminal, where shells use it to undo.
+`Ctrl` with the mouse wheel always zooms the interface, also over a program in the terminal that uses the mouse
+and over the side panel's Graph.
+
 ## Keys spekterm leaves to the terminal
 
 - **`Ctrl+P` with the terminal focused** goes to the terminal: Claude Code uses it for its previous
@@ -56,6 +69,7 @@ The shortcuts above are the same on macOS, with these differences:
 
 - **Copy and paste in the terminal** are `Cmd+C` and `Cmd+V`. `Ctrl+C` is still the interrupt.
 - **Save** is `Cmd+S`.
+- **Zoom** is `Cmd+=` / `Cmd+-` / `Cmd+0`, and `Cmd` with the mouse wheel.
 - **`Cmd+Q`** (or **Spekterm → Quit Spekterm**) quits. If sessions are running, it asks first, as closing
   the window does.
 - **There is no `Cmd+W`.** Close a session with `Ctrl+Shift+W`, as on Linux.

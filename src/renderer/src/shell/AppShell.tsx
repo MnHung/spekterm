@@ -138,7 +138,13 @@ export function AppShell(): React.JSX.Element {
 
               <Separator className={SEPARATOR_CLASS} />
 
-              <Panel minSize="360px">
+              {/*
+                The main stage's minimum is what its own two columns need: the terminal's 240 px, the separator's 3
+                and the side panel's 240. It was 360, below that sum, so a narrow window — or a 1280-px window at
+                175% zoom, 731 CSS px wide (`ui-appearance`) — squeezed the columns past their minimums instead of
+                narrowing the rail toward its own.
+              */}
+              <Panel minSize="483px">
                 <MainStage selection={selection} folders={folders} />
               </Panel>
               </Group>

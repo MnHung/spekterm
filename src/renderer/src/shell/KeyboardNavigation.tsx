@@ -1,8 +1,13 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { t } from '@shared/i18n'
 import { useSessions } from './terminal/sessions'
 import { dividerRowOf, folderIndexToRow, placeFromRow } from './rail-rows'
 import { tabCycleScopeFor } from './tab-cycle-scope'
+import { usePreferences } from './PreferencesProvider'
+import { createWheelZoom, zoomKeyDirection } from './zoom-input'
+
+/** `Cmd` takes the place of `Ctrl` for the zoom keys and wheel on macOS (as the clipboard keys do in `xterm.ts`). */
+const IS_MAC = navigator.platform.toUpperCase().includes('MAC')
 import { type RailSelection, type WorkspaceFolder, selectedFolderId } from './types'
 
 interface KeyboardNavigationProps {
@@ -99,6 +104,7 @@ export function KeyboardNavigation({
   onReorderFolder,
 }: KeyboardNavigationProps): null {
   const sessions = useSessions()
+  const { stepZoom, zoom } = usePreferences()
   /**
    * session 的歸屬鍵：folder 識別碼，或 `null`（全域項目）。
    *
@@ -177,6 +183,16 @@ export function KeyboardNavigation({
     }
 
     const onKeyDown = (event: KeyboardEvent): void => {
+      // The zoom keys (`ui-appearance`): **before** the modifier return (`Cmd` on macOS) and **outside** the
+      // dialog/menu suppression — zooming answers nothing and moves no focus. Never reach the pty or Monaco.
+      const zoom = zoomKeyDirection(event, IS_MAC)
+      if (zoom !== null) {
+        event.preventDefault()
+        event.stopPropagation()
+        void stepZoom(zoom)
+        return
+      }
+
       if (event.altKey || event.metaKey) return
 
       // 對話框與選單正在等使用者的裁決 —— 快捷鍵一律讓位。對話框：否則使用者會在回答問題的同時
@@ -315,7 +331,31 @@ export function KeyboardNavigation({
 
     window.addEventListener('keydown', onKeyDown, true)
     return () => window.removeEventListener('keydown', onKeyDown, true)
-  }, [folders, selection, itemKey, onSelectGlobal, onSelectFolder, onReorderFolder, sessions])
+  }, [folders, selection, itemKey, onSelectGlobal, onSelectFolder, onReorderFolder, sessions, stepZoom])
+
+  /*
+    `Ctrl`-wheel zooms the interface wherever the pointer is (`ui-appearance`). **Stopping propagation, not
+    `preventDefault`, is what keeps it from xterm**: xterm's wheel handlers (bubble phase, on its own elements)
+    ignore `defaultPrevented` — on the alternate screen it would turn the wheel into arrow keys for the pty, and
+    with mouse tracking it would report it. The same stop keeps it from Graph's d3-zoom. `passive: false` so that
+    `preventDefault` can stop the viewport's own scroll.
+  */
+  const zoomRef = useRef(zoom)
+  useEffect(() => {
+    zoomRef.current = zoom
+  }, [zoom])
+  useEffect(() => {
+    const wheelZoom = createWheelZoom()
+    const onWheel = (event: WheelEvent): void => {
+      if (!(IS_MAC ? event.metaKey : event.ctrlKey)) return
+      event.preventDefault()
+      event.stopPropagation()
+      const direction = wheelZoom(event, zoomRef.current)
+      if (direction !== null) void stepZoom(direction)
+    }
+    window.addEventListener('wheel', onWheel, { capture: true, passive: false })
+    return () => window.removeEventListener('wheel', onWheel, { capture: true })
+  }, [stepZoom])
 
   return null
 }

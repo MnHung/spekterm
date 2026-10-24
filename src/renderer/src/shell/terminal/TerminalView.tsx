@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { SpawnTarget } from '../types'
 import { ContextMenu, type MenuItem } from '../files/dialogs'
 import { usePreferences } from '../PreferencesProvider'
+import { useColorScheme } from '../../color-scheme'
 import { CloseOffer } from './CloseOffer'
 import { type SessionStatus, useSessions } from './sessions'
 import { type XtermHandle, createXterm } from './xterm'
@@ -68,6 +69,7 @@ export function TerminalView({
   // `agent-session-control`).
   const { closeOffered, close, keepCloseOffer } = useSessions()
   const { terminal: termPrefs, gpuEnabled } = usePreferences()
+  const colorScheme = useColorScheme()
   const hostRef = useRef<HTMLDivElement | null>(null)
     const handleRef = useRef<XtermHandle | null>(null)
   /** The dormant screen's Wake button. It takes focus where the terminal would (`session-persistence`). */
@@ -190,6 +192,9 @@ export function TerminalView({
       handleRef.current = null
     }
   }, [sessionId, attach, setTitle, restoredScrollbackOf, scheduleSnapshot])
+
+  // The palette follows the theme (`ui-appearance`) without touching the pty: no fit, no resize.
+  useEffect(() => handleRef.current?.setColorScheme(colorScheme), [colorScheme])
 
   // 讓側欄之類的遠端呼叫端有辦法把焦點交回這個終端 —— xterm 的把手只有這裡握著。
   // 註冊獨立於上面那個掛載 effect：它的 deps 多，重跑一次就白白解註冊再註冊一次。

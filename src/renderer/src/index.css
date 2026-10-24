@@ -1,7 +1,13 @@
 @import 'tailwindcss';
 @import '@spekjs/ui/styles.css';
 
-/* 取自 docs/workspace-mockup.html 的 :root 變數 —— 雛型是 UI 的權威來源 */
+/*
+ * 取自 docs/workspace-mockup.html 的 :root 變數 —— 雛型是 UI 的權威來源。
+ *
+ * These are the dark palette; the light palette redefines the same color tokens below
+ * (`ui-appearance`). One exception to the mockup: `--color-ink-faint` is `#6b7786`, not `#5b6675`,
+ * which was 2.81:1 on `--color-hover` — under the 3:1 floor `scripts/theme-contrast.test.mjs` holds.
+ */
 @theme {
   --color-shell: #07090c;
   --color-rail: #0a0c0f;
@@ -11,7 +17,7 @@
   --color-hairline: #1e242c;
   --color-ink: #e2e8f0;
   --color-ink-dim: #94a3b8;
-  --color-ink-faint: #5b6675;
+  --color-ink-faint: #6b7786;
   --color-accent: #f59e0b;
   --color-danger: #f87171;
 
@@ -74,6 +80,39 @@
   --text-sm--line-height: calc(1 / 0.75);
   --text-base--line-height: calc(1.25 / 0.875);
   --text-lg--line-height: normal;
+}
+
+/*
+ * The light palette (`ui-appearance`): the same tokens, other values, chosen by `prefers-color-scheme`, which
+ * the main process drives through `nativeTheme.themeSource` (System / Light / Dark). Every utility, opacity
+ * modifier (`color-mix` over the variable) and the `--spek-*` contract below read the variables, so nothing
+ * else changes. `scripts/theme-contrast.test.mjs` holds both palettes to their contrast floors and
+ * `scripts/theme-palette.test.mjs` holds the terminal and editor wrappers' literals to these values.
+ *
+ * `color-scheme` makes the engine-drawn controls (scrollbars, form controls) follow the same choice.
+ */
+:root {
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --color-shell: #fbfcfd;
+    --color-rail: #f1f3f6;
+    --color-stage: #f7f8fa;
+    --color-panel: #ffffff;
+    --color-hover: #e8ecf1;
+    --color-hairline: #d4dae2;
+    --color-ink: #0f172a;
+    --color-ink-dim: #475569;
+    --color-ink-faint: #6b7686;
+    --color-accent: #b45309;
+    --color-danger: #dc2626;
+    --color-accent-soft: rgba(180, 83, 9, 0.12);
+    --color-blue: #2563eb;
+    --color-green: #059669;
+    --color-scrim: rgba(15, 23, 42, 0.35);
+  }
 }
 
 /*

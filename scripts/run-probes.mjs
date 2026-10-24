@@ -74,6 +74,9 @@ cleaned.forEach((k) => delete env[k])
  * 而只改其一就會得到與宣稱相反的結果）。在這裡釘成一致的值，讓「完整驗收」與「單支入口」
  * 不會在不同的語言環境下跑同一段 —— 需要另一種語言的段落自己在子行程的 env 裡覆寫。
  */
+// `GTK_THEME` in the developer's shell decides System on the virtual display (`ui-appearance`); the seeded profiles
+// pin Dark, and the sections that test System set it themselves.
+delete env.GTK_THEME
 env.LANG = 'en_US.UTF-8'
 env.LANGUAGE = 'en_US:en'
 

@@ -51,6 +51,8 @@ const MODULE_ALLOW = new Set([
   '@spekjs/core/graph-node-id',
   // The side panel's artifact order, applied to OpenSpec answers for devices (`remote-openspec.ts`): a pure sort.
   '@spekjs/core/artifact-order',
+  // The zoom steps and theme values (`ui-appearance`): pure data and arithmetic.
+  '@shared/appearance/zoom',
   '@shared/hibernation/settings',
   '@shared/i18n',
   '@shared/i18n/languages',

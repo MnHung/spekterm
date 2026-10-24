@@ -74,14 +74,21 @@ async function clickUpdateButton(client, text) {
   })
   if (!at) return false
   for (const type of ['mouseMoved', 'mousePressed', 'mouseReleased']) {
-    await client.send('Input.dispatchMouseEvent', {
-      type,
-      x: at.x,
-      y: at.y,
-      button: type === 'mouseMoved' ? 'none' : 'left',
-      buttons: type === 'mousePressed' ? 1 : 0,
-      clickCount: 1,
-    })
+    try {
+      await client.send('Input.dispatchMouseEvent', {
+        type,
+        x: at.x,
+        y: at.y,
+        button: type === 'mouseMoved' ? 'none' : 'left',
+        buttons: type === 'mousePressed' ? 1 : 0,
+        clickCount: 1,
+      })
+    } catch (error) {
+      // A click that ends the app (Restart to update, confirmed) can close the connection before the release's
+      // answer arrives; the caller reads the outcome from the exit and from disk.
+      if (type === 'mouseReleased' && String(error?.message).startsWith('CDP 連線已關閉')) return true
+      throw error
+    }
   }
   return true
 }

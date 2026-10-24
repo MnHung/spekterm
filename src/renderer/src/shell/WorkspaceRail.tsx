@@ -8,7 +8,8 @@ import { mostUrgent } from '@shared/wait/attention'
 import { type SessionState, useSessions } from './terminal/sessions'
 import { LineageMarkers, useLineage } from './terminal/lineage'
 import { useCompletedAmong, useLifecycle } from './terminal/lifecycle'
-import { type Forest, ROOT, blockOf, buildForest, moveBlock } from './session-forest'
+import { type Forest, ROOT, blockOf, moveBlock } from './session-forest'
+import { railForest, railSections } from './rail-order'
 import { dividerRowOf, folderIndexToRow, placeFromRow, rowToFolderIndex } from './rail-rows'
 import { useDragReorder } from './useDragReorder'
 import { useScrollIntoView } from './useScrollIntoView'
@@ -373,16 +374,14 @@ function RailRow({
    * 序位不同，以序位為鍵的話捲動與命中判定會指向別的列。
    */
   const rowRefs = useRef(new Map<string, HTMLDivElement>())
+  const headerElement = useRef<HTMLDivElement | null>(null)
   const lineage = useLineage()
 
   /**
    * 這個項目的樹（`session-forest`）。母節點必須**存在且屬於這個項目** —— 不存在的來源、別的
    * 項目的來源，子 session 一律以頂層呈現，它的來源由標示表達。
    */
-  const forest = buildForest(
-    sessions.map((session) => ({ id: session.id, parentId: session.lineage?.parentId })),
-    new Set(sessions.filter((session) => lineage.exists(session)).map((session) => session.id)),
-  )
+  const forest = railForest(sessions, lineage.exists)
   const byId = new Map(sessions.map((session) => [session.id, session]))
   const order = sessions.map((session) => session.id)
   const moveSiblings = (siblings: readonly string[], from: number, to: number): void => {
@@ -408,12 +407,25 @@ function RailRow({
    * 使用者手動捲到的位置搶回來一次。
    */
   const focusedIndex = forest.rows.findIndex((row) => row.id === focusedSessionId)
+  /*
+    Which of the rail's two targets wins when both cannot be shown: the item's row (the rail's guard) or the focused
+    session's row (this one). Selecting the item alone (`Ctrl+↓`, a click on its row) keeps the item's row in view;
+    going to a session — the header summary, a lineage marker — changes the focused session in the same commit, and
+    then the session's row wins (`session-wait-indicator`). Derived during render from the previous values.
+  */
+  const [seen, setSeen] = useState({ selected, focusedSessionId, rowLast: false })
+  if (seen.selected !== selected || seen.focusedSessionId !== focusedSessionId) {
+    setSeen({ selected, focusedSessionId, rowLast: selected && seen.focusedSessionId !== focusedSessionId })
+  }
   const rowGuard = useScrollIntoView(
     selected && focusedSessionId !== null && focusedIndex !== -1
       ? `${focusedSessionId}:${focusedIndex}`
       : null,
-    () => (focusedSessionId === null ? undefined : rowRefs.current.get(focusedSessionId)),
+    // A collapsed item has no session rows: its own row, which carries its dot, stands in (the item stays collapsed).
+    () =>
+      (focusedSessionId === null ? undefined : rowRefs.current.get(focusedSessionId)) ?? headerElement.current,
     'block',
+    { last: seen.rowLast },
   )
 
   const items: MenuItem[] = menu
@@ -533,7 +545,10 @@ function RailRow({
       }
     >
       <div
-        ref={headerRef}
+        ref={(element) => {
+          headerElement.current = element
+          headerRef?.(element)
+        }}
         role="button"
         tabIndex={0}
         /*
@@ -895,6 +910,9 @@ export function WorkspaceRail({
     [selectItem, sessions],
   )
 
+  // The two sections in the order the header summary also walks (`rail-order.ts`).
+  const sections = railSections(folders)
+
   /** 一列 folder 的完整接線 —— 兩段共用，差別只在它的列索引與置頂狀態。 */
   const renderFolder = (folder: WorkspaceFolder, folderIndex: number): React.JSX.Element => {
     const row = folderIndexToRow(folderIndex, dividerRow)
@@ -1024,7 +1042,7 @@ export function WorkspaceRail({
           dragged={false}
         />
 
-        {folders.filter((folder) => folder.pinned).map(renderFolder)}
+        {sections.pinned.map(({ folder, folderIndex }) => renderFolder(folder, folderIndex))}
       </ul>
 
       {/*
@@ -1080,10 +1098,7 @@ export function WorkspaceRail({
         {folders.length === 0 ? (
           <li className="px-3 py-6 text-sm text-ink-faint">{t('rail.empty')}</li>
         ) : (
-          folders
-            .map((folder, folderIndex) => ({ folder, folderIndex }))
-            .filter(({ folder }) => !folder.pinned)
-            .map(({ folder, folderIndex }) => renderFolder(folder, folderIndex))
+          sections.rest.map(({ folder, folderIndex }) => renderFolder(folder, folderIndex))
         )}
       </ul>
 

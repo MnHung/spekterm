@@ -9,6 +9,7 @@ import * as monaco from 'monaco-editor/editor'
 import 'monaco-editor/features/register.all'
 import './languages'
 import './monaco-workers'
+import { currentColorScheme, useColorScheme } from '../color-scheme'
 
 /**
  * 編輯器 wrapper —— renderer 中唯一直接依賴 `monaco-editor` 的模組（由 eslint 的
@@ -18,21 +19,31 @@ import './monaco-workers'
  * CodeMirror 6 的可能，屆時替換成本必須侷限在本模組內。
  */
 
-const THEME = 'spek-dark'
+/** The editor theme per palette (`ui-appearance`). Monaco's theme is global: one `setTheme` switches every editor. */
+const THEMES = { dark: 'spek-dark', light: 'spek-light' } as const
 
 // 取自 docs/workspace-mockup.html 的 side panel 配色，使編輯器不會像是貼上去的另一個 app。
-monaco.editor.defineTheme(THEME, {
-  base: 'vs-dark',
-  inherit: true,
-  rules: [],
-  colors: {
+// The values are the tokens `--color-panel` / `ink-faint` / `ink-dim` / `hover` of each palette; Monaco takes no
+// CSS variables, so `scripts/theme-palette.test.mjs` holds these literals to `index.css`.
+export const EDITOR_COLORS = {
+  dark: {
     'editor.background': '#14181d',
     'editorGutter.background': '#14181d',
-    'editorLineNumber.foreground': '#5b6675',
+    'editorLineNumber.foreground': '#6b7786',
     'editorLineNumber.activeForeground': '#94a3b8',
     'editor.lineHighlightBackground': '#1b2027',
   },
-})
+  light: {
+    'editor.background': '#ffffff',
+    'editorGutter.background': '#ffffff',
+    'editorLineNumber.foreground': '#6b7686',
+    'editorLineNumber.activeForeground': '#475569',
+    'editor.lineHighlightBackground': '#e8ecf1',
+  },
+} as const
+
+monaco.editor.defineTheme(THEMES.dark, { base: 'vs-dark', inherit: true, rules: [], colors: EDITOR_COLORS.dark })
+monaco.editor.defineTheme(THEMES.light, { base: 'vs', inherit: true, rules: [], colors: EDITOR_COLORS.light })
 
 /**
  * 依檔名判定語言。
@@ -91,6 +102,7 @@ export function CodeEditor({
 }: CodeEditorProps): React.JSX.Element {
   const hostRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null)
+  const colorScheme = useColorScheme()
 
   // 以 ref 轉交回呼，讓編輯器不必因為父層每次 render 產生的新函式而重建。
   const onChangeRef = useRef(onChange)
@@ -113,7 +125,7 @@ export function CodeEditor({
       // 後者是 Monaco 多年的穩定路徑，且其 `readonly` 屬性會正確反映唯讀狀態 ——
       // native EditContext 的 `ime-text-area` 恆為 readonly，無從據以驗收。
       editContext: false,
-      theme: THEME,
+      theme: THEMES[currentColorScheme()],
       automaticLayout: true,
       minimap: { enabled: false },
       scrollBeyondLastLine: false,
@@ -157,6 +169,9 @@ export function CodeEditor({
   useEffect(() => {
     editorRef.current?.updateOptions({ readOnly, domReadOnly: readOnly })
   }, [readOnly])
+
+  // The theme follows the palette; the model, and with it an unsaved edit, is untouched.
+  useEffect(() => monaco.editor.setTheme(THEMES[colorScheme]), [colorScheme])
 
   return <div ref={hostRef} className={className} />
 }

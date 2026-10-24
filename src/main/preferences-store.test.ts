@@ -719,3 +719,76 @@ describe('update preferences (app-update)', () => {
     assert.equal(projected.gpuAcceleration, false)
   })
 })
+
+describe('theme and zoom (ui-appearance)', () => {
+  it('a file written before them reads as System and 100%, every other preference unchanged', () => {
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({ version: PREFERENCES_VERSION, terminal: { fontSize: 15 }, ui: { language: 'zh-TW' } }),
+    )
+    const store = new PreferencesStore(configPath)
+    store.load()
+    assert.equal(store.ui().theme, undefined)
+    assert.equal(store.zoom(), 100)
+    assert.equal(store.get().fontSize, 15)
+    assert.equal(store.ui().language, 'zh-TW')
+  })
+
+  it('an unknown theme reads as System and the file is not quarantined', () => {
+    // Control: quarantining on an unknown value (returning null from `parsePreferences`) turns both red.
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({ version: PREFERENCES_VERSION, terminal: { fontSize: 15 }, ui: { theme: 'sepia' } }),
+    )
+    const store = new PreferencesStore(configPath)
+    store.load()
+    assert.equal(store.ui().theme, undefined)
+    assert.equal(store.get().fontSize, 15)
+    assert.equal(corruptFiles().length, 0)
+  })
+
+  it('an off-step zoom snaps to the nearest step, the smaller on a tie; a non-number is unset', () => {
+    const zoomOf = (value: unknown): number | undefined =>
+      parsePreferences(JSON.stringify({ version: PREFERENCES_VERSION, terminal: {}, ui: { zoom: value } }))?.ui.zoom
+    assert.equal(zoomOf(126), 125)
+    assert.equal(zoomOf(105), 100)
+    assert.equal(zoomOf(999), 175)
+    assert.equal(zoomOf('150'), undefined)
+  })
+
+  it('theme and zoom survive a restart; null resets them by removing the field', () => {
+    const first = new PreferencesStore(configPath)
+    first.load()
+    first.setTheme('dark')
+    first.setZoom(125)
+    const second = new PreferencesStore(configPath)
+    second.load()
+    assert.deepEqual(second.ui(), { theme: 'dark', zoom: 125 })
+    second.setTheme(null)
+    second.setZoom(null)
+    assert.deepEqual(JSON.parse(fs.readFileSync(configPath, 'utf8')).ui, {})
+  })
+
+  it('stepping zooms one step from the zoom in effect and stops at the ends', () => {
+    const store = new PreferencesStore(configPath)
+    store.load()
+    assert.equal(store.stepZoom(1).zoom, 110)
+    store.setZoom(175)
+    assert.equal(store.stepZoom(1).zoom, 175)
+    assert.equal(store.stepZoom(0).zoom, undefined, 'reset stores the default by removing it')
+    assert.equal(store.zoom(), 100)
+  })
+
+  it('both reach the renderer, and changing them keeps the language and the terminal preferences', () => {
+    const store = new PreferencesStore(configPath)
+    store.load()
+    store.setLanguage('zh-TW')
+    store.setTerminalFont('Fira Code', 15, null)
+    store.setTheme('light')
+    const projected = projectPreferences(store.get(), store.setZoom(150), store.updates())
+    assert.equal(projected.theme, 'light')
+    assert.equal(projected.zoom, 150)
+    assert.equal(projected.language, 'zh-TW')
+    assert.equal(projected.fontFamily, 'Fira Code')
+  })
+})

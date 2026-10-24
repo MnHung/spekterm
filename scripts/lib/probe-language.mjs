@@ -20,6 +20,12 @@
  * 「不存在才寫」讓這兩者不必列為例外 —— 它們寫在前，這裡就不動。真正要不寫的只有
  * **驗證偵測機制本身**的那一段（它要的正是「檔案不存在」），以 `seedLanguage: false` 明示。
  */
+/*
+ * **The theme is pinned to Dark with the language** (`ui-appearance`). The default is System, and the virtual
+ * display resolves System to light, so an unseeded profile would run every probe — and the website's screenshots —
+ * in the light palette; `probe:openspec` compares a dark color. The runners clear `GTK_THEME`, which would flip
+ * System the other way on the virtual display.
+ */
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -33,17 +39,19 @@ export const PROBE_LANGUAGE = 'en'
  * 在 profile 中種下 UI 語言。
  *
  * @param {string} profileDir `--user-data-dir` 指向的目錄
- * @param {{ language?: string }} [options]
+ * @param {{ language?: string, theme?: string }} [options]
  * @returns {string | null} 寫出的檔案路徑；因既有檔案而略過時回 `null`
  */
-export function seedLanguage(profileDir, { language = PROBE_LANGUAGE } = {}) {
+export const PROBE_THEME = 'dark'
+
+export function seedLanguage(profileDir, { language = PROBE_LANGUAGE, theme = PROBE_THEME } = {}) {
   const file = join(profileDir, 'preferences.json')
   if (existsSync(file)) return null
 
   mkdirSync(profileDir, { recursive: true })
   writeFileSync(
     file,
-    `${JSON.stringify({ version: PREFERENCES_VERSION, terminal: {}, ui: { language } }, null, 2)}\n`,
+    `${JSON.stringify({ version: PREFERENCES_VERSION, terminal: {}, ui: { language, theme } }, null, 2)}\n`,
     'utf8',
   )
   return file

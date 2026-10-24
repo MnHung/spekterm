@@ -144,6 +144,9 @@ function LoadedChange({
     panel?.focus({ preventScroll: true })
   }
 
+  // The artifact `Ctrl+Tab` chose, until it has rendered selected (see the effect after the handler).
+  const cycledTo = useRef<string | null>(null)
+
   // The latest artifact order and selection, for the `Ctrl+Tab` handler registered once below.
   const latest = useRef({ ids: [] as string[], activeId: undefined as string | undefined, choose })
   useEffect(() => {
@@ -166,11 +169,23 @@ function LoadedChange({
         if (ids.length === 0) return
         const index = currentId === undefined ? 0 : ids.indexOf(currentId)
         const next = ids[(index + delta + ids.length) % ids.length]
+        cycledTo.current = next
         chooseLatest(next, currentId)
-        tabRefs.current.get(next)?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
       },
     })
   }, [])
+
+  /*
+    The chosen tab is scrolled to **after** it has rendered as the selected one: the selected tab is wider, and a
+    scroll from the handler measured the unselected width, leaving the tab's last pixels outside the strip
+    (`probe:openspec`: "the tab chosen with the keyboard is visible in the tab strip").
+  */
+  const activeArtifactId = active?.id
+  useEffect(() => {
+    if (cycledTo.current === null || cycledTo.current !== activeArtifactId) return
+    cycledTo.current = null
+    tabRefs.current.get(activeArtifactId)?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  }, [activeArtifactId])
 
   // 順序來自敘事順序而非該 change 的 schema 時，要說出來（判斷與理由在 `schema-order.ts`）。
   const fallback = fallbackReason(data.status, data.schemaOrder)

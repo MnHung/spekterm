@@ -16,6 +16,7 @@ import { QuickOpen } from './quick-open/QuickOpen'
 import { usePreferences } from './PreferencesProvider'
 import { PanelSwitch } from './side-panel/PanelSwitch'
 import { SidePanel } from './side-panel/SidePanel'
+import { SessionSummary } from './SessionSummary'
 import { SessionTabs } from './terminal/SessionTabs'
 import { ConversationView } from './terminal/ConversationView'
 import { TerminalView } from './terminal/TerminalView'
@@ -114,6 +115,12 @@ export function MainStage({ selection, folders }: MainStageProps): React.JSX.Ele
   const itemKey: string | null = selection?.kind === 'folder' ? selection.id : null
   const folderSessions = selection ? sessions.forFolder(itemKey) : []
   const focusedId = selection ? sessions.focusedIdFor(itemKey) : null
+
+  // The header (`session-wait-indicator`): the item's name, the workspace summary, the side panel controls.
+  const headerRef = useRef<HTMLElement>(null)
+  const nameRef = useRef<HTMLSpanElement>(null)
+  const controlsRef = useRef<HTMLDivElement>(null)
+  const headerName = focusedFolder ? focusedFolder.name : selection ? t('rail.globalName') : t('stage.noRepo')
 
   // **「讀」那半：panelFolder。** side panel 呈現 rail 上選中之項目的側欄座標所指的 repo
   // （`side-panel-source`）—— **與有沒有 session 無關**。座標未曾改動時（`sourceFolderId` 省略）
@@ -451,22 +458,38 @@ export function MainStage({ selection, folders }: MainStageProps): React.JSX.Ele
 
   return (
     <main aria-label={t('stage.label')} className="flex h-full flex-col bg-stage">
-      <header className="flex items-center gap-3 border-b border-hairline px-4 py-2 text-base">
+      <header
+        ref={headerRef}
+        className="relative flex items-center gap-3 border-b border-hairline px-4 py-2 text-base"
+      >
         {/*
           全域項目沒有名稱與路徑可呈現 —— 但它**已經被選中了**，因此不得沿用「尚未選擇 repo」
           那句（那在叫使用者去做一件他剛做完的事）。
+
+          **The name stays the header's first child** (probes read the header's first line) and keeps at least its
+          first few characters; the path is on the rail row's tooltip (`session-wait-indicator`).
         */}
-        <span className={selection ? 'text-ink' : 'text-ink-faint'}>
-          {focusedFolder ? focusedFolder.name : selection ? t('rail.globalName') : t('stage.noRepo')}
+        <span ref={nameRef} className={`min-w-[8ch] truncate ${selection ? 'text-ink' : 'text-ink-faint'}`}>
+          {headerName}
         </span>
-        {focusedFolder ? (
-          <span className="truncate text-sm text-ink-faint">{focusedFolder.path}</span>
-        ) : (
-          selection && <span className="truncate text-sm text-ink-faint">{t('stage.globalHint')}</span>
-        )}
+
+        <SessionSummary
+          folders={folders}
+          focusedId={focusedId}
+          headerRef={headerRef}
+          nameRef={nameRef}
+          controlsRef={controlsRef}
+          name={headerName}
+        />
 
         <span className="flex-1" />
 
+        {/*
+          Not `shrink-0`: in a narrow header their labels wrap rather than leave the header, as they did before the
+          summary existed. The summary measures their natural width (`SessionSummary`), so it never takes the room
+          they need on one line.
+        */}
+        <div ref={controlsRef} className="flex items-center gap-3">
         <PanelSwitch
           active={activeIdentity}
           openSpecEnabled={openSpecEnabled}
@@ -498,6 +521,7 @@ export function MainStage({ selection, folders }: MainStageProps): React.JSX.Ele
         >
           {maximized ? `⤡ ${t('stage.restore')}` : `⤢ ${t('stage.maximize')}`}
         </button>
+        </div>
       </header>
 
       {/*

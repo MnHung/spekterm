@@ -4,6 +4,7 @@ import { DEFAULT_LANGUAGE, isSupportedLanguage, setLanguage } from '@shared/i18n
 import { type ProjectedPreferences, projectPreferences } from '../preferences-store'
 import type { PreferencesStore } from '../preferences-store'
 import { collator } from '@shared/i18n/locale'
+import { isTheme } from '@shared/appearance/zoom'
 
 export const SETTINGS_CHANNELS = {
   get: 'workspace:settings:get',
@@ -14,6 +15,9 @@ export const SETTINGS_CHANNELS = {
   setAutoHibernate: 'workspace:settings:setAutoHibernate',
   setLanguage: 'workspace:settings:setLanguage',
   setAutoUpdateCheck: 'workspace:settings:setAutoUpdateCheck',
+  setTheme: 'workspace:settings:setTheme',
+  setZoom: 'workspace:settings:setZoom',
+  stepZoom: 'workspace:settings:stepZoom',
   listMonospaceFonts: 'workspace:settings:listMonospaceFonts',
 } as const
 
@@ -72,7 +76,13 @@ function listMonospaceFonts(): Promise<string[]> {
  */
 export function registerSettingsHandlers(
   store: PreferencesStore,
-  hooks: { autoUpdateCheckChanged?: () => void } = {},
+  hooks: {
+    autoUpdateCheckChanged?: () => void
+    /** The theme was stored: main applies it (`nativeTheme.themeSource`, the window background). */
+    themeChanged?: () => void
+    /** The zoom was stored: main applies it to the window's zoom factor. */
+    zoomChanged?: () => void
+  } = {},
 ): void {
   ipcMain.handle(SETTINGS_CHANNELS.get, (): ProjectedPreferences =>
     projectPreferences(store.get(), store.ui(), store.updates()),
@@ -146,6 +156,27 @@ export function registerSettingsHandlers(
     )
     hooks.autoUpdateCheckChanged?.()
     return projected
+  })
+
+  // `ui-appearance`: the whitelist is the store's (three theme values; zoom snapped to a step). Main applies
+  // the value before answering, so the renderer's `prefers-color-scheme` and zoom have already changed.
+  ipcMain.handle(SETTINGS_CHANNELS.setTheme, (_event, theme: unknown): ProjectedPreferences => {
+    const applied = store.setTheme(isTheme(theme) ? theme : null)
+    hooks.themeChanged?.()
+    return projectPreferences(store.get(), applied, store.updates())
+  })
+
+  ipcMain.handle(SETTINGS_CHANNELS.setZoom, (_event, percent: unknown): ProjectedPreferences => {
+    const applied = store.setZoom(typeof percent === 'number' ? percent : null)
+    hooks.zoomChanged?.()
+    return projectPreferences(store.get(), applied, store.updates())
+  })
+
+  // Stepping is computed here, from the stored zoom, so two quick keys never step from the same value.
+  ipcMain.handle(SETTINGS_CHANNELS.stepZoom, (_event, direction: unknown): ProjectedPreferences => {
+    const applied = store.stepZoom(direction === 1 || direction === -1 ? direction : 0)
+    hooks.zoomChanged?.()
+    return projectPreferences(store.get(), applied, store.updates())
   })
 
   ipcMain.handle(SETTINGS_CHANNELS.listMonospaceFonts, (): Promise<string[]> =>

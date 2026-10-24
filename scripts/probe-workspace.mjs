@@ -24,6 +24,7 @@ import { PROBE_PORTS } from './lib/ports.mjs'
 import { seedLanguage } from './lib/probe-language.mjs'
 import { SETTINGS_DIALOG, awaitApplied, closeSettings, inSettings, openSettings, showSection } from './lib/settings.mjs'
 import { runUpdateSections } from './probe-workspace-update.mjs'
+import { runAppearanceSections } from './probe-workspace-appearance.mjs'
 
 const DEBUG_PORT = PROBE_PORTS.workspace.main
 const results = []
@@ -2097,6 +2098,9 @@ try {
 
   // ── app-update: the update check, against local feeds (probe-workspace-update.mjs) ──
   await runUpdateSections({ results, port: DEBUG_PORT, mkTemp })
+
+  // ── ui-appearance: the theme and the interface zoom (probe-workspace-appearance.mjs) ──
+  await runAppearanceSections({ results, port: DEBUG_PORT, mkTemp })
 
   exitCode = results.every(Boolean) ? 0 : 1
 } catch (error) {

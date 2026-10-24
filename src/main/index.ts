@@ -15,6 +15,7 @@ import { registerOpenSpecHandlers } from './ipc/openspec'
 import { registerPanelHandlers } from './ipc/panel'
 import { broadcastLifecycle, registerHandoffHandlers, registerKeepCloseOffer, revealHandoffBrief } from './ipc/handoff'
 import { registerSettingsHandlers } from './ipc/settings'
+import { applyTheme, applyZoom, configureAppearance, followZoom, windowBackground } from './appearance'
 import { broadcastUpdate, registerUpdateHandlers, sendShowAbout } from './ipc/update'
 import { registerSlackHandlers } from './ipc/slack'
 import { registerShellHandlers } from './ipc/shell'
@@ -180,7 +181,8 @@ function createWindow({ dirty, store, sessions, closeAsk, presence, onRendererGo
     width: 1280,
     height: 800,
     show: false,
-    backgroundColor: '#0a0c0f',
+    // The resolved palette's shell color, so the window does not flash the other palette before the page paints.
+    backgroundColor: windowBackground(),
     webPreferences: {
       preload: join(currentDir, '../preload/index.mjs'),
       ...trustModel,
@@ -192,6 +194,8 @@ function createWindow({ dirty, store, sessions, closeAsk, presence, onRendererGo
 
   // 在載入任何內容之前掛上。renderer 從第一幀起就會渲染使用者 repo 裡的不受信任內容。
   applyNavigationGuards(window.webContents)
+  // Before loading too: the stored zoom must reach the page's first script (`appearance.ts`).
+  followZoom(window.webContents)
   // The one close handler: unsaved changes and running sessions, in one dialog (`close-guard.ts`).
   const contentsId = window.webContents.id
   guardedWindows.set(
@@ -407,6 +411,8 @@ void app.whenReady().then(async () => {
   const preferencesStore = new PreferencesStore(join(app.getPath('userData'), 'preferences.json'))
   preferencesStore.load()
   await applyStartupLanguage(preferencesStore)
+  // Before any window: its background and the page's first `prefers-color-scheme` follow the stored theme.
+  configureAppearance(preferencesStore)
 
   // 側欄座標（來源 repo／工作目錄／錨定的 change）。**刻意不與 folder 清單同居於
   // `workspace.json`**：那份檔案的解析是 all-or-nothing，而它損毀的代價是「使用者失去所有 repo」
@@ -541,7 +547,11 @@ void app.whenReady().then(async () => {
       quitInstaller?.willQuit()
     })
   }
-  registerSettingsHandlers(preferencesStore, { autoUpdateCheckChanged: () => updates?.coordinator.autoCheckChanged() })
+  registerSettingsHandlers(preferencesStore, {
+    autoUpdateCheckChanged: () => updates?.coordinator.autoCheckChanged(),
+    themeChanged: applyTheme,
+    zoomChanged: applyZoom,
+  })
   registerSlackHandlers({
     settings: slackSettingsStore,
     secrets: secretStore,

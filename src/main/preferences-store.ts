@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 import { type Language, isSupportedLanguage } from '@shared/i18n/languages'
+import { DEFAULT_ZOOM, type Theme, isTheme, snapZoom, stepZoom as stepZoomFrom } from '@shared/appearance/zoom'
 
 /**
  * 偏好設定檔的結構版本。從第一天就寫入 —— 沒有版本欄位的舊檔日後無法安全遷移。
@@ -72,6 +73,10 @@ export interface TerminalPreferences {
 export interface UiPreferences {
   /** UI 語言。**未設定＝英文** —— 而「未設定」同時是「首次啟動時要不要偵測」的判準之一。 */
   language?: Language
+  /** The theme (`ui-appearance`). **Unset = System**; an unknown stored value reads as unset, not as a broken file. */
+  theme?: Theme
+  /** The interface zoom in percent, one of `ZOOM_STEPS`. **Unset = 100%**; an off-step value snaps to the nearest step. */
+  zoom?: number
 }
 
 /**
@@ -176,6 +181,11 @@ function sanitizeLanguage(value: unknown): Language | undefined {
   return isSupportedLanguage(value) ? value : undefined
 }
 
+/** The theme's sanitizer: a whitelist, like the language's — anything else is unset (= System). */
+function sanitizeTheme(value: unknown): Theme | undefined {
+  return isTheme(value) ? value : undefined
+}
+
 /** 一個偏好欄位必須回答的兩件事。**沒有任何一個有預設值** —— 見 `PREFERENCE_FIELDS`。 */
 interface FieldSpec<T> {
   /**
@@ -250,6 +260,8 @@ const PREFERENCE_FIELDS = {
  */
 const UI_PREFERENCE_FIELDS = {
   language: { sanitize: sanitizeLanguage, toRenderer: true },
+  theme: { sanitize: sanitizeTheme, toRenderer: true },
+  zoom: { sanitize: snapZoom, toRenderer: true },
 } satisfies {
   [K in keyof Required<UiPreferences>]: FieldSpec<Required<UiPreferences>[K]>
 }
@@ -519,6 +531,38 @@ export class PreferencesStore {
 
     this.commit({ ui: next })
     return this.ui()
+  }
+
+  /** Set the theme. `null` (or an unknown value) = the default, System, stored by removing the field. */
+  setTheme(theme: Theme | null): UiPreferences {
+    const next: UiPreferences = { ...this.uiPreferences }
+    const sanitized = sanitizeTheme(theme)
+    if (sanitized === undefined) delete next.theme
+    else next.theme = sanitized
+
+    this.commit({ ui: next })
+    return this.ui()
+  }
+
+  /** The zoom in effect, in percent, the default applied. */
+  zoom(): number {
+    return this.uiPreferences.zoom ?? DEFAULT_ZOOM
+  }
+
+  /** Set the zoom. `null` (or a non-number) = the default, 100%, stored by removing the field; other values snap to a step. */
+  setZoom(percent: number | null): UiPreferences {
+    const next: UiPreferences = { ...this.uiPreferences }
+    const sanitized = snapZoom(percent)
+    if (sanitized === undefined || sanitized === DEFAULT_ZOOM) delete next.zoom
+    else next.zoom = sanitized
+
+    this.commit({ ui: next })
+    return this.ui()
+  }
+
+  /** Zoom one step in (`1`) or out (`-1`) from the zoom in effect, or reset (`0`). */
+  stepZoom(direction: -1 | 0 | 1): UiPreferences {
+    return this.setZoom(stepZoomFrom(this.zoom(), direction))
   }
 
   /** The current update preferences (a copy). */

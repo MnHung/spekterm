@@ -147,3 +147,24 @@ export async function pressEscape(client) {
 export function awaitApplied(client, expression, settled, what, timeoutMs = 5_000) {
   return pollFor({ read: () => client.evaluate(expression), settled, timeoutMs, label: what })
 }
+
+/**
+ * Chooses `value` in the Settings `<select>` labelled by `labelKey`. React listens for `change` on a select; the
+ * native setter is what makes React see the new value (as `setField` does for inputs).
+ */
+export async function setSelect(client, labelKey, value) {
+  const selector = inSettings(`select${label(labelKey)}`)
+  const found = await client.evaluate(`(() => {
+    const select = document.querySelector(${JSON.stringify(selector)})
+    if (!select) return false
+    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set
+    setter.call(select, ${JSON.stringify(String(value))})
+    select.dispatchEvent(new Event('change', { bubbles: true }))
+    return true
+  })()`)
+  if (!found) throw new Error(`Settings has no select labelled ${copy(labelKey)}`)
+}
+
+/** The value of the Settings `<select>` labelled by `labelKey`, or `null` when there is none. */
+export const selectValue = (labelKey) =>
+  `document.querySelector(${JSON.stringify(inSettings(`select${label(labelKey)}`))})?.value ?? null`

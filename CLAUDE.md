@@ -561,6 +561,7 @@ addon-unicode-graphemes、i18next、electron-builder（Phase 6）。
 | `Ctrl+Shift+W` | 關閉當前 focused 的 session |
 | `Ctrl+Shift+H` | Hibernate the focused session (end its process, keep it dormant in the workspace). Effective with focus in the editor; suppressed while a dialog or menu is open |
 | `Ctrl+Shift+M` | Maximize / restore the side panel (covers the session tabs and the terminal; the rail stays). Effective anywhere, terminal and editor included; suppressed while a dialog or menu is open |
+| `Ctrl+=` (`Ctrl++`) / `Ctrl+-` / `Ctrl+0`, `Ctrl`+wheel | Zoom the whole interface in / out / reset (`ui-appearance`; `Cmd` on macOS). Effective anywhere, **also while a dialog or menu is open** (zooming answers nothing). `Ctrl+Shift+-` is not one: it is `^_` and reaches the pty |
 | `Shift+↓` / `Shift+↑` | 把**選中的 repo** 在 rail 上移動一格（**不循環**；全域項目上無操作）。**置頂段與其餘之間的分界算一格** —— 跨過它即改變置頂狀態，而該 repo 在畫面上幾乎不動 |
 | `Shift+→` / `Shift+←` | 把 **focused session** 在分頁列上移動一格（**不循環**） |
 | `Ctrl+P` | **側欄持有焦點時**開啟檔案快速搜尋。**終端持有焦點時讓路給 pty** |
@@ -609,6 +610,11 @@ DOM 節點上的 listener** —— `stopPropagation()` 一下，兩者都收不�
   使用者裁決只做焦點判定版；退路 `Ctrl+Shift+P` 成本為零。
 - **`Ctrl+Alt+↑/↓` 不能用** —— Linux 上被 GNOME 拿去切工作區（被拿走的是 `Ctrl+Alt+方向鍵`，
   不是 `Ctrl+方向鍵`）。
+- **The zoom keys cost nothing in the pty; `Ctrl`+wheel does.** xterm sends no byte for `Ctrl` with `=`, `-`, `0`
+  or the keypad keys (measured), so taking them is free — except `Ctrl+Shift+-`, which is `^_` (undo in readline
+  and zsh) and is left alone. **`Ctrl`+wheel is taken from programs in the pty that use mouse reporting** (none
+  of `claude`, zsh or bash does). Its listener must stop propagation, not only `preventDefault`: xterm's wheel
+  handlers ignore `defaultPrevented` (`docs/lessons/terminal.md`, "Theme and zoom").
 - **`Ctrl+C` 絕不挪用** —— 它必須維持中斷訊號。agent 跑失控時要中斷它的能力，不能因為畫面上剛好
   有一段選取就失靈。
 

@@ -5,6 +5,7 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
+import { type ColorScheme, currentColorScheme } from '../../color-scheme'
 import { pickUnicodeVersion } from './unicode-width'
 
 /**
@@ -16,14 +17,53 @@ import { pickUnicodeVersion } from './unicode-width'
  * 好操作的把手，並確保連結點擊不由 xterm 自行導航（design D13）。
  */
 
-/** 對齊 app 的深色主題與 mockup 的終端配色（--color-shell / ink-dim / accent）。 */
-const THEME = {
-  background: '#07090c',
-  foreground: '#94a3b8',
-  cursor: '#f59e0b',
-  cursorAccent: '#07090c',
-  selectionBackground: '#243044',
+/**
+ * The terminal's palettes (`ui-appearance`), from the app's tokens: background = `--color-shell`, foreground =
+ * `--color-ink-dim`, cursor = `--color-accent`. xterm takes no CSS variables, so these are literals, held to
+ * `index.css` by `scripts/theme-palette.test.mjs`. `selectionBackground` is the wrapper's own (no token).
+ *
+ * - **Dark** keeps xterm's default ANSI colors (made for a dark background) and no contrast floor, as before.
+ * - **Light** brings a 16-color set for a light background — the "white" entries are dark greys — each at least
+ *   3:1 against the background (`theme-contrast.test.mjs`), and **`minimumContrastRatio: 4.5`**: Claude Code's
+ *   256-color and true-color output bypasses the 16-color set, and xterm raises any foreground to that ratio at
+ *   draw time (half of it for dim text; none for glyphs it draws as shapes, such as box drawing).
+ */
+export const TERMINAL_THEMES = {
+  dark: {
+    background: '#07090c',
+    foreground: '#94a3b8',
+    cursor: '#f59e0b',
+    cursorAccent: '#07090c',
+    selectionBackground: '#243044',
+  },
+  light: {
+    background: '#fbfcfd',
+    foreground: '#475569',
+    cursor: '#b45309',
+    cursorAccent: '#fbfcfd',
+    selectionBackground: '#c9d6e8',
+    black: '#1e293b',
+    red: '#b91c1c',
+    green: '#15803d',
+    yellow: '#a16207',
+    blue: '#1d4ed8',
+    magenta: '#a21caf',
+    cyan: '#0e7490',
+    white: '#64748b',
+    brightBlack: '#475569',
+    brightRed: '#dc2626',
+    brightGreen: '#16a34a',
+    brightYellow: '#b45309',
+    brightBlue: '#2563eb',
+    brightMagenta: '#c026d3',
+    brightCyan: '#0891b2',
+    brightWhite: '#334155',
+  },
 } as const
+
+/** The light palette's contrast floor for the text xterm draws; dark has none (`1` = off). */
+export const TERMINAL_MINIMUM_CONTRAST = { dark: 1, light: 4.5 } as const
+
 
 export interface XtermHandle {
   /** 掛載到 DOM。回傳之後才量得到尺寸。 */
@@ -97,6 +137,11 @@ export interface XtermHandle {
    * 現況差。
    */
   setGpuRenderer(enabled: boolean): boolean
+  /**
+   * Switch to the light or the dark palette (`ui-appearance`). xterm redraws, WebGL included; the buffer and the
+   * pty are not touched, so the size does not change.
+   */
+  setColorScheme(scheme: ColorScheme): void
   focus(): void
   dispose(): void
 }
@@ -204,6 +249,8 @@ const RESET_MODES = '\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?25h\x1b[0
 
 export function createXterm(options: XtermOptions): XtermHandle {
   const { openLink, onCopy, onPaste } = options
+  let scheme: ColorScheme = currentColorScheme()
+  const initialScheme = scheme
 
   // 字型偏好。`null` ＝該欄未設定 → 退回預設（系統字型 / 字級尺度）。使用者設定的 family 前置於預設鏈
   // 之前作為首選（加引號以容納含空白的字型名，如 `MesloLGS NF`），size 直接覆蓋；未設偏好時 size 仍
@@ -246,7 +293,8 @@ export function createXterm(options: XtermOptions): XtermHandle {
     // 明寫它，是把一個**上游的預設值**變成一份**我們自己的宣告** —— 與 `fit()` 那道防護同一
     // 條教訓：一個倚賴上游實作細節的不變式，不在我們的版控之內（`docs/lessons/terminal.md`）。
     windowOptions: {},
-    theme: { ...THEME },
+    theme: { ...TERMINAL_THEMES[initialScheme] },
+    minimumContrastRatio: TERMINAL_MINIMUM_CONTRAST[initialScheme],
     // OSC 8 escape-sequence 超連結由 xterm 核心的 OscLinkProvider 處理，走 `Terminal.linkHandler`
     // —— 與 WebLinksAddon（純文字 URL）是**兩套**機制。未設 linkHandler 會落入 xterm 內建預設：
     // 一個 `confirm()`（其 URL 文字由不受信任的 pty 輸出控制）+ `window.open()`。導向 `openLink`，
@@ -532,6 +580,12 @@ export function createXterm(options: XtermOptions): XtermHandle {
         webglContext = null
         return false
       }
+    },
+    setColorScheme(next) {
+      if (next === scheme) return
+      scheme = next
+      term.options.theme = { ...TERMINAL_THEMES[next] }
+      term.options.minimumContrastRatio = TERMINAL_MINIMUM_CONTRAST[next]
     },
     focus() {
       term.focus()

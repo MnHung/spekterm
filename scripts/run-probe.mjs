@@ -108,6 +108,8 @@ const env = {
   ...process.env,
   PATH: `${join(root, 'node_modules', '.bin')}:${process.env.PATH ?? ''}`,
 }
+// `GTK_THEME` in the developer's shell decides System on the virtual display (`ui-appearance`); see run-probes.mjs.
+delete env.GTK_THEME
 
 const child = spawn(command, args, { cwd: root, stdio: 'inherit', env })
 child.on('error', (err) => {

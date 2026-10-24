@@ -220,7 +220,12 @@
     background: var(--bg-2); border-bottom: 1px solid var(--border-soft);
   }
   .repo-header-name { font-size: 14.5px; font-weight: 700; color: var(--text); }
-  .repo-header-agg { font-size: 12px; color: var(--text-faint); }
+  /* The workspace summary (ui-theme-zoom-and-session-summary): every session of the workspace, counted by its dot's
+     state, the most urgent first; each count goes to the next session in that state. */
+  .repo-header-agg { display: flex; gap: 8px; font-size: 12px; color: var(--text-dim); }
+  .repo-header-agg .agg { display: inline-flex; align-items: center; gap: 5px; padding: 1px 5px; border-radius: 3px; cursor: pointer; }
+  .repo-header-agg .agg:hover { background: var(--bg-hover); color: var(--text); }
+  .repo-header-agg .agg .sdot { width: 6px; height: 6px; flex-basis: 6px; }
   .repo-header .sp { flex: 1; }
 
   .repo-header-actions { display: flex; align-items: center; gap: 8px; }
@@ -548,7 +553,11 @@
         <!-- repo header bar：左邊身分，右邊是 OpenSpec／Files segmented switch ＋ ⤳ Handoff ＋ + session ＋ 收合 -->
         <div class="repo-header">
           <span class="repo-header-name">project-a</span>
-          <span class="repo-header-agg mono">2 sessions · master, feat/term</span>
+          <span class="repo-header-agg" title="Sessions by state, across the workspace">
+            <span class="agg" title="needs you: 1&#10;• claude 2 — project-b (finished a turn)"><span class="sdot wait"></span>1 needs you</span>
+            <span class="agg" title="working: 2"><span class="sdot run"></span>2 working</span>
+            <span class="agg" title="idle: 1"><span class="sdot idle"></span>1 idle</span>
+          </span>
           <div class="sp"></div>
           <div class="repo-header-actions">
             <div class="dest-tabs" id="panel-switch" role="group" aria-label="side panel 身分切換">

@@ -59,6 +59,13 @@ as looking at it: its dot changes from waiting to idle. A session that has just 
 not waiting. Each folder row on the rail has one dot for its most urgent session, so a collapsed folder
 still shows that something inside it is waiting.
 
+**The top of the main stage counts the whole workspace.** Next to the selected item's name it lists, for each
+state that has a session, the state's dot and how many sessions are in it: needs you (waiting for you or asks
+for a choice), ended with an error, working, running, idle, hibernated, ended — the most urgent first. Click
+a count to go to the next session in that state, in the order of the rail; click it again to go on to the
+following one. Hover over a count to see which sessions it holds. When the window is narrow, the words are
+dropped first, then the least urgent states are folded into one `+N` marker.
+
 The agent does not report two things. If you press `Esc` to interrupt a turn, the dot stays on
 **Working** until your next prompt. If you answer a permission prompt by typing in the terminal, your
 keystroke counts as the answer.

@@ -65,6 +65,13 @@ export function useScrollIntoView(
   key: string | null,
   resolve: () => Element | null | undefined,
   axis: ScrollAxis,
+  /**
+   * Scroll after the other targets of the same commit. A child's effects run before its parent's, so in a container
+   * with two targets — the rail's item row (parent) and its focused session row (child) — the parent's would win
+   * when both cannot be shown, and the session the user went to would be scrolled out again
+   * (`session-wait-indicator`: the rail shows the row of the session the summary went to).
+   */
+  { last = false }: { last?: boolean } = {},
 ): { onMouseDownCapture: () => void } {
   const byPointer = useRef(false)
 
@@ -72,10 +79,23 @@ export function useScrollIntoView(
     const onKeyDown = (): void => {
       byPointer.current = false
     }
+    /*
+      **A `mousedown` outside this container clears it too** (`session-wait-indicator`, "The rail scrolls to the
+      target even after a click on the rail"). With only keys clearing it, a click on the rail followed by a click
+      on the header's summary left the rail unscrolled: the last input *in the rail* was the pointer, but the
+      user's last input was elsewhere. The exception is "the last input was a `mousedown` inside this container".
+    */
+    const onMouseDown = (): void => {
+      byPointer.current = false
+    }
     // 捕捉階段：`KeyboardNavigation` 攔下導航鍵時呼叫的是 `stopPropagation()`，它擋不住
     // **同一個節點**上的其他 listener（那要 `stopImmediatePropagation`），所以這裡收得到。
     window.addEventListener('keydown', onKeyDown, true)
-    return () => window.removeEventListener('keydown', onKeyDown, true)
+    window.addEventListener('mousedown', onMouseDown, true)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown, true)
+      window.removeEventListener('mousedown', onMouseDown, true)
+    }
   }, [])
 
   /**
@@ -113,9 +133,15 @@ export function useScrollIntoView(
     lastKey.current = key
     if (previous === undefined || key === null || key === previous) return
     if (byPointer.current) return
-    resolveRef.current()?.scrollIntoView(OPTIONS[axis])
-  }, [key, axis])
+    // A commit's passive effects run in one synchronous pass; a microtask runs after all of them.
+    if (last) queueMicrotask(() => resolveRef.current()?.scrollIntoView(OPTIONS[axis]))
+    else resolveRef.current()?.scrollIntoView(OPTIONS[axis])
+  }, [key, axis, last])
 
+  /*
+    The container's capture handler runs **after** the window's capture listener for the same event (capture goes
+    from the window down), so a `mousedown` anywhere clears the flag and one inside this container sets it again.
+  */
   return useMemo(
     () => ({
       onMouseDownCapture: (): void => {

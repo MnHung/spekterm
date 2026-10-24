@@ -1049,7 +1049,7 @@ export const MUTATIONS = [
   },
   {
     name: 'tree-ignores-lineage',
-    file: 'src/renderer/src/shell/WorkspaceRail.tsx',
+    file: 'src/renderer/src/shell/rail-order.ts',
     section: 'runLineage',
     from: `    sessions.map((session) => ({ id: session.id, parentId: session.lineage?.parentId })),`,
     to: `    sessions.map((session) => ({ id: session.id, parentId: undefined })),`,

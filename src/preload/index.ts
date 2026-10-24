@@ -315,6 +315,15 @@ const workspaceApi = {
     /** The automatic update check (`app-update`). `null` = the default (on); `false` = off. */
     setAutoUpdateCheck: (enabled: false | null): Promise<ProjectedPreferences> =>
       ipcRenderer.invoke('workspace:settings:setAutoUpdateCheck', enabled),
+    /** The theme (`ui-appearance`). `null` = the default (System). */
+    setTheme: (theme: 'system' | 'light' | 'dark' | null): Promise<ProjectedPreferences> =>
+      ipcRenderer.invoke('workspace:settings:setTheme', theme),
+    /** The interface zoom in percent, snapped to a step by main. `null` = the default (100%). */
+    setZoom: (percent: number | null): Promise<ProjectedPreferences> =>
+      ipcRenderer.invoke('workspace:settings:setZoom', percent),
+    /** Zoom one step in (`1`) or out (`-1`) from the stored zoom, or reset (`0`). */
+    stepZoom: (direction: -1 | 0 | 1): Promise<ProjectedPreferences> =>
+      ipcRenderer.invoke('workspace:settings:stepZoom', direction),
     /**
      * UI 語言。`null` ＝清為預設（＝英文）。
      *

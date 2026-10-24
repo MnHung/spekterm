@@ -134,7 +134,7 @@ function CloseCompletedDialog({
 
   return (
     <div
-      className="fixed inset-0 z-30 flex items-center justify-center bg-black/50 px-4 text-sm"
+      className="fixed inset-0 z-30 flex items-center justify-center bg-scrim px-4 text-sm"
       onKeyDown={(event) => {
         if (event.key === 'Escape') onDone()
       }}

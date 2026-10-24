@@ -323,6 +323,7 @@ function QrCode({ text }: { text: string }): React.JSX.Element {
     return { path: d, size: qr.size }
   }, [text])
   return (
+    // Black on white in both themes, the one named exception to the palette (`ui-appearance`): a scanner needs it.
     <svg
       role="img"
       aria-label={t('remote.qr')}

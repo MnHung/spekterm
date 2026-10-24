@@ -514,6 +514,11 @@ const KEYS = {
   p: { key: 'p', code: 'KeyP', vk: 80 },
   Enter: { key: 'Enter', code: 'Enter', vk: 13 },
   Escape: { key: 'Escape', code: 'Escape', vk: 27 },
+  // The zoom keys (`ui-appearance`). With Shift, the main row's `-` is `_` on a US layout.
+  equal: { key: '=', code: 'Equal', vk: 187 },
+  minus: { key: '-', code: 'Minus', vk: 189 },
+  underscore: { key: '_', code: 'Minus', vk: 189 },
+  digit0: { key: '0', code: 'Digit0', vk: 48 },
 }
 
 /**
@@ -2704,6 +2709,22 @@ async function checkScrollAnchoring(label, { port, rendererUrl }) {
       afterMove !== null && afterMove.visible === true,
       `${JSON.stringify(beforeMove)} → ${JSON.stringify(afterMove)}`)
 
+    // ── A key after a click on the rail scrolls the rail again (`useScrollIntoView`: any keydown clears the
+    // pointer exception). Click repo-a's row with the rail at the top, so that the next item's row is below the
+    // view, then Ctrl+↓. Control: drop the keydown clearing and the rail stays put.
+    await app.client.evaluate(FORCE_RAIL(0))
+    await sleep(200)
+    await realClick(app.client, await app.client.evaluate(RECT_OF(`${RAIL_ROW_SEL}[aria-label="${repos[0][0]}"]`)))
+    await sleep(300)
+    await app.client.evaluate(FORCE_RAIL(0))
+    await sleep(200)
+    await pressKey(app.client, 'ArrowDown', ['ctrl'])
+    const afterRailClick = await pollUntil(app.client, SELECTED_HEADER, (v) => v !== null && v.label !== 'repo-a' && v.visible === true, 4000)
+    check(results, `${label}：after a click on the rail, Ctrl+↓ still scrolls the rail to the selected item`,
+      // `scrollTop > 0`: the rail was at the top, so the item became visible by being scrolled to.
+      afterRailClick !== null && afterRailClick.label !== 'repo-a' && afterRailClick.visible === true && afterRailClick.scrollTop > 0,
+      JSON.stringify(afterRailClick))
+
     // ── Ctrl+Tab **也要捲 rail** —— 同一顆鍵要捲兩個容器
     //
     // 這條 requirement 的表格裡，`Ctrl+Tab` 那一列寫著「分頁列（橫向）**與** rail（縱向）」。
@@ -3023,6 +3044,281 @@ async function checkScrollAnchoring(label, { port, rendererUrl }) {
   }
 }
 
+// ── ui-appearance: the zoom keys and Ctrl+wheel ────────────────────────────────
+
+const RATIO = 'devicePixelRatio'
+const SETTINGS_ZOOM = `document.querySelector('[role="dialog"] select[aria-label="${copy('settings.zoom')}"]')?.value ?? null`
+const GRAPH_TRANSFORM = `document.querySelector('section[aria-label="${copy('openspec.label')}"] svg.spekui-graph > g')?.getAttribute('transform') ?? ''`
+const IDENTITY_OPENSPEC = IDENTITY_FILES.replace("innerText.includes('Files')", `innerText.includes(${JSON.stringify(copy('panelSwitch.openSpec'))})`)
+const GRAPH_RECT = RECT_OF(`section[aria-label="${copy('openspec.label')}"] svg.spekui-graph`)
+const CLICK_GRAPH = `(() => {
+  const tab = [...document.querySelectorAll('[role="tablist"][aria-label="${copy('openspec.views')}"] button[role="tab"]')]
+    .find((el) => el.innerText.trim().endsWith(${JSON.stringify(copy('viz.graph'))}))
+  if (!tab) return false
+  tab.click()
+  return true
+})()`
+
+/** One wheel event at `at`; `ctrl` holds Control. CDP's `deltaY` arrives in CSS pixels (-120 → -80 at 150%). */
+async function wheel(client, at, deltaY, { ctrl = true } = {}) {
+  await client.send('Input.dispatchMouseEvent', {
+    type: 'mouseWheel',
+    x: at.x,
+    y: at.y,
+    deltaX: 0,
+    deltaY,
+    modifiers: ctrl ? MOD.ctrl : 0,
+  })
+}
+
+async function checkZoomInput(label, { port, rendererUrl }) {
+  const repos = makeFixture()
+  // A repo with OpenSpec content for Graph.
+  const specRepo = join(ptyOutDir, '..', 'repo-spec')
+  mkdirSync(join(specRepo, 'openspec', 'specs', 'core'), { recursive: true })
+  mkdirSync(join(specRepo, 'openspec', 'changes', 'zoom-change', 'specs', 'core'), { recursive: true })
+  writeFileSync(join(specRepo, 'openspec', 'config.yaml'), 'schema: spec-driven\n')
+  writeFileSync(
+    join(specRepo, 'openspec', 'specs', 'core', 'spec.md'),
+    '# core Specification\n\n## Purpose\n\nx\n\n## Requirements\n\n### Requirement: core works\n\nThe system SHALL work.\n\n#### Scenario: Normal\n\n- **WHEN** a\n- **THEN** b\n',
+  )
+  writeFileSync(join(specRepo, 'openspec', 'changes', 'zoom-change', '.openspec.yaml'), 'schema: spec-driven\ncreated: 2026-10-01\n')
+  writeFileSync(join(specRepo, 'openspec', 'changes', 'zoom-change', 'proposal.md'), '# Zoom\n\n## Why\n\nBecause.\n')
+  writeFileSync(
+    join(specRepo, 'openspec', 'changes', 'zoom-change', 'specs', 'core', 'spec.md'),
+    '## MODIFIED Requirements\n\n### Requirement: core works\n\nThe system SHALL work differently.\n\n#### Scenario: Normal\n\n- **WHEN** a\n- **THEN** b\n',
+  )
+  const profile = seedProfile([...repos, ['repo-spec', specRepo]])
+  // GPU off: the DOM renderer's rows can be read, which is how "the terminal does not scroll" is seen.
+  writeFileSync(
+    join(profile, 'preferences.json'),
+    JSON.stringify({ version: 1, terminal: { gpuAcceleration: false }, ui: { language: 'en', theme: 'dark' } }),
+  )
+  const app = await launch({ port, profileDir: profile, rendererUrl })
+  // `devicePixelRatio` is a float (1.100000023841858 at 110%): rounded to two places for the comparisons.
+  const ratio = (value, what) =>
+    pollUntil(app.client, `Math.round(${RATIO} * 100) / 100`, (v) => v === value, 4000).then((v) => {
+      if (v !== value) console.log(`  (${what}: devicePixelRatio ${v}, expected ${value})`)
+      return v
+    })
+
+  try {
+    await pollUntil(app.client, SELECT_FOLDER('repo-a'), (value) => value === true, 10_000)
+    await sleep(300)
+    await createSession(app.client)
+    const term = await pollUntil(app.client, TERMINAL_RECT, (v) => v !== null, 8000)
+    await sleep(1500)
+    await realClick(app.client, term)
+    await sleep(200)
+    await typeLine(app.client, `cat -A > ${join(ptyOutDir, 'zoom-keys.txt')}`)
+    await sleep(800)
+    await pressKey(app.client, 'ArrowUp') // positive control: an uncaught key reaches the pty
+    await pressEnter(app.client)
+    const control = await waitForPtyFile('zoom-keys.txt', (value) => value.includes('^[[A'))
+    check(results, `${label}：[zoom] precondition: an uncaught key reaches the pty`, control.includes('^[[A'), JSON.stringify(control))
+
+    // From the terminal: in, out, reset; none of them reaches the pty.
+    await pressKey(app.client, 'equal', ['ctrl'])
+    const zoomedIn = await ratio(1.1, 'Ctrl+=')
+    await pressKey(app.client, 'minus', ['ctrl'])
+    const zoomedOut = await ratio(1, 'Ctrl+-')
+    await pressKey(app.client, 'equal', ['ctrl'])
+    await pressKey(app.client, 'equal', ['ctrl'])
+    await ratio(1.25, 'Ctrl+= twice')
+    await pressKey(app.client, 'digit0', ['ctrl'])
+    const reset = await ratio(1, 'Ctrl+0')
+    // `Ctrl+Shift+-` is ^_ (undo in readline and zsh): it must not zoom and must reach the pty.
+    await pressKey(app.client, 'underscore', ['ctrl', 'shift'])
+    await sleep(300)
+    const afterUnderscore = await app.client.evaluate(`Math.round(${RATIO} * 100) / 100`)
+    await pressEnter(app.client)
+    const keys = await waitForPtyFile('zoom-keys.txt', (value) => value.includes('^_'))
+    const lines = keys.split('\n').filter(Boolean)
+    check(
+      results,
+      `${label}：[zoom] Ctrl+= / Ctrl+- / Ctrl+0 from the terminal zoom in, out and reset`,
+      zoomedIn === 1.1 && zoomedOut === 1 && reset === 1,
+      `in ${zoomedIn}, out ${zoomedOut}, reset ${reset}`,
+    )
+    check(
+      results,
+      `${label}：[zoom] the zoom keys do not reach the pty`,
+      // Only the control's line and the ^_ line: nothing from the five zoom keys.
+      lines.length === 2 && lines[0] === '^[[A$' && lines[1] === '^_$',
+      JSON.stringify(keys),
+    )
+    check(
+      results,
+      `${label}：[zoom] Ctrl+Shift+- does not zoom and reaches the pty as ^_`,
+      afterUnderscore === 1 && lines[1] === '^_$',
+      `devicePixelRatio ${afterUnderscore}; pty line ${JSON.stringify(lines[1])}`,
+    )
+    // Leave cat: Ctrl+C.
+    await app.client.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'c', code: 'KeyC', windowsVirtualKeyCode: 67, modifiers: MOD.ctrl })
+    await app.client.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'c', code: 'KeyC', windowsVirtualKeyCode: 67, modifiers: MOD.ctrl })
+    await sleep(300)
+
+    // With the naming dialog open: the zoom changes and the dialog stays.
+    const tab0 = center(await app.client.evaluate(TAB_RECT(0)))
+    await realMouse(app.client, tab0.x, tab0.y, 'right')
+    await pollUntil(app.client, `Boolean(document.querySelector('[role="menu"]'))`, (v) => v === true, 4000)
+    await realClick(app.client, await app.client.evaluate(MENU_ITEM_RECT(copy('sessions.rename'))))
+    await pollUntil(app.client, DIALOG_OPEN, (value) => value === true, 4000)
+    await pressKey(app.client, 'equal', ['ctrl'])
+    const inDialog = await ratio(1.1, 'Ctrl+= with the dialog')
+    const dialogStays = await app.client.evaluate(DIALOG_OPEN)
+    await pressKey(app.client, 'digit0', ['ctrl'])
+    await ratio(1, 'reset')
+    await pressKey(app.client, 'Escape')
+    await pollUntil(app.client, DIALOG_OPEN, (value) => value === false, 4000)
+    check(
+      results,
+      `${label}：[zoom] the zoom keys work while a dialog is open, which stays open`,
+      inDialog === 1.1 && dialogStays === true,
+      `devicePixelRatio ${inDialog}; dialog open ${dialogStays}`,
+    )
+
+    // With Settings open on General: Ctrl+- zooms out and its control shows it.
+    await realClick(app.client, await app.client.evaluate(RECT_OF(`nav[aria-label="${copy('activityBar.label')}"] button[aria-label="${copy('activityBar.settings')}"]`)))
+    await pollUntil(app.client, SETTINGS_ZOOM, (value) => value !== null, 6000)
+    await pressKey(app.client, 'minus', ['ctrl'])
+    const inSettings = await ratio(0.9, 'Ctrl+- in Settings')
+    const shown = await pollUntil(app.client, SETTINGS_ZOOM, (value) => value === '90', 4000)
+    const settingsStays = await app.client.evaluate(DIALOG_OPEN)
+    check(
+      results,
+      `${label}：[zoom] Ctrl+- with Settings open zooms out, Settings stays open and shows the new value`,
+      inSettings === 0.9 && shown === '90' && settingsStays === true,
+      `devicePixelRatio ${inSettings}; Settings shows ${shown}; open ${settingsStays}`,
+    )
+    await pressKey(app.client, 'digit0', ['ctrl'])
+    await ratio(1, 'reset')
+    await pressKey(app.client, 'Escape')
+    await pollUntil(app.client, DIALOG_OPEN, (value) => value === false, 4000)
+
+    // From the editor at 150%: Ctrl+0 resets, the content is unchanged.
+    for (let step = 0; step < 3; step += 1) await pressKey(app.client, 'equal', ['ctrl'])
+    const at150 = await ratio(1.5, 'three steps up')
+    check(results, `${label}：[zoom] switch to the Files identity`, (await app.client.evaluate(IDENTITY_FILES)) === true)
+    await pollUntil(app.client, OPEN_FILE('notes.txt'), (value) => value === true, 8000)
+    await pollUntil(app.client, EDITOR_TEXTAREA_FOCUSED, (value) => value === true, 10_000)
+    const editorBefore = await pollUntil(app.client, EDITOR_LINES, (value) => typeof value === 'string' && value.length > 0, 6000)
+    await pressKey(app.client, 'digit0', ['ctrl'])
+    const fromEditor = await ratio(1, 'Ctrl+0 from the editor')
+    const editorAfter = await app.client.evaluate(EDITOR_LINES)
+    check(
+      results,
+      `${label}：[zoom] Ctrl+0 from the editor resets to 100%, the editor's content unchanged`,
+      at150 === 1.5 && fromEditor === 1 && editorAfter === editorBefore,
+      `150% → ${fromEditor}; content same=${editorAfter === editorBefore}`,
+    )
+
+    // Ctrl+wheel over the terminal: one step per notch at 100% and at 150%, and the terminal does not scroll.
+    await realClick(app.client, await app.client.evaluate(TERMINAL_RECT))
+    await sleep(200)
+    await typeLine(app.client, 'seq 1 300')
+    await sleep(800)
+    const terminalAt = center(await app.client.evaluate(TERMINAL_RECT))
+    await wheel(app.client, terminalAt, -120)
+    const wheel100 = await ratio(1.1, 'one notch at 100%')
+    for (let step = 0; step < 2; step += 1) await pressKey(app.client, 'equal', ['ctrl'])
+    await ratio(1.5, '150%')
+    await wheel(app.client, center(await app.client.evaluate(TERMINAL_RECT)), -120)
+    const wheel150 = await ratio(1.75, 'one notch at 150%')
+    check(
+      results,
+      `${label}：[zoom] a Ctrl-wheel notch over the terminal zooms one step, at 100% and at 150%`,
+      wheel100 === 1.1 && wheel150 === 1.75,
+      `100% → ${wheel100}; 150% → ${wheel150}`,
+    )
+    // "Does not scroll" is read at the top step, where a Ctrl-wheel up cannot change the zoom (and with it the
+    // rows): a plain wheel scrolls the rows (the positive control); a Ctrl-wheel then leaves them as they are.
+    await sleep(600)
+    const scrollAt = center(await app.client.evaluate(TERMINAL_RECT))
+    const rowsBottom = await app.client.evaluate(TERMINAL_TEXT)
+    await wheel(app.client, scrollAt, -120, { ctrl: false })
+    await sleep(500)
+    const rowsScrolled = await app.client.evaluate(TERMINAL_TEXT)
+    await wheel(app.client, scrollAt, -120)
+    await sleep(500)
+    const rowsAfter = await app.client.evaluate(TERMINAL_TEXT)
+    const atTop = await app.client.evaluate(`Math.round(${RATIO} * 100) / 100`)
+    check(results, `${label}：[zoom] precondition: a plain wheel scrolls the terminal`, rowsScrolled !== rowsBottom, `first row ${JSON.stringify(rowsBottom.split('\n')[0])} → ${JSON.stringify(rowsScrolled.split('\n')[0])}`)
+    check(
+      results,
+      `${label}：[zoom] the Ctrl-wheel does not scroll the terminal`,
+      atTop === 1.75 && rowsAfter === rowsScrolled,
+      `zoom ${atTop}; first row ${JSON.stringify(rowsScrolled.split('\n')[0])} → ${JSON.stringify(rowsAfter.split('\n')[0])}`,
+    )
+    await pressKey(app.client, 'digit0', ['ctrl'])
+    await ratio(1, 'reset')
+
+    // A run of small deltas (a touchpad): together one notch, one step.
+    const smallAt = center(await app.client.evaluate(TERMINAL_RECT))
+    for (let event = 0; event < 4; event += 1) await wheel(app.client, smallAt, -25)
+    const small = await ratio(1.1, 'four small deltas')
+    await sleep(500)
+    const smallSettled = await app.client.evaluate(`Math.round(${RATIO} * 100) / 100`)
+    check(
+      results,
+      `${label}：[zoom] a run of small Ctrl-wheel movements adding up to one notch zooms one step`,
+      small === 1.1 && smallSettled === 1.1,
+      `devicePixelRatio ${small} → ${smallSettled}`,
+    )
+    await pressKey(app.client, 'digit0', ['ctrl'])
+    await ratio(1, 'reset')
+
+    // Over a full-screen program (the alternate screen): xterm would turn a wheel into arrow keys.
+    await realClick(app.client, await app.client.evaluate(TERMINAL_RECT))
+    await sleep(200)
+    await typeLine(app.client, `printf '\\033[?1049h'; cat -A > ${join(ptyOutDir, 'alt-wheel.txt')}`)
+    await sleep(800)
+    const altAt = center(await app.client.evaluate(TERMINAL_RECT))
+    await wheel(app.client, altAt, -120, { ctrl: false }) // positive control: a plain wheel reaches the pty
+    await pressEnter(app.client)
+    const altControl = await waitForPtyFile('alt-wheel.txt', (value) => /\^\[(\[|O)A/.test(value))
+    await wheel(app.client, altAt, -120)
+    const altZoom = await ratio(1.1, 'Ctrl-wheel over the alternate screen')
+    await pressEnter(app.client)
+    await sleep(600)
+    const altText = await waitForPtyFile('alt-wheel.txt', () => true, 1500)
+    const altLines = altText.split('\n').filter(Boolean)
+    check(results, `${label}：[zoom] precondition: a plain wheel over the alternate screen reaches the pty`, /\^\[(\[|O)A/.test(altControl), JSON.stringify(altControl))
+    check(
+      results,
+      `${label}：[zoom] a Ctrl-wheel over a full-screen program zooms and sends nothing to the pty`,
+      altZoom === 1.1 && altLines.length === 2 && altLines[1] === '$',
+      `devicePixelRatio ${altZoom}; pty lines ${JSON.stringify(altLines)}`,
+    )
+    await pressKey(app.client, 'digit0', ['ctrl'])
+    await ratio(1, 'reset')
+
+    // Over Graph: the interface zooms, the graph's own scale does not.
+    await pollUntil(app.client, SELECT_FOLDER('repo-spec'), (value) => value === true, 10_000)
+    await pollUntil(app.client, IDENTITY_OPENSPEC, (value) => value === true, 8000)
+    await pollUntil(app.client, CLICK_GRAPH, (value) => value === true, 8000)
+    const graphAt = center(await pollUntil(app.client, GRAPH_RECT, (v) => v !== null, 10_000))
+    await sleep(1500)
+    const transformBefore = await app.client.evaluate(GRAPH_TRANSFORM)
+    await wheel(app.client, graphAt, -120, { ctrl: false }) // positive control: a plain wheel zooms the graph
+    const plainTransform = await pollUntil(app.client, GRAPH_TRANSFORM, (v) => v !== transformBefore, 3000)
+    await wheel(app.client, graphAt, -120)
+    const graphZoom = await ratio(1.1, 'Ctrl-wheel over Graph')
+    await sleep(400)
+    const ctrlTransform = await app.client.evaluate(GRAPH_TRANSFORM)
+    check(results, `${label}：[zoom] precondition: a plain wheel over Graph zooms the graph`, plainTransform !== transformBefore, `${transformBefore} → ${plainTransform}`)
+    check(
+      results,
+      `${label}：[zoom] a Ctrl-wheel over Graph zooms the interface, not the graph`,
+      graphZoom === 1.1 && ctrlTransform === plainTransform,
+      `devicePixelRatio ${graphZoom}; graph transform ${plainTransform} → ${ctrlTransform}`,
+    )
+  } finally {
+    await app.client.evaluate('window.workspace.settings.setZoom(null)').catch(() => undefined)
+    await app.destroy()
+  }
+}
+
 /**
  * 五個段落**彼此獨立** —— 每一段各自 `makeFixture()`、`seedProfile()`、`launch()` 與收屍
  * （實際逐段確認，非假設），因此沒有一項需要宣告 `deps`。
@@ -3047,6 +3343,7 @@ const SECTIONS = [
     { name: 'checkScrollAnchoring', run: checkScrollAnchoring, onTimeout: killStrays },
   { name: 'checkHibernateShortcut', run: checkHibernateShortcut, onTimeout: killStrays },
   { name: 'checkMaximizeShortcut', run: checkMaximizeShortcut, onTimeout: killStrays },
+  { name: 'checkZoomInput', run: checkZoomInput, onTimeout: killStrays },
 ]
 
 const outcome = await runSections({

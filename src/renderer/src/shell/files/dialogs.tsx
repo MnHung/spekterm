@@ -3,7 +3,7 @@ import { validateName } from './names'
 import { useTranslation } from 'react-i18next'
 
 const OVERLAY_CLASS =
-  'absolute inset-0 z-20 flex items-center justify-center bg-black/50 px-4 text-sm'
+  'absolute inset-0 z-20 flex items-center justify-center bg-scrim px-4 text-sm'
 const CARD_CLASS = 'w-full rounded border border-hairline bg-panel p-3 shadow-lg'
 const BUTTON_CLASS = 'rounded border border-hairline px-2 py-[3px] text-xs hover:bg-stage'
 

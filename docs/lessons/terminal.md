@@ -573,3 +573,28 @@ It is only evaluated while something subscribes. Without the tracker's always-on
 watched until it was waiting, then left and given work, reads a stale `ready` and is hibernated mid-work.
 Consequence: events are now always drained, so a transcript relocation could be consumed with no view
 open — `agent-wait` keeps the last reported `transcriptPath` and the conversation view starts from it.
+
+## Theme and zoom (`ui-appearance`)
+
+Four measured facts behind the theme and the interface zoom (Electron 43.5.0). Each fails silently when forgotten.
+
+- **The zoom has to be applied on `did-navigate`.** That is early enough for the page's first script to run at the
+  stored zoom; on `dom-ready` or `did-finish-load` the first script sees the old one, and the terminal's first fit
+  happens at the wrong size, so the pty gets one extra resize. `src/main/appearance.ts` (`followZoom`).
+- **Chromium remembers a zoom per page, keyed by the full URL** (`per_host_zoom_levels` in the profile's
+  `Preferences`). Unpackaged, the URL is stable, so "the zoom survives a restart" is green even when main never
+  applies the preference; packaged, the AppImage mounts at a random path, so the memory never matches and each
+  start would be 100%. The stored preference is applied on every navigation, so neither decides. A probe that
+  checks a restart must make the two disagree (`probe-workspace-appearance.mjs`: Chromium records 150%, the file
+  says 125%).
+- **xterm's wheel handlers ignore `defaultPrevented`.** On the alternate screen it turns a wheel into arrow keys for
+  the pty, and with mouse tracking on it reports the wheel; only the viewport's own scroll checks the flag. The
+  `Ctrl`-wheel zoom is therefore a window capture listener that **stops propagation** (`KeyboardNavigation.tsx`);
+  `preventDefault` alone leaks the wheel to the program. The same stop keeps it from Graph's d3-zoom.
+- **GTK draws Linux's native dialogs and ignores `nativeTheme.themeSource`**: the close question looks the same
+  under Light and Dark (pixel-identical screenshots). The website states this limit.
+
+Two smaller ones: wheel `deltaY` is in CSS pixels, so it shrinks with the zoom (a notch of -120 arrives as -80 at
+150%) and has to be converted to device pixels before deciding what a notch is; and xterm 6 paints its background
+on `.xterm-scrollable-element`, not on `.xterm-viewport` (which reads black) — a probe reading the terminal's
+color must read the former.

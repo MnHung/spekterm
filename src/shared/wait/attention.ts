@@ -37,7 +37,8 @@ export function attentionOf({ wait, inTurn, seen, choiceTypedOver }: AttentionIn
 /** What a rail item ranks: the attention of its running agent sessions and the pty facts of the rest. */
 export type RowState = Attention | 'error' | 'running' | 'dormant' | 'ended'
 
-const URGENCY: Record<RowState, number> = {
+/** The order of urgency of the session states; the rail item dot and the header summary rank by it. */
+export const URGENCY: Record<RowState, number> = {
   choice: 0,
   waiting: 0,
   error: 1,

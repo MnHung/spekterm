@@ -77,18 +77,19 @@ export function rowStateOf(session: SessionState, attention?: Attention): RowSta
  * - **choice / waiting** — amber, glowing, pulsing (`.sdot.wait`): the state the user scans for. The pulse stops
  *   under reduced motion;
  * - **working** — green with a glow (`.sdot.run`);
- * - **running** — the plain green of an unknown state (a shell, or no events): it cannot claim to be working;
+ * - **running** — plain green without the glow, for an unknown state (a shell, or no events): it cannot claim to be
+ *   working. (It was Tailwind's `emerald-400`, a shade off the token; a palette class does not follow the theme.)
  * - **idle** — a green ring. **Not the mockup's grey**: grey is the hibernated dot here, and "alive, resting" must not
  *   read as "asleep";
  * - **dormant / ended** — grey; **ended with an error** — danger, so a failed start ("claude not found") shows.
  *   Hibernation is never danger: a restored session must not look dead.
  */
 const TONE: Record<RowState, string> = {
-  choice: 'bg-accent shadow-[0_0_7px_rgba(245,158,11,0.7)] motion-safe:animate-pulse',
-  waiting: 'bg-accent shadow-[0_0_7px_rgba(245,158,11,0.7)] motion-safe:animate-pulse',
-  working: 'bg-green shadow-[0_0_6px_rgba(52,211,153,0.55)]',
-  running: 'bg-emerald-400',
-  unknown: 'bg-emerald-400',
+  choice: 'bg-accent shadow-[0_0_7px_color-mix(in_srgb,var(--color-accent)_70%,transparent)] motion-safe:animate-pulse',
+  waiting: 'bg-accent shadow-[0_0_7px_color-mix(in_srgb,var(--color-accent)_70%,transparent)] motion-safe:animate-pulse',
+  working: 'bg-green shadow-[0_0_6px_color-mix(in_srgb,var(--color-green)_55%,transparent)]',
+  running: 'bg-green',
+  unknown: 'bg-green',
   idle: 'border border-green',
   dormant: 'bg-ink-faint',
   ended: 'bg-ink-faint',

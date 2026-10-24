@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { DEFAULT_LANGUAGE, i18n, type Language, setLanguage } from '@shared/i18n'
 import { effectiveHibernateSeconds } from '@shared/hibernation/settings'
+import { DEFAULT_ZOOM, type Theme } from '@shared/appearance/zoom'
 import { createPreferencesQueue } from './preferences-queue'
 import type { TerminalPreferences } from './types'
 
@@ -65,6 +66,19 @@ export interface PreferencesApi {
   updateAutoHibernate: (seconds: number | null) => Promise<void>
   /** The threshold in effect, in seconds — **unset is 24 hours**, `0` is off (one place decides that). */
   autoHibernateSeconds: number
+  /**
+   * The theme choice (`ui-appearance`); `null` = the default (System). Main applies it before answering.
+   * **Colors are never decided from this value** — they follow `prefers-color-scheme` (`useColorScheme`).
+   */
+  updateTheme: (theme: Theme | null) => Promise<void>
+  /** The stored theme choice — **unset is System**. */
+  theme: Theme
+  /** Set the zoom in percent; `null` = the default (100%). Main snaps and applies it. */
+  updateZoom: (percent: number | null) => Promise<void>
+  /** Zoom one step in (`1`), out (`-1`) or reset (`0`), from the stored zoom (computed in main). */
+  stepZoom: (direction: -1 | 0 | 1) => Promise<void>
+  /** The stored zoom in percent — **unset is 100%**. */
+  zoom: number
 }
 
 export interface FontChange {
@@ -156,6 +170,22 @@ export function PreferencesProvider({ children }: { children: React.ReactNode })
     [enqueue],
   )
 
+  const updateTheme = useCallback(
+    (theme: Theme | null) => enqueue(() => window.workspace.settings.setTheme(theme)).then(() => undefined),
+    [enqueue],
+  )
+
+  const updateZoom = useCallback(
+    (percent: number | null) => enqueue(() => window.workspace.settings.setZoom(percent)).then(() => undefined),
+    [enqueue],
+  )
+
+  const stepZoom = useCallback(
+    (direction: -1 | 0 | 1) =>
+      enqueue(() => window.workspace.settings.stepZoom(direction)).then(() => undefined),
+    [enqueue],
+  )
+
   const updateLanguage = useCallback(
     (language: Language) =>
       enqueue(async () => {
@@ -177,6 +207,11 @@ export function PreferencesProvider({ children }: { children: React.ReactNode })
       updateLanguage,
       updateAutoHibernate,
       updateAutoUpdateCheck,
+      updateTheme,
+      updateZoom,
+      stepZoom,
+      theme: terminal.theme ?? 'system',
+      zoom: terminal.zoom ?? DEFAULT_ZOOM,
       autoUpdateCheck: terminal.autoUpdateCheck !== false,
       autoHibernateSeconds: effectiveHibernateSeconds(terminal.autoHibernateSeconds),
       language: terminal.language ?? DEFAULT_LANGUAGE,
@@ -195,6 +230,9 @@ export function PreferencesProvider({ children }: { children: React.ReactNode })
       updateLanguage,
       updateAutoHibernate,
       updateAutoUpdateCheck,
+      updateTheme,
+      updateZoom,
+      stepZoom,
     ],
   )
 
