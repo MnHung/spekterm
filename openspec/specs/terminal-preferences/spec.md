@@ -138,14 +138,15 @@ The interface SHALL be organized in sections, listed beside the content, with on
   `agent-conversation-view`).
 - **Integrations**: the Slack connection (see `slack-intake-source`).
 - **Remote access**: see "Settings holds the remote access controls".
-- **About**: the build identity.
+- **About**: the build identity and, in a packaged build (or one a probe gave an update feed), the update
+  status, its controls and the automatic update check setting (see `app-update`).
 
 The interface SHALL keep the same size whichever section is shown, SHALL show its title, and SHALL offer a
 visible control that closes it in addition to Esc. Opening it from the activity bar SHALL show the section
 shown last in this run of the application, or General the first time.
 
 Opening the inbox or the conversation metrics, by any route (the activity bar, a notification, a control in
-Settings), SHALL close Settings first. Opening Settings from the inbox SHALL close the inbox first. Two modal
+Settings), SHALL close Settings first. Opening Settings from the inbox, or from an update notification, SHALL close the inbox first. Two modal
 layers then never compete for focus or for Esc.
 
 Scenarios in this and other capabilities that say the user "opens Settings" and sees something mean that
@@ -213,6 +214,11 @@ preview was separated from the font fields it previews by three unrelated settin
 
 - **WHEN** the user shows the Terminal section, closes Settings and opens it again
 - **THEN** the Terminal section is shown
+
+#### Scenario: Opening Settings from an update notification closes the inbox
+
+- **WHEN** the inbox is open and the user activates an update notification
+- **THEN** Settings is open on About and the inbox is not
 
 ### Requirement: 偏好包含是否啟用 agent 狀態橋接
 
@@ -560,7 +566,8 @@ Esc. It SHALL
 NOT change the settings of any other section.
 
 The General section SHALL NOT offer it: restoring the language to the default would leave a reader of
-another language in an interface they cannot read. Integrations and Remote access have their own resets.
+another language in an interface they cannot read. About SHALL NOT offer it either: its one setting, the
+automatic update check, is a single switch whose default is shown beside it. Integrations and Remote access have their own resets.
 
 #### Scenario: Restoring the terminal section leaves the others
 
@@ -577,3 +584,8 @@ another language in an interface they cannot read. Integrations and Remote acces
 
 - **WHEN** the user has chosen a language other than English and restores both sections' defaults
 - **THEN** the language is unchanged
+
+#### Scenario: About offers no restore
+
+- **WHEN** the user shows the About section in a build that shows the update controls
+- **THEN** it offers no control that restores defaults

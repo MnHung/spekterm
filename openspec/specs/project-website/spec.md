@@ -304,6 +304,10 @@ spekterm's documentation SHALL state, in a page about data and network:
 - what the app itself connects to and when: Slack (or the endpoint the user configured) only after Slack
   credentials are saved; remote `https:` images in rendered markdown; links the user opens, in the user's
   browser;
+- the update check: that a packaged build contacts GitHub (the releases of `spekhq/spekterm`, and on Linux the
+  download of a newer AppImage) shortly after startup and periodically, that it sends nothing but the requests
+  themselves, that it is on by default and how to turn it off, and that the integrity of an update rests on the
+  GitHub release it comes from;
 - that the app listens for connections only while the user has turned remote access on. At that time it
   listens on the configured port on every network interface, only paired devices can use the
   connection, and the feature itself connects to nothing: a phone is told of events only over its own
@@ -327,6 +331,12 @@ allow-list names this page.
 
 - **WHEN** spekterm's data and network page of the built site is read in either language
 - **THEN** it states that the app listens only while remote access is on, that only paired devices can use the connection, and that remote access makes no outbound connection of its own
+
+#### Scenario: The page states the update check
+
+- **WHEN** spekterm's data and network page of the built site is read in either language
+- **THEN** it names GitHub as the update check's destination, says the check is on by default, and names the
+  setting that turns it off
 
 ### Requirement: Screenshots come only from the capture script
 

@@ -213,5 +213,5 @@ updater cache). The instrumentation never enters the repo.
     into it (installed sha512 is 0.2.21's, mode 755). **Nothing of 0.2.20 is left**: one AppImage runtime, one mount,
     the new app's descriptors are all inside its own mount, and no process holds a deleted image — the fix confirmed
     on a real update.
-- [ ] 9.2 On the build Mac: the packaged dmg build shows the newer release as available and "Download" opens its page.
-  Record under this task.
+- [x] 9.2 On the build Mac: the packaged dmg build shows the newer release as available and "Download" opens its page.
+  Not done in this change: converted to issue #93 (the maintainer was away from the Mac when the change was archived).
