@@ -190,7 +190,7 @@ updater cache). The instrumentation never enters the repo.
 
 ## 9. Dogfood (the real path)
 
-- [ ] 9.1 With the maintainer: release the first version carrying this change with the script and install it with
+- [x] 9.1 With the maintainer: release the first version carrying this change with the script and install it with
   `install:desktop`; release the next version; confirm the running one downloads, notifies once, restarts into the
   new version through the dialog with sessions restored, and that closing the window without restarting installs.
   Record the dates and versions under this task.
@@ -199,10 +199,19 @@ updater cache). The instrumentation never enters the repo.
     65 s after the start against a latest release (0.2.15) with no `latest-linux.yml` and settled as up to date, no
     error shown. 0.2.19 released; "Check now" downloaded it, `notifiedVersion` became `0.2.19`, "Restart to update"
     asked and restarted: the installed file's sha512 is 0.2.19's, its mode kept (755), the new app started 15:55:36.
+    The maintainer saw the system notification. The sessions came back listed and dormant, woken by hand (the
+    restore's usual behavior, not this change's).
   - **Found**: the old version's AppImage runtime was still running afterwards, its mount still there and its
     (deleted) image still on disk — the new app held 8–9 descriptors into the old mount (`icudtl.dat`, the snapshot,
     `.pak`, `app.asar`), inherited through the relaunch shell. Fixed in `RELAUNCH_SCRIPT` (closes descriptors above 2;
     bash, or 3–9 under dash); unit tests per shell and a probe check, each red with the 0.2.18 script. A release that
     carries the fix must do the next restart for this to be confirmed on a real update.
+  - 2026-10-24, second part: 0.2.20 (the fix) released; on 0.2.19 "Check now" downloaded it and notified, and the
+    maintainer **closed the window** without restarting. The installed file's sha512 is 0.2.20's, mode 755; started
+    again from the menu, 0.2.20 runs as one AppImage runtime with one mount (the 0.2.19 leftover went with the quit).
+  - 2026-10-24, third part: 0.2.21 released; on 0.2.20 "Check now" downloaded it and "Restart to update" restarted
+    into it (installed sha512 is 0.2.21's, mode 755). **Nothing of 0.2.20 is left**: one AppImage runtime, one mount,
+    the new app's descriptors are all inside its own mount, and no process holds a deleted image — the fix confirmed
+    on a real update.
 - [ ] 9.2 On the build Mac: the packaged dmg build shows the newer release as available and "Download" opens its page.
   Record under this task.
