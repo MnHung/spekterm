@@ -50,6 +50,16 @@ the relauncher does not survive the image being unmounted. The restart is a deta
 `/bin/sh -c 'while kill -0 "$1"; do sleep 0.2; done; exec "$2"'`, which started the new image 1.7 s after the old
 one's `quit`, exactly once.
 
+**The relaunch shell inherits Electron's descriptors into its own image, and passes them on.** Electron opens
+`icudtl.dat`, the V8 snapshot, the `.pak` files and `app.asar` without close-on-exec, and Node's `spawn` closes
+nothing it was not told to. Found on the first real update (0.2.18 → 0.2.19, 2026-10-24): the new app held the old
+image's mount open through those descriptors, so the old AppImage's runtime never unmounted, and the replaced file
+(deleted, 130 MB) kept its disk space until the new app quit — one more mount per update. The scratch measurement
+missed it because nobody looked at the old runtime after the relaunch. The script now closes every descriptor
+above 2 first; that needs bash (`exec 36>&-`): **dash, `/bin/sh` on Debian and Ubuntu, parses it as a command
+named `36` and exits**, so under dash only 3–9 are closed. `probe-workspace-update.mjs`'s fake new version lists its
+descriptors, and its relaunch check is red with the 0.2.18 script.
+
 **The AppImage runtime sets `APPIMAGE`, `APPDIR` and `ARGV0` for the image it starts, inherited or not** — the
 relaunched instance had a new `/tmp/.mount_…` although the shell inherited the old one's environment (`OWD` is
 the only one inherited). `exec` without arguments starts it normally: `AppRun` adds `--no-sandbox` itself when user

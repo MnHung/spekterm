@@ -103,7 +103,10 @@ export async function runUpdateSections({ results, port, mkTemp }) {
   mkdirSync(folder)
 
   // ── The feed: one route per section name.
-  const newScript = (marker) => `#!/bin/sh\necho "new ${NEW_VERSION}" >> "${marker}"\n`
+  // The new version also lists the descriptors it was started with: the old app's must not be among them.
+  const newScript = (marker) =>
+    `#!/bin/sh\necho "new ${NEW_VERSION}" >> "${marker}"\n` +
+    `for f in /proc/$$/fd/*; do echo "\${f##*/} $(readlink "$f")"; done > "${marker}.fds"\n`
   const feeds = new Map()
   const requests = []
   const server = createServer((request, response) => {
@@ -172,6 +175,10 @@ export async function runUpdateSections({ results, port, mkTemp }) {
     if (telling) delete env.APPIMAGE
     else env.APPIMAGE = appImage
     const markers = () => (existsSync(marker) ? readFileSync(marker, 'utf8').split('\n').filter(Boolean) : [])
+    // Electron's own files, opened without close-on-exec: what the relaunch must not pass on.
+    const inheritedFromApp = () =>
+      (existsSync(`${marker}.fds`) ? readFileSync(`${marker}.fds`, 'utf8').split('\n') : [])
+        .filter((line) => /(icudtl\.dat|\.bin|\.pak|\.asar)$/.test(line))
     const closeStub = join(profile, 'close-stub')
     const notifyStub = join(profile, 'update-notify-stub')
     const dialogs = () => {
@@ -193,6 +200,8 @@ export async function runUpdateSections({ results, port, mkTemp }) {
       profile,
       env,
       markers,
+      inheritedFromApp,
+      markerFile: marker,
       dialogs,
       notifications,
       oldHash: sha256(appImage),
@@ -335,6 +344,8 @@ export async function runUpdateSections({ results, port, mkTemp }) {
     check(results, 'update: Restart replaces the AppImage and starts the new version exactly once after the exit',
       exited === true && sha256(one.appImage) === one.newHash && JSON.stringify(one.markers()) === JSON.stringify([`new ${NEW_VERSION}`]),
       `exited=${exited} new=${sha256(one.appImage) === one.newHash} markers=${JSON.stringify(markers)}`)
+    check(results, 'update: the relaunched version inherits none of the old app\'s descriptors',
+      existsSync(`${one.markerFile}.fds`) && one.inheritedFromApp().length === 0, JSON.stringify(one.inheritedFromApp()))
     app = null
 
     // ── Closing the window installs and starts nothing.

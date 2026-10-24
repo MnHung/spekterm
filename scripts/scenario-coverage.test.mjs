@@ -3022,6 +3022,9 @@ export const TABLE = [
     'install before asking', '**Ran** (tasks 7.1)'],
   ['Restarting starts the new version', 'Restart replaces the AppImage and starts the new version exactly once after the exit', false,
     'use app.relaunch (measured to start nothing inside an AppImage)', 'a fake AppImage records each run; "the sessions are listed in the new one" on a real release is dogfood (tasks 9.1)'],
+  ['The new version holds nothing of the old one', 'the relaunched version inherits none of the old app', false,
+    'spawn the relaunch shell without closing inherited descriptors (as 0.2.18 did)',
+    '**Ran**: red with the 0.2.18 script; found on the first real update, where the old mount and the deleted image stayed until the new app quit'],
   ['A failed installation is reported after the restart', 'a failed restart install relaunches the old version and records why', false,
     'relaunch nothing when the install fails', 'unit; the About line of the outcome: shows the previous run outcome and clears it from the file'],
   // ── auto-update: app-update, installing at quit ──

@@ -148,8 +148,9 @@ In `will-quit` (one-shot), when the origin is `user` (switch on) or `restart` (s
    `$APPIMAGE` untouched. After a successful rename the downloaded copy in the updater cache is deleted (~130 MB
    that would otherwise stay until the next version's download).
 5. **Restart only**: relaunch the file that now exists — the destination if the commit succeeded, else `$APPIMAGE`
-   (checked with `existsSync`) — through a detached `/bin/sh -c 'while kill -0 "$1" 2>/dev/null; do sleep 0.2;
-   done; exec "$2"' sh <pid> <path>`, with an explicit environment object built from `process.env` (never mutating
+   (checked with `existsSync`) — through a detached `/bin/bash` (`/bin/sh` where there is none) `-c` script that
+   first closes every inherited descriptor above 2, then `while kill -0 "$1" 2>/dev/null; do sleep 0.2; done;
+   exec "$2"` with `sh <pid> <path>` (the descriptors: added after the first real update, see tasks 9.1), with an explicit environment object built from `process.env` (never mutating
    `process.env`, which `secret-scope.test.mjs` guards), `stdio: 'ignore'`, `unref()`. It starts the new image only
    after this process has exited, so the two instances never share the user-data directory. **`app.relaunch` is not
    used: measured, it starts nothing inside an AppImage** (task 1.1).
@@ -282,6 +283,7 @@ CONTRIBUTING becomes dist:linux → install:desktop → push → release:github.
   directory and the old file is removed after the rename; a launcher pointing at the old name breaks. Documented on
   the install page; `install:desktop`'s versionless name is unaffected.
 - **[The relaunch depends on `/bin/sh` and `kill -0`]** → Both are POSIX and present wherever an AppImage runs;
+  closing the inherited descriptors fully needs bash (dash closes only 3–9), which desktop distributions ship;
   `app.relaunch` was measured not to work inside an AppImage (1.1), so there is no Electron-native path.
 - **[Re-uploading the AppImage and yml of an existing release with `--clobber` is not atomic]** → A client
   checking in between sees a checksum mismatch, shows `failed` and retries at the next check. Accepted.

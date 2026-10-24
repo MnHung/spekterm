@@ -130,7 +130,7 @@ describe('shellRelauncher', () => {
       }) as never,
     })
     relaunch('/home/me/.local/bin/Spekterm.AppImage')
-    assert.equal(calls[0].command, '/bin/sh')
+    assert.equal(calls[0].command, fs.existsSync('/bin/bash') ? '/bin/bash' : '/bin/sh')
     assert.deepEqual(calls[0].args, ['-c', RELAUNCH_SCRIPT, 'sh', '4242', '/home/me/.local/bin/Spekterm.AppImage'])
     assert.equal(calls[0].options.detached, true)
     assert.equal(calls[0].options.stdio, 'ignore')
@@ -138,16 +138,47 @@ describe('shellRelauncher', () => {
     assert.notEqual(calls[0].options.env, env)
   })
 
-  it('the script execs the target only after the pid exited', () => {
-    const { root } = layout()
-    const marker = path.join(root, 'marker')
-    const target = path.join(root, 'target.sh')
-    fs.writeFileSync(target, `#!/bin/sh\necho ran >> "${marker}"\n`, { mode: 0o755 })
-    // A pid that does not exist: the loop ends at once.
-    const { status } = spawnSync('/bin/sh', ['-c', RELAUNCH_SCRIPT, 'sh', '2147483646', target])
-    assert.equal(status, 0)
-    assert.equal(fs.readFileSync(marker, 'utf8'), 'ran\n')
+  it('falls back to /bin/sh where there is no bash', () => {
+    const commands: string[] = []
+    const relaunch = shellRelauncher({
+      pid: 4242,
+      env: {},
+      exists: () => false,
+      spawn: ((command: string) => {
+        commands.push(command)
+        return { on: () => {}, unref: () => {} }
+      }) as never,
+    })
+    relaunch('/home/me/.local/bin/Spekterm.AppImage')
+    assert.deepEqual(commands, ['/bin/sh'])
   })
+
+  for (const shell of ['/bin/bash', '/bin/sh']) {
+    it(`under ${shell} the script execs the target only after the pid exited, without the inherited descriptors`, {
+      skip: !fs.existsSync(shell),
+    }, () => {
+      const { root } = layout()
+      const marker = path.join(root, 'marker')
+      const target = path.join(root, 'target.sh')
+      const heldFile = path.join(root, 'held')
+      fs.writeFileSync(heldFile, '')
+      fs.writeFileSync(target, `#!/bin/sh\nfor f in /proc/$$/fd/*; do echo "\${f##*/} $(readlink "$f")"; done > "${marker}"\n`, { mode: 0o755 })
+      // Descriptors in stdio slots are inherited without close-on-exec, as Electron's are: 3–4 and 36.
+      const held = fs.openSync(heldFile, 'r')
+      try {
+        const stdio = ['ignore', 'ignore', 'ignore', held, held, ...Array<'ignore'>(31).fill('ignore'), held]
+        // A pid that does not exist: the loop ends at once.
+        const { status } = spawnSync(shell, ['-c', RELAUNCH_SCRIPT, 'sh', '2147483646', target], { stdio: stdio as never })
+        assert.equal(status, 0)
+      } finally {
+        fs.closeSync(held)
+      }
+      // Only the held file's descriptors count: the target's shell holds its script and a pipe of its own.
+      const inherited = fs.readFileSync(marker, 'utf8').split('\n').filter((line) => line.endsWith(` ${heldFile}`))
+        .map((line) => Number(line.split(' ')[0])).sort((a, b) => a - b)
+      assert.deepEqual(inherited, shell === '/bin/bash' ? [] : [36])
+    })
+  }
 })
 
 describe('QuitInstaller', () => {

@@ -156,8 +156,19 @@ export function removeLeftoverStaging(appImage: string, io: InstallFs = fs): voi
   for (const name of names) if (STAGING.test(name)) io.rmSync(path.join(dir, name), { force: true })
 }
 
-/** Waits for `$1` to exit, then becomes the new AppImage. */
-export const RELAUNCH_SCRIPT = 'while kill -0 "$1" 2>/dev/null; do sleep 0.2; done; exec "$2"'
+/**
+ * Closes every inherited descriptor above 2, waits for `$1` to exit, then becomes the new AppImage.
+ *
+ * Electron keeps descriptors into its own image open without close-on-exec (`icudtl.dat`, the V8 snapshot, the
+ * `.pak` files, `app.asar`), and a spawn passes them on. Measured on the first real update (0.2.18 → 0.2.19): the new
+ * app held the old image's mount open, so the old AppImage's runtime never unmounted and the replaced, deleted file
+ * kept its disk space until the new app quit — one more of each per update. bash closes any descriptor; dash
+ * (`/bin/sh` on Debian and Ubuntu) parses `exec 36>&-` as a command named `36`, so under it only 3–9 are closed.
+ */
+export const RELAUNCH_SCRIPT =
+  'if [ -n "$BASH_VERSION" ]; then for f in /proc/$$/fd/*; do n=${f##*/}; [ "$n" -gt 2 ] && eval "exec $n>&-"; done; ' +
+  'else for n in 3 4 5 6 7 8 9; do eval "exec $n>&-"; done; fi; ' +
+  'while kill -0 "$1" 2>/dev/null; do sleep 0.2; done; exec "$2"'
 
 export type SpawnRelauncher = (target: string) => void
 
@@ -166,10 +177,12 @@ export function shellRelauncher(options: {
   /** Built from `process.env`, never `process.env` itself (`secret-scope.test.mjs`). */
   readonly env: NodeJS.ProcessEnv
   readonly spawn?: typeof spawnProcess
+  readonly exists?: (file: string) => boolean
 }): SpawnRelauncher {
   const run = options.spawn ?? spawnProcess
+  const shell = (options.exists ?? fs.existsSync)('/bin/bash') ? '/bin/bash' : '/bin/sh'
   return (target) => {
-    const child = run('/bin/sh', ['-c', RELAUNCH_SCRIPT, 'sh', String(options.pid), target], {
+    const child = run(shell, ['-c', RELAUNCH_SCRIPT, 'sh', String(options.pid), target], {
       detached: true,
       stdio: 'ignore',
       env: { ...options.env },

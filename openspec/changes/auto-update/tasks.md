@@ -194,5 +194,15 @@ updater cache). The instrumentation never enters the repo.
   `install:desktop`; release the next version; confirm the running one downloads, notifies once, restarts into the
   new version through the dialog with sessions restored, and that closing the window without restarting installs.
   Record the dates and versions under this task.
+  - 2026-10-24, first part: 0.2.18 released with `release:github` (draft, then published with the AppImage and
+    `latest-linux.yml`) and installed with `install:desktop`; the maintainer restarted into it. Its first check ran
+    65 s after the start against a latest release (0.2.15) with no `latest-linux.yml` and settled as up to date, no
+    error shown. 0.2.19 released; "Check now" downloaded it, `notifiedVersion` became `0.2.19`, "Restart to update"
+    asked and restarted: the installed file's sha512 is 0.2.19's, its mode kept (755), the new app started 15:55:36.
+  - **Found**: the old version's AppImage runtime was still running afterwards, its mount still there and its
+    (deleted) image still on disk — the new app held 8–9 descriptors into the old mount (`icudtl.dat`, the snapshot,
+    `.pak`, `app.asar`), inherited through the relaunch shell. Fixed in `RELAUNCH_SCRIPT` (closes descriptors above 2;
+    bash, or 3–9 under dash); unit tests per shell and a probe check, each red with the 0.2.18 script. A release that
+    carries the fix must do the next restart for this to be confirmed on a real update.
 - [ ] 9.2 On the build Mac: the packaged dmg build shows the newer release as available and "Download" opens its page.
   Record under this task.

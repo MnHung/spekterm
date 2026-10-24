@@ -104,7 +104,8 @@ needs asking it SHALL go ahead at once. Cancel SHALL be the dialog's default. If
 AppImage file SHALL be left exactly as they were. If it goes ahead, the AppImage SHALL be replaced only after every
 window has closed, in a way that never leaves the path the app will next be started from without a complete, runnable file, and without running the
 new version during the replacement; the new version SHALL start once the old process has exited, with its sessions
-restored as after any restart (`session-persistence`). If the installation fails, the old file SHALL be left as it
+restored as after any restart (`session-persistence`), and SHALL NOT hold any file of the old version open (an
+AppImage stays mounted, and its replaced file keeps its disk space, while anything holds a file inside it). If the installation fails, the old file SHALL be left as it
 was, the old version SHALL start again, and it SHALL show why the update failed.
 
 #### Scenario: A running session is asked about
@@ -123,6 +124,11 @@ was, the old version SHALL start again, and it SHALL show why the update failed.
 - **WHEN** the user confirms
 - **THEN** the AppImage file is the new version, the new version was started exactly once, after the old one
   exited, and the sessions of the old one are listed in the new one
+
+#### Scenario: The new version holds nothing of the old one
+
+- **WHEN** the new version has been started by a restart
+- **THEN** none of its open files is a file of the old version
 
 #### Scenario: A failed installation is reported after the restart
 
