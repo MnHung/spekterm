@@ -10,8 +10,8 @@ fails.
 The operations are:
 
 - listing folders and sessions;
-- watching a session's conversation, replying to it (with attachments, see `remote-attachments`), and
-  answering its open prompt;
+- watching a session's conversation, replying to it (with attachments, see `remote-attachments`), switching its
+  agent's model, and answering its open prompt;
 - uploading an attachment (see `remote-attachments`);
 - reading a file the agent sent to the user (see `remote-sent-files`);
 - reading an image a tool result in the conversation holds (see `remote-result-images`);

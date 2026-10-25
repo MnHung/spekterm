@@ -21,6 +21,7 @@ The operations are:
   agent's model, and answering its open prompt;
 - uploading an attachment (see `remote-attachments`);
 - reading a file the agent sent to the user (see `remote-sent-files`);
+- reading an image a tool result in the conversation holds (see `remote-result-images`);
 - watching a session's terminal output, and sending it input;
 - creating a session;
 - waking a dormant session;
@@ -39,7 +40,8 @@ as a file the agent sent to the user, and changing a terminal's size SHALL NOT b
 attachment. It is written only into the desktop's attachment store, under a name the desktop chooses
 (`remote-attachments`). Closing a session removes that session's attachments, as closing it on the desktop
 does. Besides OpenSpec content and handoff briefs, the only file a device reads is one the session's agent sent
-to the user, addressed by the agent's tool call, whatever it holds (`remote-sent-files`). No operation SHALL take a path or a directory from the device.
+to the user, addressed by the agent's tool call, whatever it holds (`remote-sent-files`). An image a tool result holds is read
+from the session's transcript, addressed by the result, never from a file (`remote-result-images`). No operation SHALL take a path or a directory from the device.
 
 #### Scenario: An unknown operation is refused without effect
 
@@ -55,6 +57,11 @@ to the user, addressed by the agent's tool call, whatever it holds (`remote-sent
 
 - **WHEN** a paired device authenticates with a desktop that has this operation
 - **THEN** the answer's list of operations includes reading a file the agent sent to the user
+
+#### Scenario: The authentication answer lists reading a result image
+
+- **WHEN** a paired device authenticates with a desktop that has this operation
+- **THEN** the answer's list of operations includes reading an image a tool result holds
 
 ### Requirement: The client and server agree on a protocol version
 
