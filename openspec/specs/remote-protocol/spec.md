@@ -17,8 +17,8 @@ fails.
 The operations are:
 
 - listing folders and sessions;
-- watching a session's conversation, replying to it (with attachments, see `remote-attachments`), and
-  answering its open prompt;
+- watching a session's conversation, replying to it (with attachments, see `remote-attachments`), switching its
+  agent's model, and answering its open prompt;
 - uploading an attachment (see `remote-attachments`);
 - reading a file the agent sent to the user (see `remote-sent-files`);
 - watching a session's terminal output, and sending it input;
@@ -1485,3 +1485,57 @@ label instead.
 
 - **WHEN** a device lists sessions including a shell session
 - **THEN** the shell session's entry carries no messaging name
+
+### Requirement: A device switches an agent session's model
+
+A device SHALL be able to ask the watched conversation's agent to switch model with `conversation.setModel`,
+taking `sessionId` and `model`. `model` SHALL be 1 to 100 characters from letters, digits and `. _ : / @ [ ]` and `-`,
+not beginning with `-`; any other value SHALL be refused with a bad-parameters error and nothing SHALL be written.
+The desktop SHALL write `/model <model>` exactly as it writes a reply to `conversation.send` — the same
+conditions and errors (not the watched conversation, an agent that cannot take a reply, a held filled-in prompt,
+no running process), the same per-session queue, the same re-checks before the submit key and the same outcomes
+— and SHALL answer with the outcome and the text written. The answer SHALL NOT claim that the model changed.
+`conversation.setModel` SHALL be on the list of operations the authentication answer carries.
+
+#### Scenario: A switch is written like a reply
+
+- **WHEN** a device that watches a session whose agent is ready invokes `conversation.setModel` with `sonnet`
+- **THEN** `/model sonnet` is written to the session followed by the submit key, and the answer is `submitted` with that text
+
+#### Scenario: A name with a space is refused
+
+- **WHEN** a device invokes `conversation.setModel` with `sonnet extra`, or with an empty name, or with `-x`
+- **THEN** the answer is a bad-parameters error and nothing is written to the session
+
+#### Scenario: A held prompt refuses the switch
+
+- **WHEN** the session holds a filled-in prompt nobody has sent and a device invokes `conversation.setModel`
+- **THEN** the answer is the held-prompt error, as for a reply, and nothing is written
+
+#### Scenario: The authentication answer lists the operation
+
+- **WHEN** a paired device authenticates with a desktop that has this operation
+- **THEN** the answer's list of operations includes `conversation.setModel`
+
+### Requirement: A reply that is a one-name model command arms the switch
+
+When the text a reply writes (including any attachment sentence) is exactly `/model` followed by one name of the charset above — whether it came from
+`conversation.setModel` or from `conversation.send` — the desktop SHALL arm that name for the session
+(`agent-model-switch`) after the last re-check and immediately before the submit key. A reply whose key is
+withheld SHALL arm nothing. A bare `/model`, a `/model` with more than one argument, and any other text SHALL arm
+nothing. A failure to arm SHALL NOT fail the reply.
+
+#### Scenario: A hand-typed model command arms too
+
+- **WHEN** a device sends `/model sonnet` through `conversation.send`
+- **THEN** the session is armed for `sonnet` before the submit key is written
+
+#### Scenario: A withheld key arms nothing
+
+- **WHEN** the agent begins waiting on a choice during the delay before the submit key, so the key is withheld
+- **THEN** no switch is armed and the outcome is `filled-not-submitted`
+
+#### Scenario: Other text arms nothing
+
+- **WHEN** a device sends `/model`, or `/model a b`, or `/effort high`, or `/model x` with an attachment
+- **THEN** no switch is armed
