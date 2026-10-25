@@ -1,5 +1,6 @@
 import type { WaitState } from './agent-events'
 import { attachmentSentence } from './agent-protocol-copy'
+import { modelCommandName } from './agent-model-switch'
 import { RemoteError } from './remote-frames'
 import type { FollowUpdate } from './transcript-follow-service'
 
@@ -83,6 +84,12 @@ export interface ReplyDeps {
    * immediately before the submit key, after every re-check, so a withheld key arms nothing. Its failure is no note.
    */
   armOrigin?: (sessionId: string) => void
+  /**
+   * Arms the permission for the model switch this reply asks for (`remote-model-switch` D2). Called with the name
+   * only when the text about to be written is exactly `/model <name>`, immediately before the submit key and
+   * after every re-check. Its failure is no permission: the confirmation box opens as it would.
+   */
+  armModel?: (sessionId: string, name: string) => void
 }
 
 function prefillRefusal(pending: { prefillId?: string; edited: boolean }): RemoteError {
@@ -173,6 +180,15 @@ export function sendReply(
       deps.armOrigin?.(sessionId)
     } catch {
       // No note for this prompt.
+    }
+    // The name is read from what is written, attachment sentence included: the agent is asked for exactly that.
+    const modelName = modelCommandName(full)
+    if (modelName !== null) {
+      try {
+        deps.armModel?.(sessionId, modelName)
+      } catch {
+        // The box opens as without this change.
+      }
     }
     deps.write(sessionId, '\r')
     return { outcome: 'submitted' as const, text: full }

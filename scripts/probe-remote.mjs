@@ -3020,6 +3020,87 @@ async function runPhoneContext(_mode, _config, context) {
   await app.close()
 }
 
+/**
+ * `remote-model-switch`: a device's `/model` reply arms the injected `PreModelSwitch` hook, and nothing else does.
+ * The stub asks the hook twice per `/model <name>` (as the real agent does for `haiku`/`opusplan`) and records
+ * each run's stdout, so this proves the command and the injection pipeline end to end; that the real agent
+ * skips its box on `allow` was measured once (`docs/lessons/transcript.md`) and is dogfood's to certify.
+ *
+ * Control groups (run by hand, recorded here): arm after the submit key (the first assertion red); skip the arm
+ * when the text arrives through `conversation.send` (the second red); arm for any `/model` prefix (the desktop
+ * assertion red); revert each.
+ */
+async function runModelSwitch(_mode, _config, context) {
+  if (context.app) await context.app.close()
+  const repos = makeRepos()
+  const profile = seedProfile(repos, { remote: { enabled: true, port: LISTEN_A } })
+  const { app, stub } = await start(context, profile, { slashCommands: true, modelSwitch: true })
+  const paired = await phone(app)
+  const { client } = paired
+  check(
+    results,
+    'the authentication answer lists conversation.setModel',
+    (paired.response.r?.operations ?? []).includes('conversation.setModel'),
+    JSON.stringify(paired.response.r?.operations),
+  )
+  const agent = await remoteCreate(client, 'f', 'claude')
+  const sessionId = agent.r.sessionId
+  await pollFor({ read: () => stub.ready(), settled: Boolean, timeoutMs: 15_000, label: 'the stub ready' })
+  await sleep(1_000)
+  const watchFrom = client.events.length
+  await call(client, 'conversation.watch', { sessionId })
+  await client.waitEvent('conversation.wait', { from: watchFrom, match: (d) => d.state === 'ready', timeoutMs: 15_000, label: 'ready' })
+  const ALLOW = '{"hookSpecificOutput":{"hookEventName":"PreModelSwitch","permissionDecision":"allow"}}'
+  const runs = (count) =>
+    pollFor({ read: () => stub.modelHookLog().split('|').length - 1, settled: (n) => n >= count, timeoutMs: 15_000, label: `${count} hook runs` })
+  const log = () => stub.modelHookLog().split('|').slice(0, -1)
+
+  // ── conversation.setModel: both of one switch's hook runs are allowed ──
+  const set = await call(client, 'conversation.setModel', { sessionId, model: 'Haiku' })
+  await runs(2)
+  check(
+    results,
+    'conversation.setModel writes the command and both hook runs of the switch are allowed',
+    set.r?.outcome === 'submitted' && set.r?.text === '/model Haiku' && log().length === 2 && log().every((out) => out === ALLOW),
+    `r=${JSON.stringify(set.r ?? set.e)} log=${JSON.stringify(log())}`,
+  )
+  await turnAfter(client, watchFrom, 'the model switch')
+
+  // ── a hand-typed /model through conversation.send arms too ──
+  const typed = await call(client, 'conversation.send', { sessionId, text: '/model sonnet' })
+  await runs(4)
+  check(
+    results,
+    'a /model typed through conversation.send arms the switch as well',
+    typed.r?.outcome === 'submitted' && log().slice(2).every((out) => out === ALLOW),
+    `r=${JSON.stringify(typed.r ?? typed.e)} log=${JSON.stringify(log())}`,
+  )
+
+  // ── a switch typed at the desktop is not allowed ──
+  await sleep(6_500)
+  await app.client.evaluate(`window.workspace.terminal.write(${JSON.stringify(sessionId)}, '/model opus\\r')`)
+  await runs(6)
+  check(
+    results,
+    'a switch typed at the desktop, with nothing armed for it, prints no decision',
+    log().slice(4).length === 2 && log().slice(4).every((out) => out === ''),
+    JSON.stringify(log()),
+  )
+
+  // ── a refused name writes nothing ──
+  const before = log().length
+  const refused = []
+  for (const model of ['', 'a b', '-x', 'x'.repeat(101)]) refused.push((await call(client, 'conversation.setModel', { sessionId, model })).e?.code)
+  await sleep(1_500)
+  check(
+    results,
+    'a name outside the charset is refused with BAD_PARAMS and nothing reaches the agent',
+    refused.every((code) => code === 'BAD_PARAMS') && log().length === before,
+    JSON.stringify(refused),
+  )
+  await app.close()
+}
+
 const SECTIONS = [
   { name: 'runListener', run: runListener },
   { name: 'runPairing', run: runPairing },
@@ -3046,6 +3127,7 @@ const SECTIONS = [
   { name: 'runBackground', run: runBackground },
   { name: 'runPhoneContext', run: runPhoneContext },
   { name: 'runToolDetail', run: runToolDetail },
+  { name: 'runModelSwitch', run: runModelSwitch },
 ].map((section) => ({
   ...section,
   // A section that hangs leaves its app behind; the profile prefix finds it (character class: not this command).

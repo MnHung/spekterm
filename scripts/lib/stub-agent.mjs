@@ -128,6 +128,14 @@ export function makeStubAgent(
      * prompt; the follow reads the whole file either way). `null` writes none.
      */
     skillListing = null,
+    /**
+     * Ask the injected `PreModelSwitch` hook twice for every `/model <name>` line, as the real agent does for
+     * a switch that computes two (from, to) pairs (measured, CLI 2.1.310: `haiku`, `opusplan`), with the measured
+     * payload (compact JSON, `requested_model` lower-cased, `source` command). Each run's stdout is appended to
+     * `modelHookLog`, `|`-terminated. The stub proves the command and the injection; whether the real agent
+     * skips its box on `allow` is dogfood's to certify. **Off by default.**
+     */
+    modelSwitch = false,
   } = {},
 ) {
   const home = mkTemp('spekterm-agentview-stub-')
@@ -263,6 +271,17 @@ export function makeStubAgent(
     // The real agent reports every submitted prompt at once, before any record is written (measured,
     // CLI 2.1.300). Not an option: a probe that never sees it cannot show it was injected.
     '    fire UserPromptSubmit',
+    modelSwitch
+      ? [
+          '    case "$line" in "/model "*)',
+          '      req=$(printf %s "${line#/model }" | tr A-Z a-z)',
+          '      for run in 1 2; do',
+          `        firej PreModelSwitch "$(printf '{"hook_event_name":"PreModelSwitch","session_id":"%s","from_model":"claude-opus-5-5","to_model":"claude-haiku-5-5","requested_model":"%s","source":"command","prompt_cache_warm":true}' "$sid" "$req")"`,
+          `        { cat "${hookOutDir}/PreModelSwitch-1"; printf '|'; } >> "${hookOutDir}/model-hook.log"`,
+          '      done ;;',
+          '    esac',
+        ].join('\n')
+      : '',
     // 延遲補寫紀錄 —— 用來驗「送出後在它出現於紀錄之前標示為未確認」。
     echoDelaySeconds ? `  sleep ${echoDelaySeconds}` : '',
     // Every record gets its own `uuid`: resuming a conversation names the last one received.
@@ -371,6 +390,14 @@ export function makeStubAgent(
     hookStdout: (event, index = 1) => {
       try {
         return readFileSync(join(hookOutDir, `${event}-${index}`), 'utf8')
+      } catch {
+        return ''
+      }
+    },
+    /** The `|`-separated stdout of every `PreModelSwitch` run (`modelSwitch`). */
+    modelHookLog: () => {
+      try {
+        return readFileSync(join(hookOutDir, 'model-hook.log'), 'utf8')
       } catch {
         return ''
       }

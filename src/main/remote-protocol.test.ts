@@ -402,3 +402,33 @@ test('files.read checks its parameters, defaults offset and length, and goes to 
   assert.equal(asked.length, 3)
   assert.deepEqual((asked[2] as unknown[])[1], { toolUseId: 't1', index: 0, offset: 0, length: 524288, version: undefined })
 })
+
+test('conversation.setModel writes /model <name> as a reply and refuses a name outside the charset (remote-model-switch D4)', async () => {
+  const replies: unknown[][] = []
+  const host = {
+    reply: (...args: unknown[]) => {
+      replies.push(args)
+      return Promise.resolve({ outcome: 'submitted', text: args[2] })
+    },
+  } as unknown as RemoteHost
+  const conn = connection()
+  const session = openRemoteSession(host, conn)
+  for (const model of ['sonnet', 'opus[1m]', 'claude-sonnet-4@20250514']) {
+    const ok = await call(session, conn, 'conversation.setModel', { sessionId: 's1', model })
+    assert.equal(ok.ok, true, model)
+    assert.deepEqual(ok.r, { outcome: 'submitted', text: `/model ${model}` })
+  }
+  assert.deepEqual(replies.map((args) => [args[1], args[2], args[3]]), [
+    ['s1', '/model sonnet', []],
+    ['s1', '/model opus[1m]', []],
+    ['s1', '/model claude-sonnet-4@20250514', []],
+  ])
+  const before = replies.length
+  for (const model of ['', 'a b', '-x', 'a'.repeat(101), 'a\nb', "a'b", 5, undefined]) {
+    const bad = await call(session, conn, 'conversation.setModel', { sessionId: 's1', model })
+    assert.equal(bad.ok, false, String(model))
+    assert.equal(bad.e?.code, 'BAD_PARAMS', String(model))
+  }
+  assert.equal(replies.length, before, 'nothing is written for a refused name')
+  assert.ok(operationNames().includes('conversation.setModel'), 'listed in the authentication answer’s operations')
+})

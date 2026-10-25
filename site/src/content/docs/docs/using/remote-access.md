@@ -92,6 +92,12 @@ is on. The phone can also list the skills the agent can run: send `/name` or `/n
 to run one. The list appears once the session has received its first message. The agent's built-in
 commands, such as `/clear`, are not in it.
 
+The phone can also switch the session's model. Normally the agent asks you to confirm a switch in its
+terminal when the conversation is cached, and nothing on the phone could show that question. So when the phone
+asks for the switch, spekterm lets exactly that switch go through without the question, for a few seconds; a
+switch you start at the computer still asks. Switching makes the agent re-read the whole conversation on your
+next message, and the agent keeps the choice as its default for new sessions.
+
 ### What the agent did, and who wrote to it
 
 The phone shows what each tool call did, not only its name: the command an agent ran, the change it made to

@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import { type IPty, spawn } from 'node-pty'
 import { clearAgentStatus, prepareInjection } from './agent-status'
+import { clearModelSwitch, prepareModelSwitchInjection } from './agent-model-switch'
 import { clearOrigin, prepareOriginInjection } from './agent-origin'
 import { clearAgentEvents, prepareEventInjection } from './agent-events'
 import { noteWrite, type WriteOrigin } from './pty-input'
@@ -585,6 +586,8 @@ export class TerminalService {
             prepareAttachmentAccess(this.agentEventsEnabled()),
             // The phone-origin note: a second `UserPromptSubmit` command, after the bridge's (`remote-phone-context`).
             prepareOriginInjection(sessionId, this.agentEventsEnabled()),
+            // Lets a device's model switch past the cache-miss confirmation (`remote-model-switch`).
+            prepareModelSwitchInjection(sessionId, this.agentEventsEnabled()),
             // **排在事件橋接之後** —— 見上方註解：對照組的鑑別力取決於這個順序。
             this.prepareHandoff(sessionId),
           ])
@@ -796,6 +799,7 @@ export class TerminalService {
     // 不留下一份沒有主人的狀態 —— 否則同一個 id 日後若被重建，會先看到一份過期的資料。
     clearAgentStatus(sessionId)
     clearOrigin(sessionId)
+    clearModelSwitch(sessionId)
     // **只由 pty 的結束觸發。** agent 回報的「對話結束」不是這個訊號（實測 `/clear` 就會發它，
     // 而 pty 還活著）—— 接上去的話，使用者清一次對話，等待狀態就此永遠停在未知。
     clearAgentEvents(sessionId)

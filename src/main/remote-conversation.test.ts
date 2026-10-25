@@ -302,3 +302,64 @@ test('slashForm leaves other text alone and keeps a multi-line argument', () => 
   assert.equal(slashForm('/probe-echo line1\nline2'), '/probe-echo line1\nline2')
   assert.equal(slashForm('/probe-echo\n  line1'), '/probe-echo line1')
 })
+
+/** Records the model arming in the same log as the writes. */
+function withModel(r: ReturnType<typeof rig>) {
+  r.deps.armModel = (id, name) => {
+    r.writes.push({ at: -1, data: `<model ${id} ${name}>` })
+  }
+}
+
+test('a one-name model command arms the switch right before the submit key (remote-model-switch D2)', async () => {
+  // Control group: arm before the re-checks → the withheld-key case below arms (red).
+  const r = rig('ready')
+  withModel(r)
+  const outcome = sendReply(r.deps, 's', 's', '/model sonnet')
+  await r.advance(SUBMIT_KEY_DELAY_MS)
+  assert.equal((await outcome).outcome, 'submitted')
+  assert.deepEqual(r.writes.map((w) => w.data), ['/model sonnet', '<model s sonnet>', '\r'])
+})
+
+test('other text arms no model switch: a bare command, more arguments, another command, an attachment sentence, several lines', async () => {
+  // Control group: arm for any `/model` prefix → the two-argument case arms (red).
+  for (const text of ['/model', '/model a b', '/effort high', '/model sonnet\nplease']) {
+    const r = rig('ready')
+    withModel(r)
+    const outcome = sendReply(r.deps, 's', 's', text)
+    await r.advance(SUBMIT_KEY_DELAY_MS)
+    await outcome
+    assert.equal(r.writes.some((w) => w.data.startsWith('<model')), false, text)
+  }
+  const r = rig('ready')
+  withModel(r)
+  const outcome = sendReply(r.deps, 's', 's', '/model sonnet', () => ({
+    paths: ['/x/sent/photo.jpg'],
+    commit: () => {},
+    release: () => {},
+  }))
+  await r.advance(SUBMIT_KEY_DELAY_MS)
+  await outcome
+  assert.equal(r.writes.some((w) => w.data.startsWith('<model')), false, 'the written text carries the attachment sentence')
+})
+
+test('a withheld submit key arms no model switch', async () => {
+  const r = rig('busy')
+  withModel(r)
+  const first = sendReply(r.deps, 's', 's', '/model sonnet')
+  await r.advance(100)
+  r.setState('awaiting-choice')
+  await r.advance(SUBMIT_KEY_DELAY_MS)
+  assert.equal((await first).outcome, 'filled-not-submitted')
+  assert.deepEqual(r.writes.map((w) => w.data), ['/model sonnet'])
+})
+
+test('a failure to arm the model switch does not fail the reply', async () => {
+  const r = rig('ready')
+  r.deps.armModel = () => {
+    throw new Error('disk full')
+  }
+  const outcome = sendReply(r.deps, 's', 's', '/model sonnet')
+  await r.advance(SUBMIT_KEY_DELAY_MS)
+  assert.equal((await outcome).outcome, 'submitted')
+  assert.deepEqual(r.writes.map((w) => w.data), ['/model sonnet', '\r'])
+})

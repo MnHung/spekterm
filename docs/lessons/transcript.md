@@ -800,3 +800,21 @@ seconds.
 - **`mtimeNs` does not change between back-to-back equal-size writes** on ext4 (197 of 200): the kernel's coarse
   clock. A version of size and mtime misses such a rewrite; the inode catches a replace by rename, nothing catches an
   in-place rewrite within one tick.
+
+## Model switch from a device (`remote-model-switch`, CLI 2.1.310, 2026-10-25)
+
+Measured with a real agent session (warm cache, `--settings` with a `PreModelSwitch` command that logs its stdin and
+prints the decision), driven through a pty. Re-run on a CLI upgrade; the script is a 40-line pty driver (type a
+prompt, wait for the turn, type `/model x`, read the screen and the hook log).
+
+- **The hook is the way past the box.** Printing nothing: the box ("Switch model? … cached for the current model")
+  opens. Printing `{"hookSpecificOutput":{"hookEventName":"PreModelSwitch","permissionDecision":"allow"}}`: no box,
+  the switch happens, idle and while the agent writes a long answer.
+- **stdin** is compact JSON: `session_id, transcript_path, cwd, scratchpad_dir, prompt_id, hook_event_name,
+  from_model, to_model, requested_model, source ("command" for `/model x`), context_tokens, prompt_cache_warm,
+  cache_ttl, estimated_cache_write_usd, pricing`. The session's pty environment reaches the hook.
+- **`requested_model` is the typed name lower-cased** (`/model Sonnet` → `sonnet`; `opus[1m]` kept as typed).
+- **One switch can run the hook twice**: `sonnet`, `opus[1m]` once; `opusplan` and `haiku` twice (two from/to pairs,
+  one per permission-mode counterpart). The box is skipped only if every run allows, so an allow must not consume the
+  mark. A switch to the current model runs it zero times.
+- A bare `/model` and a bare `/effort` open pickers (the phone's author, 2.1.310).

@@ -128,7 +128,7 @@ has not authenticated.
 
 `operations`: the operations this desktop accepts, other than `hello` and `pair`. Show a control only when its
 operation is listed: an older desktop does not have `sessions.rename`, `sessions.hibernate`, `sessions.close`,
-`attachments.put`, `conversation.answer`, `openspec.watch`, `sessions.submitPrefill` or `files.read`, and answers them `UNKNOWN_OPERATION`. Protocol version 1 grows only by new fields,
+`attachments.put`, `conversation.answer`, `openspec.watch`, `sessions.submitPrefill`, `files.read` or `conversation.setModel`, and answers them `UNKNOWN_OPERATION`. Protocol version 1 grows only by new fields,
 operations, event values and error codes (section 9, obligation 7).
 
 ### `pair`
@@ -455,8 +455,8 @@ One connection watches at most one conversation; watching another ends the previ
   message, not in either conversation view. A client does nothing for it.
 - **A reply starting with `/` is a slash command.** The desktop writes it trimmed, with one space after the name, and
   `r.text` says so; the conversation entry is that same line. As measured with the agent: the command written runs (a
-  name that is the start of another is not swapped by the input box's completion); one sent while the agent works
-  runs after its turn; an unknown command is answered by the agent CLI locally and reaches neither the agent nor the
+  name that is the start of another is not swapped by the input box's completion); a skill sent while the agent works
+  runs after its turn, but the agent's built-in `/model` and `/effort` run at once (measured, CLI 2.1.310); an unknown command is answered by the agent CLI locally and reaches neither the agent nor the
   conversation, so it stays "not confirmed"; one **longer than 800 characters** is taken as a paste, is not run as a
   command, and arrives as a plain message. The limit counts characters, not bytes (800 CJK characters still run), and
   newlines neither count extra nor stop a command: arguments over several lines run as one command.
@@ -466,6 +466,33 @@ One connection watches at most one conversation; watching another ends the previ
   `filled-not-submitted` — the text sits in the agent's input, unsent, and is **never** submitted later. Tell
   the user.
 - Replies to one session are written one at a time.
+- **A reply that is exactly `/model <name>` arms the model switch** (see `conversation.setModel`), also when sent
+  through `conversation.send`.
+
+### `conversation.setModel`
+
+`p`: `{ "sessionId", "model" }` → `r`: `{ "outcome": "submitted" | "filled-not-submitted", "text" }`
+
+Asks the watched conversation's agent to switch model. The desktop writes `/model <model>` exactly as it writes a
+reply — the same conditions and errors as `conversation.send` (`NOT_WATCHING`, `WAIT_STATE`, `PREFILL_PENDING`,
+`NOT_FOUND`), the same queue, the same re-check before the submit key — and `r.text` is that line.
+
+- `model` is 1 to 100 characters from letters, digits and `. _ : / @ [ ] -`, not starting with `-`; anything else is
+  `BAD_PARAMS` and nothing is written. This is narrower than "no whitespace" on purpose: show your own list of names
+  and expect `BAD_PARAMS` for one outside it.
+- **Why a command and not just `conversation.send`:** with content in the conversation and a warm prompt cache the
+  agent asks "Switch model?" in its terminal. That box is not an event, so no wait state shows it, and while it is
+  open the next submit key answers "Yes". Immediately before the submit key the desktop arms a permission for exactly
+  this name; an injected hook answers the agent's question with "allow" for a command switch to that name within 15
+  seconds (and for 5 seconds after the first allow, because one switch can ask twice). A switch the user starts at
+  the desktop still asks.
+- **`submitted` means the key was written, not that the model changed.** Confirm with `conversation.status`'s `model`
+  (it follows within about two seconds) or the conversation entry for `r.text`. If neither comes in a few seconds, tell
+  the user to look at the desktop: the desktop cannot see the box, and a desktop where the hook did not run (agent
+  events off, a session started by an older build) still asks.
+- The agent saves the choice as its default for new sessions; that is the agent's, and no form of the command avoids it.
+  Switching loses the prompt cache: the next message re-reads the whole conversation.
+- Never send a bare `/model` (or `/effort`): each opens an interactive picker nobody can answer from here.
 
 ### `conversation.answer`
 
@@ -827,3 +854,7 @@ open (on Android, a foreground service), and reconnect with backoff when the net
     path — open a sent file only through `files.read`. A sent file's content is the agent's: render Markdown with raw
     HTML shown as text, and plain text and raster images in the app; hand SVG, HTML and every other type to the
     system, never render them in the app's own web view.
+20. **Treat a model switch as a cost the user chooses.** Show `conversation.setModel` only when it is in `operations`;
+    tell the user before sending that the conversation's cache is lost and the choice becomes the agent's default;
+    never send a bare `/model` or `/effort`; hold the reply box until `conversation.status`'s `model` or the entry for
+    `r.text` shows the switch, and after a few seconds say it may be waiting at the desktop.

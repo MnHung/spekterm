@@ -1,4 +1,5 @@
 import type { BackgroundTask, WaitState } from './agent-events'
+import { isModelName } from './agent-model-switch'
 import { type AnswerDecision, type AnswerOutcome, DECISIONS, type PromptView } from './remote-answer'
 import { LIMITS, type PutParams, type PutResult } from './remote-attachments'
 import { CHUNK_LIMIT, type SentChunk } from './remote-sent-files'
@@ -305,6 +306,16 @@ export const OPERATIONS: Record<string, Operation> = {
     // Text may be empty when attachments carry the reply.
     const text = optionalStr(p, 'text') ?? ''
     return state.host.reply(state.conversation?.sessionId ?? null, str(p, 'sessionId'), text, raw as string[])
+  },
+
+  // A reply that is `/model <name>` (`remote-model-switch`): written like any reply, and the desktop lets that
+  // switch past the agent's cache-miss confirmation (`sendReply` arms it).
+  'conversation.setModel': async (state, p) => {
+    const model = str(p, 'model')
+    if (!isModelName(model)) {
+      throw new RemoteError('BAD_PARAMS', '`model` must be 1 to 100 characters of letters, digits and . _ : / @ [ ] -, not starting with -')
+    }
+    return state.host.reply(state.conversation?.sessionId ?? null, str(p, 'sessionId'), `/model ${model}`, [])
   },
 
   'files.read': (state, p) => {

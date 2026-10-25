@@ -382,6 +382,10 @@ function prefilled(opts: { wait?: string; offered?: boolean; edited?: boolean; i
       made.writes.push(`<arm ${id}>`)
       return true
     },
+    armModel: (id, name) => {
+      made.writes.push(`<model ${id} ${name}>`)
+      return true
+    },
   })
   return {
     ...made,
@@ -568,4 +572,16 @@ test('a sent file is read from the session’s current transcript; a shell, an u
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+test('a model switch is written like a reply and armed right before the key, also when typed through send (remote-model-switch D2)', async () => {
+  const made = prefilled()
+  made.setFill(null)
+  const answer = await made.host.reply('a', 'a', '/model Sonnet', [])
+  assert.deepEqual(answer, { outcome: 'submitted', text: '/model Sonnet' })
+  assert.deepEqual(made.writes, ['/model Sonnet', '<arm a>', '<model a Sonnet>', '\r'])
+  const plain = prefilled()
+  plain.setFill(null)
+  await plain.host.reply('a', 'a', 'hello', [])
+  assert.deepEqual(plain.writes, ['hello', '<arm a>', '\r'], 'other text arms no switch')
 })

@@ -1,4 +1,5 @@
 import { preferredTitle } from '../shared/lineage/label'
+import { armModelSwitch } from './agent-model-switch'
 import { armOrigin } from './agent-origin'
 import { type AgentStatus, readAgentStatus } from './agent-status'
 import {
@@ -105,6 +106,8 @@ export interface HostDeps {
   readStatus?: (sessionId: string) => AgentStatus | undefined
   /** Arms the phone-origin note (`agent-origin.ts`); injected for tests. */
   armOrigin?: (sessionId: string) => boolean
+  /** Arms a device's model switch (`agent-model-switch.ts`); injected for tests. */
+  armModel?: (sessionId: string, name: string) => boolean
   /** File access for sent files (`remote-sent-files.ts`); injected for tests. */
   sentFiles?: SentFileFs
   /** The session's current transcript, as the follower finds it; injected for tests. */
@@ -321,6 +324,7 @@ export function createRemoteHost(deps: HostDeps): RemoteHost {
           delay,
           submitDelayMs: SUBMIT_KEY_DELAY_MS,
           armOrigin: (id) => (deps.armOrigin ?? armOrigin)(id),
+          armModel: (id, name) => (deps.armModel ?? armModelSwitch)(id, name),
           // Any unconfirmed fill, listed or not, edited or not (`remote-prefill-send` D5).
           prefillPending: (id) => {
             const view = prefills.of(id)
