@@ -60,6 +60,9 @@ name of the session that sent it, **From subagent** and its type, **Background t
 that session wrote it. Messages from other sessions and background-task notices that arrive while the agent
 works appear too, where the agent took them in.
 
+A tool result that holds images says how many, such as **Result · 1 image**. The view does not show the images
+themselves; a paired phone does ([Remote access](/docs/using/remote-access/)).
+
 A message you send is marked **Not confirmed yet** until it appears in Claude Code's own record. If it
 never appears, the view asks you to check the terminal view, because the message may not have arrived.
 

@@ -2881,6 +2881,110 @@ async function runToolDetail(_mode, _config, context) {
 }
 
 /**
+ * remote-result-images: a result entry lists the images it holds without their bytes, and a connection that watches
+ * nothing reads them with `images.read` — the result's bytes, not the `Read` record's own copy and not an
+ * `api-request-blob` record holding the same id. The transcript is a fixture in the measured CLI shapes (generated
+ * bytes), written by the stub on start; the `Read`'s file does not exist.
+ * Control groups (run by hand, recorded here): require a watch for `images.read` (the second connection's reads
+ * red); drop the `type === "user"` check in `resultImagesOf()` (the decoy assertion red).
+ */
+async function runResultImages(_mode, _config, context) {
+  if (context.app) await context.app.close()
+  const repos = makeRepos()
+  const files = mkTemp('spekterm-remote-images-')
+  const at = '2026-10-25T00:00:00.000Z'
+  const fakeImage = (header, length, seed) => {
+    const out = Buffer.alloc(length, seed)
+    Buffer.from(header).copy(out)
+    for (let i = header.length; i < length; i += 1) out[i] = (i * seed + seed) & 0xff
+    return out
+  }
+  const png = fakeImage([0x89, 0x50, 0x4e, 0x47], 2048, 3)
+  const pngCopy = fakeImage([0x89, 0x50, 0x4e, 0x47], 1536, 5)
+  const jpeg = fakeImage([0xff, 0xd8, 0xff], 1200, 7)
+  const png2 = fakeImage([0x89, 0x50, 0x4e, 0x47], 900, 11)
+  const decoy = fakeImage([0x89, 0x50, 0x4e, 0x47], 2048, 13)
+  const image = (mediaType, bytes) => ({ type: 'image', source: { type: 'base64', media_type: mediaType, data: bytes.toString('base64') } })
+  const text = (t) => ({ type: 'text', text: t })
+  const tool = (id, name, input) => ({ type: 'assistant', uuid: `a-${id}`, timestamp: at, message: { role: 'assistant', content: [{ type: 'tool_use', id, name, input }] } })
+  const result = (id, content, extra = {}) => ({ type: 'user', uuid: `r-${id}`, timestamp: at, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content }] }, ...extra })
+  const records = [
+    tool('img-read', 'Read', { file_path: join(files, 'gone.png') }),
+    result('img-read', [image('image/png', png)], {
+      toolUseResult: { type: 'image', file: { base64: pngCopy.toString('base64'), type: 'image/png', originalSize: pngCopy.length } },
+    }),
+    tool('img-shot', 'mcp__browser__screenshot', {}),
+    result('img-shot', [text('Took a screenshot'), text('1280x800'), image('image/jpeg', jpeg), image('image/png', png2)]),
+    tool('img-text', 'Bash', { command: 'ls' }),
+    result('img-text', [text('a.png b.png')]),
+    { type: 'api-request-blob', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'img-read', content: [image('image/png', decoy)] }] } },
+  ]
+  const fixture = join(files, 'transcript.jsonl')
+  writeFileSync(fixture, records.map((r) => `${JSON.stringify(r)}\n`).join(''))
+  const profile = seedProfile(repos, { remote: { enabled: true, port: LISTEN_A } })
+  const { app, stub } = await start(context, profile, { transcriptFixture: fixture })
+  const paired = await phone(app)
+  const { client } = paired
+  const agent = await remoteCreate(client, 'f', 'claude')
+  const sessionId = agent.r.sessionId
+  await pollFor({ read: () => stub.ready(), settled: Boolean, timeoutMs: 15_000, label: 'the stub ready' })
+
+  const watchFrom = client.events.length
+  await call(client, 'conversation.watch', { sessionId })
+  const update = await client.waitEvent('conversation.update', { from: watchFrom, match: (d) => d.events.some((e) => e.id === 'img-text'), timeoutMs: 15_000, label: 'the fixture entries' })
+  const events = update?.d.events ?? []
+  const resultOf = (id) => events.find((e) => e.kind === 'result' && e.id === id)
+  const read = resultOf('img-read')
+  const shot = resultOf('img-shot')
+  const plain = resultOf('img-text')
+  check(
+    results,
+    'result entries list their images (media types, sizes) and keep their texts; a text-only result lists none',
+    JSON.stringify(read?.images) === JSON.stringify([{ mediaType: 'image/png', size: png.length }]) && read?.text === '' &&
+      JSON.stringify(shot?.images) === JSON.stringify([{ mediaType: 'image/jpeg', size: jpeg.length }, { mediaType: 'image/png', size: png2.length }]) &&
+      shot?.text === 'Took a screenshot\n1280x800' &&
+      plain !== undefined && !('images' in plain),
+    `read=${JSON.stringify(read)} shot=${JSON.stringify(shot?.images)} plain=${JSON.stringify(plain)}`,
+  )
+  const json = JSON.stringify(events)
+  const leaked = [png, pngCopy, jpeg, png2, decoy].filter((b) => json.includes(b.toString('base64').slice(0, 64)))
+  check(results, 'no entry carries any image bytes', leaked.length === 0, `${leaked.length} leaked`)
+
+  // A second connection that watches nothing reads them.
+  const other = await helloRemote(paired.target, paired.credential)
+  const readImage = (toolUseId, index) => call(other.client, 'images.read', { sessionId, toolUseId, index })
+  const bytes = (r) => Buffer.from(r.r?.data ?? '', 'base64')
+  const first = await readImage('img-read', 0)
+  check(
+    results,
+    "a connection that watches nothing reads the Read result's image: its bytes, not the record's copy nor the decoy's, whole",
+    first.ok === true && bytes(first).equals(png) && first.r?.mediaType === 'image/png' && first.r?.size === png.length && first.r?.complete === true,
+    JSON.stringify(first.e ?? { ...first.r, data: undefined, copy: bytes(first).equals(pngCopy), decoy: bytes(first).equals(decoy) }),
+  )
+  const at0 = await readImage('img-shot', 0)
+  const at1 = await readImage('img-shot', 1)
+  check(
+    results,
+    "a screenshot result's positions are the entry's: 0 the JPEG, 1 the PNG",
+    bytes(at0).equals(jpeg) && at0.r?.mediaType === 'image/jpeg' && bytes(at1).equals(png2) && at1.r?.mediaType === 'image/png',
+    `${JSON.stringify(at0.e ?? at0.r?.mediaType)} ${JSON.stringify(at1.e ?? at1.r?.mediaType)}`,
+  )
+  const textOnly = await readImage('img-text', 0)
+  const past = await readImage('img-shot', 2)
+  check(
+    results,
+    'a text-only result and a position past the images are NO_IMAGE',
+    textOnly.e?.code === 'NO_IMAGE' && past.e?.code === 'NO_IMAGE',
+    `${JSON.stringify(textOnly.e)} ${JSON.stringify(past.e)}`,
+  )
+  const operations = paired.response.r?.operations ?? []
+  check(results, 'the authentication answer lists images.read', operations.includes('images.read'), JSON.stringify(operations))
+  other.client.close()
+  client.close()
+  await app.close()
+}
+
+/**
  * remote-phone-context: a device's prompt carries the phone-origin note outside the message, and a watched
  * conversation carries the agent's reported model and usage and its skills; a `/skill args` reply is confirmed.
  *
@@ -3127,6 +3231,7 @@ const SECTIONS = [
   { name: 'runBackground', run: runBackground },
   { name: 'runPhoneContext', run: runPhoneContext },
   { name: 'runToolDetail', run: runToolDetail },
+  { name: 'runResultImages', run: runResultImages },
   { name: 'runModelSwitch', run: runModelSwitch },
 ].map((section) => ({
   ...section,

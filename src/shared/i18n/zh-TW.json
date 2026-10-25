@@ -664,6 +664,7 @@
     "thinking": "思考中",
     "toolResult": "結果",
     "toolFailed": "結果（失敗）",
+    "resultImages_other": "{{count}} 張圖片",
     "attaching": "正在追上進度…",
     "empty": "尚未有任何訊息",
     "dormant": "Session 正在休眠。喚醒後會接回對話。",

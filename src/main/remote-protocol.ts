@@ -2,6 +2,7 @@ import type { BackgroundTask, WaitState } from './agent-events'
 import { isModelName } from './agent-model-switch'
 import { type AnswerDecision, type AnswerOutcome, DECISIONS, type PromptView } from './remote-answer'
 import { LIMITS, type PutParams, type PutResult } from './remote-attachments'
+import { IMAGE_CHUNK_LIMIT, type ImageChunk } from './remote-result-images'
 import { CHUNK_LIMIT, type SentChunk } from './remote-sent-files'
 import type { AttentionEvent, AttentionPosition } from './remote-attention'
 import type { UsageView } from './remote-agent-status'
@@ -119,6 +120,8 @@ export interface RemoteHost {
   putAttachment(sessionId: string, p: PutParams): PutResult
   /** One chunk of a file the session's agent sent to the user (`remote-sent-files.ts`). */
   readSentFile(sessionId: string, p: SentFileRequest): Promise<SentChunk>
+  /** One chunk of an image a tool result in the session's conversation holds (`remote-result-images.ts`). */
+  readResultImage(sessionId: string, p: SentFileRequest): Promise<ImageChunk>
   /** Answers the watched session's open prompt (`remote-answer.ts`). */
   answer(
     watching: string | null,
@@ -166,7 +169,7 @@ interface ConnectionState {
 
 type Operation = (state: ConnectionState, p: Record<string, unknown>) => unknown | Promise<unknown>
 
-/** `files.read`'s parameters, checked (`remote-tool-detail` D6). */
+/** `files.read`'s and `images.read`'s parameters, checked (`remote-tool-detail` D6, `remote-result-images` D5). */
 export interface SentFileRequest {
   toolUseId: string
   index: number
@@ -322,6 +325,18 @@ export const OPERATIONS: Record<string, Operation> = {
     const length = count(p, 'length', CHUNK_LIMIT)
     if (length < 1 || length > CHUNK_LIMIT) throw new RemoteError('BAD_PARAMS', `\`length\` must be 1 to ${CHUNK_LIMIT}`)
     return state.host.readSentFile(str(p, 'sessionId'), {
+      toolUseId: str(p, 'toolUseId'),
+      index: count(p, 'index'),
+      offset: count(p, 'offset', 0),
+      length,
+      version: optionalStr(p, 'version'),
+    })
+  },
+
+  'images.read': (state, p) => {
+    const length = count(p, 'length', IMAGE_CHUNK_LIMIT)
+    if (length < 1 || length > IMAGE_CHUNK_LIMIT) throw new RemoteError('BAD_PARAMS', `\`length\` must be 1 to ${IMAGE_CHUNK_LIMIT}`)
+    return state.host.readResultImage(str(p, 'sessionId'), {
       toolUseId: str(p, 'toolUseId'),
       index: count(p, 'index'),
       offset: count(p, 'offset', 0),

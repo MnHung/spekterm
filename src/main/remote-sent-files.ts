@@ -3,6 +3,7 @@ import { open as fsOpen, realpath as fsRealpath, stat as fsStat } from 'node:fs/
 import path from 'node:path'
 
 import { RemoteError } from './remote-frames'
+import { TranscriptLineIndex } from './transcript-line-index'
 
 /**
  * A paired device reads a file the agent sent to the user (`remote-sent-files`, `remote-tool-detail` D6).
@@ -16,12 +17,8 @@ import { RemoteError } from './remote-frames'
  *
  * ## Scanning a transcript that grows
  *
- * Transcripts reach 112 MB and grow while the agent works. They are append-only and an `assistant` record never
- * changes once written, so an index keeps **every** call it has found and the byte offset scanned to, and a miss
- * scans only what was appended. Recording only the asked id would move the offset past earlier calls it never
- * recorded, which could then never be found. An unterminated last line is not parsed and the offset stays before
- * it: the agent may be in the middle of writing it (an `api-request` line reaches 3.3 MB). The id also appears in
- * result and `api-request` records (measured), hence `type === "assistant"`.
+ * The incremental scan is `TranscriptLineIndex`'s (`transcript-line-index.ts`); this keeps **every** call it is
+ * given. The id also appears in result and `api-request` records (measured), hence `type === "assistant"`.
  *
  * ## Reading without waiting on the file
  *
@@ -32,9 +29,7 @@ import { RemoteError } from './remote-frames'
 
 export const SENT_FILE_LIMIT = 32 * 1024 * 1024
 export const CHUNK_LIMIT = 512 * 1024
-const SCAN_BLOCK = 1024 * 1024
-const NEEDLE = Buffer.from('"SendUserFile"')
-const NEWLINE = 0x0a
+const NEEDLE = '"SendUserFile"'
 
 export interface StatLike {
   dev: bigint
@@ -116,27 +111,38 @@ export function sentFileCalls(line: unknown): [string, (string | null)[]][] {
 }
 
 /**
- * The `SendUserFile` calls of one session's current transcript, scanned incrementally. A new transcript (after
- * `/clear`), a replaced file (another inode) or a shorter one starts over.
+ * The `SendUserFile` calls of one session's current transcript, scanned incrementally (`TranscriptLineIndex`). A
+ * new transcript (after `/clear`), a replaced file (another inode) or a shorter one starts over, looked at on every
+ * lookup.
  */
 export class SentFileIndex {
-  readonly #fs: SentFileFs
-  #path: string | null = null
-  #ino: bigint | null = null
-  #offset = 0
+  readonly #lines: TranscriptLineIndex
   #calls = new Map<string, (string | null)[]>()
-  /** Bytes read from transcripts, for tests: a scan must not re-read what it already scanned. */
-  bytesScanned = 0
 
   constructor(fs: SentFileFs = nodeSentFileFs) {
-    this.#fs = fs
+    this.#lines = new TranscriptLineIndex(
+      NEEDLE,
+      {
+        line: (line) => this.#line(line),
+        reset: () => {
+          this.#calls = new Map()
+        },
+      },
+      fs,
+    )
+  }
+
+  /** Bytes read from transcripts, for tests: a scan must not re-read what it already scanned. */
+  get bytesScanned(): number {
+    return this.#lines.bytesScanned
   }
 
   /** The recorded path of file `index` of call `toolUseId`; throws `FILE_NOT_SENT`. */
   async find(transcriptPath: string, toolUseId: string, index: number): Promise<string> {
-    let files = this.#path === transcriptPath ? this.#calls.get(toolUseId) : undefined
+    if (!(await this.#lines.check(transcriptPath))) throw notSent()
+    let files = this.#calls.get(toolUseId)
     if (!files) {
-      await this.#scan(transcriptPath)
+      await this.#lines.scan(transcriptPath)
       files = this.#calls.get(toolUseId)
     }
     const file = files?.[index]
@@ -144,50 +150,7 @@ export class SentFileIndex {
     return file
   }
 
-  #reset(transcriptPath: string, ino: bigint | null): void {
-    this.#path = transcriptPath
-    this.#ino = ino
-    this.#offset = 0
-    this.#calls = new Map()
-  }
-
-  async #scan(transcriptPath: string): Promise<void> {
-    let handle: HandleLike
-    try {
-      handle = await this.#fs.open(transcriptPath, constants.O_RDONLY)
-    } catch {
-      // No transcript yet: nothing was sent.
-      return
-    }
-    try {
-      const st = await handle.stat()
-      const size = Number(st.size)
-      if (this.#path !== transcriptPath || this.#ino !== st.ino || size < this.#offset) this.#reset(transcriptPath, st.ino)
-      let position = this.#offset
-      let pending = Buffer.alloc(0)
-      while (position < size) {
-        const block = Buffer.alloc(Math.min(SCAN_BLOCK, size - position))
-        const { bytesRead } = await handle.read(block, 0, block.length, position)
-        if (bytesRead === 0) break
-        position += bytesRead
-        this.bytesScanned += bytesRead
-        const buf = pending.length ? Buffer.concat([pending, block.subarray(0, bytesRead)]) : block.subarray(0, bytesRead)
-        let start = 0
-        for (let i = buf.indexOf(NEWLINE); i !== -1; i = buf.indexOf(NEWLINE, start)) {
-          this.#line(buf.subarray(start, i))
-          start = i + 1
-        }
-        pending = buf.subarray(start)
-        // The offset stays before an unterminated tail: it is parsed once complete.
-        this.#offset = position - pending.length
-      }
-    } finally {
-      await handle.close()
-    }
-  }
-
   #line(line: Buffer): void {
-    if (line.indexOf(NEEDLE) === -1) return
     let parsed: unknown
     try {
       parsed = JSON.parse(line.toString('utf8'))

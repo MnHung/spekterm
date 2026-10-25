@@ -533,6 +533,79 @@ test('the list carries an agent session’s messaging name, running or dormant, 
   assert.deepEqual(names('Auto-update')[0], ['a', 'Auto-update', true, 'api-server-1a2b'])
 })
 
+test('a result image is read from the session’s current transcript; a shell, an unknown or a stopped session is refused; a removed session’s index is dropped', async () => {
+  const { mkdtempSync, writeFileSync, rmSync, statSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const { nodeTranscriptFs } = await import('./transcript-line-index')
+  const dir = mkdtempSync(join(tmpdir(), 'spekterm-host-images-'))
+  try {
+    const png = Buffer.from('89504e470d0a1a0a0102030405', 'hex')
+    const line = (id: string) =>
+      `${JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, content: [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: png.toString('base64') } }] }] } })}\n`
+    writeFileSync(join(dir, 'old.jsonl'), line('old'))
+    writeFileSync(join(dir, 'current.jsonl'), line('now'))
+    let current = 'old.jsonl'
+    let bytesRead = 0
+    const resultImages = {
+      stat: nodeTranscriptFs.stat,
+      open: async (file: string, flags: number) => {
+        const handle = await nodeTranscriptFs.open(file, flags)
+        return {
+          ...handle,
+          read: async (buffer: Buffer, offset: number, length: number, position: number) => {
+            const r = await handle.read(buffer, offset, length, position)
+            bytesRead += r.bytesRead
+            return r
+          },
+        }
+      },
+    }
+    let removed = false
+    const view = () =>
+      [
+        { session: { id: 'a', folderId: 'f1', spawnTarget: 'claude', ordinal: 1 }, provisional: false },
+        { session: { id: 'b', folderId: null, spawnTarget: 'shell', ordinal: 2 }, provisional: false },
+        { session: { id: 'c', folderId: 'f1', spawnTarget: 'claude', ordinal: 3 }, provisional: false },
+      ].filter((entry) => !(removed && entry.session.id === 'a'))
+    const h = host({
+      sessions: { view, readHandoffBrief: () => null } as unknown as HostDeps['sessions'],
+      terminal: (() => ({
+        liveSessionIds: () => ['a', 'b'],
+        agentSourceOf: (id: string) => (id === 'a' ? { cwd: dir, conversationId: 'conv' } : null),
+      })) as unknown as HostDeps['terminal'],
+      transcriptOf: () => join(dir, current),
+      resultImages,
+    }).host
+    const request = { toolUseId: 'now', index: 0, offset: 0, length: 1024 }
+    await assert.rejects(h.readResultImage('a', request), { code: 'NO_IMAGE' })
+    // The agent moved to another transcript (`/clear`): the follower's location is the one read.
+    current = 'current.jsonl'
+    const chunk = await h.readResultImage('a', request)
+    assert.deepEqual(Buffer.from(chunk.data, 'base64'), png)
+    assert.equal(chunk.mediaType, 'image/png')
+    await assert.rejects(h.readResultImage('a', { ...request, toolUseId: 'old' }), { code: 'NO_IMAGE' }, 'the old transcript is not read')
+    await assert.rejects(h.readResultImage('b', request), { code: 'NO_CONVERSATION' })
+    await assert.rejects(h.readResultImage('zz', request), { code: 'NOT_FOUND' })
+    await assert.rejects(h.readResultImage('c', request), { code: 'NOT_FOUND' }, 'no running agent')
+
+    // A found result is answered from the index: one line read, no scan.
+    const size = statSync(join(dir, 'current.jsonl')).size
+    let before = bytesRead
+    await h.readResultImage('a', request)
+    assert.equal(bytesRead - before, line('now').length - 1, 'only the line is read')
+    // Removed, then a session with the same id again: its index was dropped, so the read scans from 0.
+    removed = true
+    await assert.rejects(h.readResultImage('a', request), { code: 'NOT_FOUND' })
+    removed = false
+    before = bytesRead
+    await h.readResultImage('a', request)
+    assert.equal(bytesRead - before, size + line('now').length - 1, 'scanned from 0, then the line read')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('a sent file is read from the session’s current transcript; a shell, an unknown or a stopped session is refused', async () => {
   const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs')
   const { tmpdir } = await import('node:os')

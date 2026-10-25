@@ -121,7 +121,22 @@ export type ViewEvent =
       /** Each shortened field of `input` → its original length (or item count). Absent when nothing was cut. */
       inputTruncated?: Record<string, number>
     }
-  | { kind: 'result'; uuid: string; at: number; id: string; text: string; error: boolean }
+  | {
+      kind: 'result'
+      uuid: string
+      at: number
+      id: string
+      text: string
+      error: boolean
+      /** The images the result holds, in order, without their bytes (`resultImagesOf()`). Absent when none. */
+      images?: ResultImageSummary[]
+    }
+
+/** One image a tool result holds, as an entry lists it (`remote-result-images` D1). */
+export interface ResultImageSummary {
+  mediaType: string
+  size: number
+}
 
 /**
  * 記錄類型是**白名單**。
@@ -255,6 +270,59 @@ function resultText(content: unknown): string {
   return parts.join('\n')
 }
 
+/** The image media types a result's image is counted for: the ones the API accepts (`remote-result-images` D1). */
+const IMAGE_MEDIA_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
+
+/** Unwrapped standard base64. `Buffer.byteLength(data, 'base64')` is the decoded size only for this form. */
+const CANONICAL_BASE64 = /^[A-Za-z0-9+/]*={0,2}$/
+
+/** A counted image block: its media type and its recorded base64. */
+export interface ResultImage {
+  mediaType: string
+  data: string
+}
+
+function imageOf(block: unknown): ResultImage | null {
+  const b = record(block)
+  if (!b || b.type !== 'image') return null
+  const source = record(b.source)
+  if (!source || source.type !== 'base64') return null
+  const mediaType = source.media_type
+  const data = source.data
+  if (typeof mediaType !== 'string' || !IMAGE_MEDIA_TYPES.has(mediaType)) return null
+  if (typeof data !== 'string' || data.length % 4 !== 0 || !CANONICAL_BASE64.test(data)) return null
+  return { mediaType, data }
+}
+
+/**
+ * The images each tool result of a record holds (`remote-result-images` D1).
+ *
+ * **The one reading** shared by the entry's `images`, the image index and the read: separate walks would drift,
+ * and a position a device names would then pick another picture with no error. Only a `user` record that is not a
+ * subagent's counts — an `api-request-blob` record holds the same id and blocks in the same shape (measured).
+ * Results without a counted image are returned too, with an empty list.
+ */
+export function resultImagesOf(raw: unknown): { toolUseId: string; images: ResultImage[] }[] {
+  const r = record(raw)
+  if (!r || r.type !== 'user' || r.isSidechain === true) return []
+  const content = record(r.message)?.content
+  if (!Array.isArray(content)) return []
+  const out: { toolUseId: string; images: ResultImage[] }[] = []
+  for (const block of content) {
+    const b = record(block)
+    if (!b || b.type !== 'tool_result') continue
+    const images: ResultImage[] = []
+    if (Array.isArray(b.content)) {
+      for (const inner of b.content) {
+        const image = imageOf(inner)
+        if (image) images.push(image)
+      }
+    }
+    out.push({ toolUseId: str(b.tool_use_id) ?? '', images })
+  }
+  return out
+}
+
 /**
  * 一則來源記錄 → 零或多個呈現事件。
  *
@@ -343,11 +411,14 @@ export function project(raw: unknown): ViewEvent[] {
         : []
     }
     if (!Array.isArray(content)) return []
+    const images = resultImagesOf(r)
     const out: ViewEvent[] = []
+    let index = 0
     for (const block of content) {
       if (block === null || typeof block !== 'object') continue
       const b = block as Record<string, unknown>
       if (b.type !== 'tool_result') continue
+      const listed = images[index++]?.images ?? []
       out.push({
         kind: 'result',
         uuid,
@@ -355,6 +426,9 @@ export function project(raw: unknown): ViewEvent[] {
         id: str(b.tool_use_id) ?? '',
         text: resultText(b.content),
         error: b.is_error === true,
+        ...(listed.length > 0
+          ? { images: listed.map((i) => ({ mediaType: i.mediaType, size: Buffer.byteLength(i.data, 'base64') })) }
+          : {}),
       })
     }
     return out

@@ -366,6 +366,40 @@ test('a repeating proposal: accepting is refused before anything else and leaves
   }
 })
 
+test('images.read checks its parameters, defaults offset and length, goes to the host, and is listed (remote-result-images D5)', async () => {
+  const asked: unknown[] = []
+  const host = {
+    readResultImage: async (sessionId: string, p: unknown) => {
+      asked.push([sessionId, p])
+      return { size: 1, mediaType: 'image/png', version: 'v', offset: 0, data: 'eA==', complete: true }
+    },
+  } as Partial<RemoteHost> as RemoteHost
+  const conn = connection()
+  const session = openRemoteSession(host, conn)
+  const ok = await call(session, conn, 'images.read', { sessionId: 's1', toolUseId: 't1', index: 0 })
+  assert.equal(ok.ok, true)
+  assert.equal(ok.r?.mediaType, 'image/png')
+  await call(session, conn, 'images.read', { sessionId: 's1', toolUseId: 't1', index: 1, offset: 10, length: 65536, version: 'v1' })
+  assert.deepEqual(asked, [
+    ['s1', { toolUseId: 't1', index: 0, offset: 0, length: 524288, version: undefined }],
+    ['s1', { toolUseId: 't1', index: 1, offset: 10, length: 65536, version: 'v1' }],
+  ])
+  const bad = [
+    { toolUseId: 't1', index: 0 },
+    { sessionId: 's1', index: 0 },
+    { sessionId: 's1', toolUseId: 't1' },
+    { sessionId: 's1', toolUseId: 't1', index: -1 },
+    { sessionId: 's1', toolUseId: 't1', index: 0.5 },
+    { sessionId: 's1', toolUseId: 't1', index: 0, offset: -1 },
+    { sessionId: 's1', toolUseId: 't1', index: 0, length: 0 },
+    { sessionId: 's1', toolUseId: 't1', index: 0, length: 524289 },
+    { sessionId: 's1', toolUseId: 't1', index: 0, version: 3 },
+  ]
+  for (const p of bad) assert.equal((await call(session, conn, 'images.read', p)).e?.code, 'BAD_PARAMS', JSON.stringify(p))
+  assert.equal(asked.length, 2)
+  assert.ok(operationNames().includes('images.read'), 'listed in the authentication answer’s operations')
+})
+
 test('files.read checks its parameters, defaults offset and length, and goes to the host (remote-tool-detail D6)', async () => {
   const asked: unknown[] = []
   const host = {

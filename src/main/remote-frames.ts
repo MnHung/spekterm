@@ -47,6 +47,7 @@ export const ERROR_CODES = [
   'FILE_NOT_SENT',
   'FILE_GONE',
   'FILE_CHANGED',
+  'NO_IMAGE',
   'INTERNAL',
 ] as const
 

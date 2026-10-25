@@ -31,7 +31,7 @@ Agents have a shell, so treat a paired phone like your keyboard. The phone canno
 session, change settings, or see your Slack connection or any credential. The only files it can put on your
 computer are attachments, and only into spekterm's own data folder, under names spekterm chooses. The only
 files it can read, besides your OpenSpec changes, are the ones an agent sent you: whatever the agent sent,
-the phone can open.
+the phone can open. Images in a conversation are read from the conversation's record, never from a file.
 
 ### Background work
 
@@ -104,6 +104,10 @@ The phone shows what each tool call did, not only its name: the command an agent
 a file, the message it sent to another session and to whom, the subagent it started and its instructions, the
 skill and its arguments, the question and its options. Long text is shortened, and the phone says so. Calls
 to MCP servers show only their name and main argument.
+
+Images the agent looked at show in the conversation too: an image it read, a browser or MCP screenshot. They
+come from the conversation's own record, not from your files, so the phone sees the image the agent saw, even
+after the file is deleted.
 
 A message from another session, or a report from a subagent, is shown as such, with who sent it; a message
 from another session shows the label you gave that session. Messages from other sessions and background-task

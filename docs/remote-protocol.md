@@ -84,7 +84,7 @@ Stable strings; branch on them, show `message` only as a detail.
 | `TIMEOUT` | The desktop's interface did not answer within 15 seconds. |
 | `PROMPT_GONE` | The prompt an answer names is not the one a device may answer now (section 5, `conversation.answer`). `detail.open` is the number of open requests. |
 | `NOT_ANSWERABLE` | The decision does not fit the prompt, or that answer is not offered to a device. |
-| `TOO_LARGE` | An attachment, a chunk or a session's stored attachments would exceed a limit, an OpenSpec answer would exceed the frame cap, or a sent file is over its limit (section 5); `detail.limit` is the limit in bytes. |
+| `TOO_LARGE` | An attachment, a chunk or a session's stored attachments would exceed a limit, an OpenSpec answer would exceed the frame cap, or a sent file or a result image is over its limit (section 5); `detail.limit` is the limit in bytes. |
 | `TOO_MANY` | A session already holds the most attachments not sent yet (`detail.limit`). |
 | `UNSUPPORTED_TYPE` | An uploaded file is not an image (PNG, JPEG, GIF, WebP), a PDF or UTF-8 text. |
 | `SESSION_BUSY` | Hibernating or closing a session that is not idle, without `force`. Nothing happened. `detail.reason` says why (section 5, `sessions.hibernate`). |
@@ -93,7 +93,8 @@ Stable strings; branch on them, show `message` only as a detail.
 | `APPROVE_ON_DESKTOP` | `inbox.accept` on a repeating proposal (section 5, `inbox.list`): it is approved on the desktop. It stays pending. |
 | `FILE_NOT_SENT` | `files.read` names no file the session's current conversation sent: no `SendUserFile` call with that id, no file at that index, or a recorded path that is not absolute. |
 | `FILE_GONE` | `files.read`: the sent file no longer exists, or is not a regular file (a directory, a named pipe), or cannot be read. |
-| `FILE_CHANGED` | `files.read`: the file changed since the `version` the request names. Start again from offset 0. |
+| `FILE_CHANGED` | `files.read`: the file changed since the `version` the request names; `images.read`: the image at that address is not the one the `version` names. Start again from offset 0. |
+| `NO_IMAGE` | `images.read` names no image the session's current conversation holds: no result with that id, a result without images, a position past its images, or a result not completely written yet. |
 | `PREFILL_PENDING` | A reply to a session that holds a filled-in prompt nobody has sent; it would be sent together with it. `detail.prefillId` names the prompt when the session list shows it, `detail.edited` as there (section 5, `conversation.send`). |
 | `INTERNAL` | Anything else. |
 
@@ -128,7 +129,7 @@ has not authenticated.
 
 `operations`: the operations this desktop accepts, other than `hello` and `pair`. Show a control only when its
 operation is listed: an older desktop does not have `sessions.rename`, `sessions.hibernate`, `sessions.close`,
-`attachments.put`, `conversation.answer`, `openspec.watch`, `sessions.submitPrefill`, `files.read` or `conversation.setModel`, and answers them `UNKNOWN_OPERATION`. Protocol version 1 grows only by new fields,
+`attachments.put`, `conversation.answer`, `openspec.watch`, `sessions.submitPrefill`, `files.read`, `images.read` or `conversation.setModel`, and answers them `UNKNOWN_OPERATION`. Protocol version 1 grows only by new fields,
 operations, event values and error codes (section 9, obligation 7).
 
 ### `pair`
@@ -147,8 +148,9 @@ an agent's offer to close its own session.
 Everything else — files outside OpenSpec, settings, Slack, credentials, resizing a terminal — is not an
 operation. The one file a device writes is an attachment, and only into the desktop's own attachment store,
 under a name the desktop chooses (`attachments.put`). The one file outside OpenSpec and handoff briefs a device
-reads is one the session's agent sent to the user, addressed by the agent's call (`files.read`). No operation takes
-a path or a directory.
+reads is one the session's agent sent to the user, addressed by the agent's call (`files.read`). An image a tool
+result holds is read from the session's transcript, addressed by the result (`images.read`), never from a file. No
+operation takes a path or a directory.
 
 ### `sessions.list`
 
@@ -367,7 +369,7 @@ own, and may contain paths.
 
 `Entry` is one of: `{ kind: "user", uuid, at, text, meta, origin? }`, `{ kind: "text", uuid, at, text }`,
 `{ kind: "thinking", uuid, at, text }`, `{ kind: "tool", uuid, at, id, name, arg, input?, inputTruncated? }`,
-`{ kind: "result", uuid, at, id, text, error }`.
+`{ kind: "result", uuid, at, id, text, error, images? }`.
 
 A `tool` entry's `arg` is one identifying string (a path, a command, a URL, a query, a description) or `null`.
 `input` is the call's arguments, **selected field by field per tool**; a tool not listed here, an MCP tool
@@ -422,6 +424,13 @@ background-task notice, a compacted conversation's summary. Show those as contex
 A slash command is shown as the line typed — `/name` or `/name arguments` — not in the agent's own command markers;
 a built-in command's output (`<local-command-stdout>`) is shown as recorded.
 Entries arrive in the order the agent recorded them; `at` is not an ordering key.
+
+A `result` entry's `images` lists the images the tool result holds — an image the agent read, a browser or MCP
+screenshot — as `[{ mediaType, size }]`, in the result's order: that order is `images.read`'s `index`. `mediaType`
+is `image/png`, `image/jpeg`, `image/gif` or `image/webp`; `size` is the image's size in bytes. The field is absent
+when the result holds none. The bytes are never in the entry: read them with `images.read`. A result that holds only
+images has an empty `text`. After an image the agent's CLI also records a not-typed `user` entry describing it
+(`[Image: original …]`); it arrives as any other `meta` entry.
 
 One connection watches at most one conversation; watching another ends the previous one. Errors:
 `NOT_FOUND` (no such session, or not running), `NO_CONVERSATION` (a shell).
@@ -568,6 +577,26 @@ file's position in its `input.files`. Watching the session is not required.
 - Limit: 32 MiB (`TOO_LARGE`, `detail.limit`).
 - Errors: `NOT_FOUND` (no such session, or its agent is not running), `NO_CONVERSATION` (a shell), `FILE_NOT_SENT`,
   `FILE_GONE`, `FILE_CHANGED`, `TOO_LARGE`, `BAD_PARAMS` (`offset` past `size`, `length` out of range).
+
+### `images.read`
+
+`p`: `{ "sessionId", "toolUseId", "index", "offset"?, "length"?, "version"? }` →
+`r`: `{ size, mediaType, version, offset, data, complete }`
+
+Reads an image a tool result holds. `toolUseId` is a `result` entry's `id`, `index` the image's position in its
+`images`. Watching the session is not required.
+
+- The bytes are the image as the result recorded it in the session's **current** conversation — what the agent was
+  given, possibly scaled by its CLI — never a file on disk: an image whose file was deleted is still read. A result
+  from before the agent cleared or switched its conversation is not one (`NO_IMAGE`).
+- `data` is base64 of at most `length` bytes (1 to 524,288, default 524,288) from `offset` (default 0). `complete`
+  is `true` when the chunk reaches `size`. Continue from `offset` + the bytes received.
+- `version` differs for different image content. Pass the first answer's `version` on every later chunk; a
+  different current one is `FILE_CHANGED` (the transcript was replaced by one holding another image there), start
+  again from 0.
+- Limit: 8 MiB (`TOO_LARGE`, `detail.limit`, no data).
+- Errors: `NOT_FOUND` (no such session, or its agent is not running), `NO_CONVERSATION` (a shell), `NO_IMAGE`,
+  `FILE_CHANGED`, `TOO_LARGE`, `BAD_PARAMS` (`offset` past `size`, `length` out of range).
 
 ### `terminal.watch`
 
@@ -854,6 +883,9 @@ open (on Android, a foreground service), and reconnect with backoff when the net
     path — open a sent file only through `files.read`. A sent file's content is the agent's: render Markdown with raw
     HTML shown as text, and plain text and raster images in the app; hand SVG, HTML and every other type to the
     system, never render them in the app's own web view.
+19. **Treat a result image's bytes as untrusted.** Decode only `image/png`, `image/jpeg`, `image/gif` and
+    `image/webp`, with the platform's image decoder; show a decoding failure as "cannot display"; never hand the
+    bytes to a web view or to another app as a document.
 20. **Treat a model switch as a cost the user chooses.** Show `conversation.setModel` only when it is in `operations`;
     tell the user before sending that the conversation's cache is lost and the choice becomes the agent's default;
     never send a bare `/model` or `/effort`; hold the reply box until `conversation.status`'s `model` or the entry for

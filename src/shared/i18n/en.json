@@ -676,6 +676,8 @@
     "thinking": "Thinking",
     "toolResult": "Result",
     "toolFailed": "Result (failed)",
+    "resultImages_one": "{{count}} image",
+    "resultImages_other": "{{count}} images",
     "attaching": "Catching up…",
     "empty": "No messages yet",
     "dormant": "Session is hibernated. Waking resumes the conversation.",

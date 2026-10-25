@@ -41,8 +41,10 @@ import { watchUsage } from './remote-agent-status'
 import { runQueued, sendReply } from './remote-conversation'
 import { RemoteError, type ErrorCode } from './remote-frames'
 import { remoteChange, remoteChanges, remoteSpec, remoteSpecs } from './remote-openspec'
+import { readResultImage, ResultImageIndex } from './remote-result-images'
 import { readChunk, SentFileIndex, type SentFileFs } from './remote-sent-files'
 import { transcriptPathFor } from './transcript-follow'
+import type { TranscriptFs } from './transcript-line-index'
 import type { RemoteOutput } from './remote-output'
 import type { FolderView, HostAction, RemoteHost, SessionList, SessionView } from './remote-protocol'
 import type { SessionStore } from './session-store'
@@ -110,6 +112,8 @@ export interface HostDeps {
   armModel?: (sessionId: string, name: string) => boolean
   /** File access for sent files (`remote-sent-files.ts`); injected for tests. */
   sentFiles?: SentFileFs
+  /** File access for reading result images from transcripts (`remote-result-images.ts`); injected for tests. */
+  resultImages?: TranscriptFs
   /** The session's current transcript, as the follower finds it; injected for tests. */
   transcriptOf?: (sessionId: string, source: { cwd: string; conversationId: string }) => string
 }
@@ -199,8 +203,24 @@ export function createRemoteHost(deps: HostDeps): RemoteHost {
   const prefills = deps.prefills ?? { of: prefillOf, noteKey: notePrefillKey }
   const transcriptOf =
     deps.transcriptOf ?? ((sessionId, source) => lastTranscriptPathOf(sessionId) ?? transcriptPathFor(source.cwd, source.conversationId))
-  /** One scan index per session; a session no longer in the store loses its index at the next read. */
+  /** One scan index per session and kind; a session no longer in the store loses its indexes at the next read. */
   const sentFileIndexes = new Map<string, SentFileIndex>()
+  const resultImageIndexes = new Map<string, ResultImageIndex>()
+  const pruneIndexes = (): void => {
+    const known = new Set(deps.sessions.view().map((entry) => entry.session.id))
+    for (const indexes of [sentFileIndexes, resultImageIndexes]) {
+      for (const id of indexes.keys()) if (!known.has(id)) indexes.delete(id)
+    }
+  }
+  /** The agent's source of a session whose conversation a device reads a file or an image of. */
+  const readableSource = (sessionId: string): { cwd: string; conversationId: string } => {
+    const session = record(sessionId)
+    if (!session) throw new RemoteError('NOT_FOUND', `no session ${sessionId}`)
+    if (session.spawnTarget === 'shell') throw new RemoteError('NO_CONVERSATION', 'this session has no conversation (a shell)')
+    const source = service()?.agentSourceOf(sessionId)
+    if (!source) throw new RemoteError('NOT_FOUND', `session ${sessionId} has no running agent`)
+    return source
+  }
 
   /**
    * The fill a device may see and submit (`remote-prefill-send` D2): the desktop shows it as not sent, and its item
@@ -282,17 +302,24 @@ export function createRemoteHost(deps: HostDeps): RemoteHost {
     },
 
     async readSentFile(sessionId, p) {
-      const session = record(sessionId)
-      if (!session) throw new RemoteError('NOT_FOUND', `no session ${sessionId}`)
-      if (session.spawnTarget === 'shell') throw new RemoteError('NO_CONVERSATION', 'this session has no conversation (a shell)')
-      const source = service()?.agentSourceOf(sessionId)
-      if (!source) throw new RemoteError('NOT_FOUND', `session ${sessionId} has no running agent`)
-      const known = new Set(deps.sessions.view().map((entry) => entry.session.id))
-      for (const id of sentFileIndexes.keys()) if (!known.has(id)) sentFileIndexes.delete(id)
+      pruneIndexes()
+      const source = readableSource(sessionId)
       let index = sentFileIndexes.get(sessionId)
       if (!index) sentFileIndexes.set(sessionId, (index = new SentFileIndex(deps.sentFiles)))
       const file = await index.find(transcriptOf(sessionId, source), p.toolUseId, p.index)
       return readChunk(file, { offset: p.offset, length: p.length, version: p.version }, deps.sentFiles)
+    },
+
+    async readResultImage(sessionId, p) {
+      pruneIndexes()
+      const source = readableSource(sessionId)
+      let index = resultImageIndexes.get(sessionId)
+      if (!index) resultImageIndexes.set(sessionId, (index = new ResultImageIndex(deps.resultImages)))
+      return readResultImage(index, transcriptOf(sessionId, source), p.toolUseId, p.index, {
+        offset: p.offset,
+        length: p.length,
+        version: p.version,
+      })
     },
 
     putAttachment(sessionId, p) {

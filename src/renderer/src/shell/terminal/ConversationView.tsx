@@ -112,6 +112,8 @@ function Row({ event }: { event: ViewEvent }): React.JSX.Element | null {
     <details className="conversation-enter px-3 py-1 text-xs text-ink-faint">
       <summary className="cursor-pointer">
         {event.error ? t('conversation.toolFailed') : t('conversation.toolResult')}
+        {/* Only the count: the images themselves are not shown here (`remote-result-images` D7). */}
+        {event.images?.length ? ` · ${t('conversation.resultImages', { count: event.images.length })}` : null}
       </summary>
       <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap text-2xs">{event.text}</pre>
     </details>

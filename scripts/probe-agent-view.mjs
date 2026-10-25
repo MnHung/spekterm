@@ -1587,6 +1587,46 @@ async function runOriginLabels(_mode, _config, context) {
 }
 
 /**
+ * A result holding images is labeled with their count; a text-only result is not (`remote-result-images` D7).
+ * Control group (run by hand, recorded here): hide the count in `ConversationView` (the one-image label red).
+ */
+async function runResultImageCount(_mode, _config, context) {
+  if (context.app) await context.app.close()
+  const repo = mkTemp('spekterm-agentview-repoI-')
+  const configDir = mkTemp('spekterm-agentview-configI-')
+  const stub = makeStubAgent(mkTemp, configDir)
+  const profile = seedProfile(repo)
+  const app = await launch({ profile, configDir, stub, port: PORT })
+  context.app = app
+
+  await openConversation(app, repo.split('/').pop())
+  const conversation = stub.peerNames().at(-1)?.conversation
+  const png = Buffer.from('89504e470d0a1a0a00000000', 'hex').toString('base64')
+  const result = (id, content) => ({ type: 'user', uuid: `r-${id}`, timestamp: '2026-10-25T00:00:01.000Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content }] } })
+  const records = [
+    result('img-1', [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: png } }]),
+    result('txt-1', [{ type: 'text', text: 'COUNT-PROBE-TEXT' }]),
+  ]
+  stub.command(conversation, records.map((r) => `printf '%s\\n' '${JSON.stringify(r)}' >> "$tp"`).join('; '))
+  const RESULTS = `[...document.querySelectorAll('details')].map((d) => ({ summary: d.querySelector('summary')?.textContent ?? '', body: d.querySelector('pre')?.textContent ?? null }))`
+  const shown = await pollFor({
+    read: () => app.client.evaluate(RESULTS),
+    settled: (list) => list.some((r) => r.body === 'COUNT-PROBE-TEXT') && list.some((r) => r.body === ''),
+    timeoutMs: 15_000,
+    label: 'both results arrive',
+  })
+  const withImage = shown.find((r) => r.body === '')
+  const textOnly = shown.find((r) => r.body === 'COUNT-PROBE-TEXT')
+  check(
+    results,
+    'a result holding one image says so; a text-only result carries no count',
+    withImage?.summary === `${copy('conversation.toolResult')} · ${copy('conversation.resultImages_one', { count: 1 })}` &&
+      textOnly?.summary === copy('conversation.toolResult'),
+    `image=${JSON.stringify(withImage?.summary ?? null)} text=${JSON.stringify(textOnly?.summary ?? null)}`,
+  )
+}
+
+/**
  * A background subagent's permission prompt keeps the agent waiting on a choice (`agent-event-bridge`). Measured
  * (CLI 2.1.300): the agent reports its own turn end while the subagent's prompt is open, and a background-task
  * notice arrives as a prompt submission followed by another turn end. The state used to read ready there, and a
@@ -2568,6 +2608,7 @@ const SECTIONS = [
   { name: 'runTextOnlyBusy', run: runTextOnlyBusy },
   { name: 'runMidTurnDelivery', run: runMidTurnDelivery },
   { name: 'runOriginLabels', run: runOriginLabels },
+  { name: 'runResultImageCount', run: runResultImageCount },
   { name: 'runSubagentPrompt', run: runSubagentPrompt },
   { name: 'runPasteRecorded', run: runPasteRecorded },
   { name: 'runSlashCommandLine', run: runSlashCommandLine },

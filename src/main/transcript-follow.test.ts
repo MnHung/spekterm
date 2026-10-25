@@ -8,9 +8,11 @@ import {
   planRead,
   project,
   projectLine,
+  resultImagesOf,
   transcriptPathFor,
   type ViewEvent,
 } from './transcript-follow'
+import { imageBlock, imageBytes, requestBlobRecord, resultRecord, textBlock } from './result-image.testkit'
 
 const ENV = { userEnv: {}, processEnv: { CLAUDE_CONFIG_DIR: '/cfg' }, home: '/home/u' }
 
@@ -398,4 +400,67 @@ test('markers among other text, or a second name, are shown as recorded', () => 
   assert.equal(textOf(twice).text, twice)
   const output = '<local-command-stdout>Compacted</local-command-stdout>'
   assert.equal(textOf(output).text, output, 'a built-in command\'s output is not restored')
+})
+
+type ResultEvent = Extract<ViewEvent, { kind: 'result' }>
+
+const PNG = imageBytes('image/png', 300, 1)
+const JPEG = imageBytes('image/jpeg', 200, 2)
+
+test("an image the agent read is listed with its media type and decoded size, and the text stays empty", () => {
+  const [e] = project(resultRecord('r1', [imageBlock('image/png', PNG)])) as [ResultEvent]
+  assert.equal(e.text, '')
+  assert.deepEqual(e.images, [{ mediaType: 'image/png', size: Buffer.from(PNG.toString('base64'), 'base64').length }])
+  assert.equal(e.images?.[0].size, PNG.length)
+})
+
+test('a screenshot with text lists the image and keeps the texts', () => {
+  const [e] = project(
+    resultRecord('r2', [textBlock('Took a screenshot'), textBlock('1280x800'), imageBlock('image/jpeg', JPEG)]),
+  ) as [ResultEvent]
+  assert.equal(e.text, 'Took a screenshot\n1280x800')
+  assert.deepEqual(e.images, [{ mediaType: 'image/jpeg', size: JPEG.length }])
+})
+
+test('a text-only result and a string-content result carry no images key', () => {
+  const [a] = project(resultRecord('r3', [textBlock('ok')])) as [ResultEvent]
+  const [b] = project(resultRecord('r4', 'ok')) as [ResultEvent]
+  assert.equal('images' in a, false)
+  assert.equal('images' in b, false)
+})
+
+test('other blocks are not listed: another media type, a URL source, a document, non-string or wrapped data', () => {
+  const wrapped = imageBytes('image/png', 300, 3).toString('base64').replace(/(.{76})/g, '$1\n')
+  const [e] = project(
+    resultRecord('r5', [
+      imageBlock('image/bmp', imageBytes('image/bmp', 50, 4)),
+      { type: 'image', source: { type: 'url', url: 'https://example.com/a.png' } },
+      { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: 'AAAA' } },
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 42 } },
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: wrapped } },
+      imageBlock('image/png', PNG),
+    ]),
+  ) as [ResultEvent]
+  assert.deepEqual(e.images, [{ mediaType: 'image/png', size: PNG.length }])
+})
+
+test("a subagent's record and an api-request-blob record of the same shape yield no images", () => {
+  const content = [imageBlock('image/png', PNG)]
+  assert.deepEqual(resultImagesOf(resultRecord('r6', content, { isSidechain: true })), [])
+  assert.deepEqual(resultImagesOf(requestBlobRecord('r6', content)), [])
+  assert.deepEqual(
+    resultImagesOf(resultRecord('r6', content)).map((r) => [r.toolUseId, r.images.length]),
+    [['r6', 1]],
+  )
+})
+
+test("no event carries any part of an image's recorded bytes", () => {
+  const base64 = PNG.toString('base64')
+  const events = [
+    ...project(resultRecord('r7', [imageBlock('image/png', PNG)])),
+    ...project(resultRecord('r8', [textBlock('see'), imageBlock('image/png', PNG)])),
+  ]
+  const json = JSON.stringify(events)
+  assert.equal(json.includes(base64), false)
+  assert.equal(json.includes(base64.slice(0, 40)), false)
 })

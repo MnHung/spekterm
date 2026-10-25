@@ -801,6 +801,41 @@ seconds.
   clock. A version of size and mtime misses such a rewrite; the inode catches a replace by rename, nothing catches an
   in-place rewrite within one tick.
 
+## Images in tool results (`remote-result-images`, CLI 2.1.258–2.1.310, 2026-10-25)
+
+Measured over one machine's 97 main transcripts. Counts are of `user` records only; the `api-request-blob` copies
+below are counted apart. **Re-measure on a CLI upgrade**: for each `user` record whose `message.content` is a list,
+walk each `tool_result` block's `content` list and count the blocks of `type: "image"` by `source.type` and
+`source.media_type`, check `source.data` against `/^[A-Za-z0-9+/]*={0,2}$/` with a length that is a multiple of 4,
+and record the base64 length, the line length and the tool's name (from the matching `tool_use`); then count the
+other record types holding the same `tool_use_id`, and whether they come before or after the `user` record. A short
+Python script over `~/.claude/projects/**/*.jsonl` does it in about a minute.
+
+- **One block shape**: `{ type: "image", source: { type: "base64", media_type, data } }` for all 2,357 images (2,301
+  results). `media_type` was `image/png` (1,223) or `image/jpeg` (1,134), never another. **`data` was canonical base64
+  every time** — no line breaks. A `Read` of an image yields `[image]` alone; a browser screenshot `[text, text,
+  image]`; 1 to 4 images per result. None was on an error result; a record holds at most one `tool_result`.
+- **Sizes**: base64 length median 159 KB for `Read`, 52 KB for screenshots, at most 682 KB (≈ 512 KiB decoded). A
+  line holding such a result: median 166 KB, at most 1.4 MB.
+- **`Read` stores the image twice in one line**: `toolUseResult.file.base64` holds a copy beside the result's
+  content, with `dimensions`. It is `Read`'s only; an MCP tool's `toolUseResult` is a list of blocks. The product
+  reads the result's content, the same for every tool.
+- **A decoy with the same id**: `api-request-blob` records (430) hold the same `tool_use_id` and the same image
+  blocks in the same `message.content[]` shape; **297 come after the `user` record, 133 before**. An index that keeps
+  the last line holding an id would read the decoy unless the record walk requires `type === "user"`. Among `user`
+  records no `tool_use_id` appeared twice (25,460 ids).
+- **The CLI's meta line**: after an image the CLI writes a separate `isMeta` `user` record, `[Image: original
+  WxH, displayed at WxH. Multiply coordinates by …]` (320 seen). It is not part of the result.
+- **Subagents' images** are in their own files under `subagents/`, never in the main transcript.
+- **An image the user pasted into the CLI** is a `user` record whose content is a list (`[text, image]`, 80 seen);
+  the projection drops such a record entirely, typed text included. A separate defect, not fixed by this change.
+- **`Buffer.byteLength(data, "base64")` is the decoded size only for canonical base64**: on 76-column wrapped data
+  it counts the newlines (101 against 100). Hence the canonical check before an image is listed.
+- **The old `SentFileIndex` answered a cached id without looking at the file**: after the transcript was replaced,
+  a call of the old one was still found. `TranscriptLineIndex.check()` now `stat`s on every lookup, hit or miss. An
+  in-place rewrite as long or longer is still invisible to a `stat`; the image index, which keeps byte locations,
+  verifies the line it reads and starts over once when it no longer holds the id.
+
 ## Model switch from a device (`remote-model-switch`, CLI 2.1.310, 2026-10-25)
 
 Measured with a real agent session (warm cache, `--settings` with a `PreModelSwitch` command that logs its stdin and

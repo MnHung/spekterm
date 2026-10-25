@@ -135,6 +135,17 @@ test('a replaced or shorter transcript, or another path, starts over', async () 
   assert.equal(await code(() => index.find(other, 'D', 0)), 'FILE_NOT_SENT', 'calls of the previous transcript are dropped')
 })
 
+test("a call of a replaced transcript is no longer found, though it was found before", async () => {
+  const tp = transcript([sendCall('A', ['/a.md'])])
+  const index = new SentFileIndex()
+  assert.equal(await index.find(tp, 'A', 0), '/a.md')
+  const next = `${tp}.new`
+  writeFileSync(next, `${sendCall('B', ['/b.md'])}\n${'x'.repeat(200)}\n`)
+  renameSync(next, tp)
+  assert.equal(await code(() => index.find(tp, 'A', 0)), 'FILE_NOT_SENT', 'a cached hit is checked against the file')
+  assert.equal(await index.find(tp, 'B', 0), '/b.md')
+})
+
 test('a large file arrives in chunks, of at most the asked length', async () => {
   const file = join(dir(), 'big.bin')
   const content = Buffer.alloc(2 * 1024 * 1024, 7)
