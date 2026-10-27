@@ -40,7 +40,8 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       # The release check, `npm ci`, the build, and the checksum-pinned Electron archive — the same command
-      # the build Mac runs. GitHub's own network needs no `ELECTRON_MIRROR` (docs/lessons/macos.md, item 7).
+      # the build Mac runs. The runner downloads from GitHub directly, without the build Mac's `ELECTRON_MIRROR`
+      # (docs/lessons/macos.md, item 21).
       - run: npm run dist:mac
       - id: dmg
         run: |
@@ -57,15 +58,20 @@ jobs:
           if-no-files-found: error
           # A zip of a dmg saves nothing.
           compression-level: 0
-      # The acceptance runs, but does not gate: the runner has no `claude` to resolve, so its two agent checks
-      # cannot pass here. Everything else, the keystroke checks included, passed on macos-26-arm64 (31/33,
-      # measured): the runner allows UI scripting. Its log is kept next to the dmg for whoever attaches it.
-      - name: probe:package:mac (informational)
-        continue-on-error: true
+      # The acceptance's agent checks need `claude` on the Mac (desktop-packaging: "an agent session SHALL start
+      # `claude`"). They only look for the process, so it is not signed in. It is installed after the dmg is
+      # uploaded, so nothing it brings can reach the artifact. The session's login shell finds the link in
+      # /usr/local/bin through path_helper; the probe's minimal launch PATH does not contain it.
+      - name: Install claude for the acceptance
+        run: |
+          curl -fsSL https://claude.ai/install.sh | bash -s 2.1.311
+          sudo ln -sf "$HOME/.local/bin/claude" /usr/local/bin/claude
+      # The acceptance gates the run: a red run means this dmg is not to be attached. The runner allows UI
+      # scripting, so the keystroke checks run here too.
+      - name: probe:package:mac
         # An explicit `bash` runs with `pipefail`: without it, `tee` would report the probe as passed.
         shell: bash
         run: npm run probe:package:mac 2>&1 | tee "$RUNNER_TEMP/probe-package-mac.log"
-      # `continue-on-error` shows the step green either way; the summary says what the probe found.
       - if: always()
         run: |
           log="$RUNNER_TEMP/probe-package-mac.log"
