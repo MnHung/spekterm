@@ -60,12 +60,10 @@ jobs:
           compression-level: 0
       # The acceptance's agent checks need `claude` on the Mac (desktop-packaging: "an agent session SHALL start
       # `claude`"). They only look for the process, so it is not signed in. It is installed after the dmg is
-      # uploaded, so nothing it brings can reach the artifact. The session's login shell finds the link in
-      # /usr/local/bin through path_helper; the probe's minimal launch PATH does not contain it.
+      # uploaded, so nothing it brings can reach the artifact. It lands in ~/.local/bin, which the runner's
+      # login shell has on its PATH and the probe's minimal launch PATH does not (measured).
       - name: Install claude for the acceptance
-        run: |
-          curl -fsSL https://claude.ai/install.sh | bash -s 2.1.311
-          sudo ln -sf "$HOME/.local/bin/claude" /usr/local/bin/claude
+        run: curl -fsSL https://claude.ai/install.sh | bash -s 2.1.311
       # The acceptance gates the run: a red run means this dmg is not to be attached. The runner allows UI
       # scripting, so the keystroke checks run here too.
       - name: probe:package:mac

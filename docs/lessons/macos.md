@@ -76,3 +76,17 @@ Electron 43.5.0, electron-builder 26.15.7, 2026-10-08). Almost every one of them
     it only marks the open question as a quit (`closeForQuit`).
 20. **The quit Apple event (the Dock's Quit, logout) emits `before-quit` first**, like `SIGTERM`: no sessions
     question, the unsaved-changes question kept, and the quit finished once that is answered.
+
+## GitHub's macOS runner
+
+Measured on `macos-latest` (image `macos-26-arm64`) by `.github/workflows/mac.yml`, 2026-10-27.
+
+21. **The runner downloads the Electron archive from GitHub directly.** `package-mac.mjs` ran without
+    `ELECTRON_MIRROR` and the archive matched the pinned checksum; item 7 is the build Mac's network, not
+    GitHub's.
+22. **The runner allows UI scripting without granting anything.** System Events keystrokes, menu reads and
+    sheet clicks all worked, so the keystroke, Cmd+Q and close-dialog checks of `probe:package:mac` run
+    there.
+23. **The probe's agent checks need `claude` installed, not signed in.** They look for the binary on the
+    session's `PATH` and for a `claude` process. The native installer puts it in `~/.local/bin`, which the
+    runner's login shell (bash) has on its `PATH` and the probe's minimal launch environment does not.
