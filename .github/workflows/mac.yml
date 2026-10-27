@@ -1,0 +1,85 @@
+name: macOS dmg
+
+# Builds a release's Apple Silicon dmg on GitHub's macOS runner (#73), so the macOS artifact no longer
+# depends on one person's Mac being reachable. It only builds: the dmg is a workflow artifact and is never
+# attached to the release from here. Adding it stays a maintainer step, through the same command as before:
+# put the artifact's dmg into `release/` of a checkout of the release commit and run `npm run release:github`
+# (CONTRIBUTING.md → "What maintainers handle for you"), so a run cannot publish anything by itself.
+
+on:
+  # `release:github` creates the release as a draft and publishes it once its assets are uploaded; this
+  # fires on that publish.
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: The release to build — its tag (v0.2.24) or the full SHA of its release commit
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mac-${{ inputs.ref || github.event.release.tag_name }}
+  cancel-in-progress: true
+
+jobs:
+  dmg:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.event.release.tag_name }}
+          # `dist:mac` accepts only a release commit, recognised by its diff against its parent
+          # (`scripts/lib/release-files.mjs`).
+          fetch-depth: 2
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      # The release check, `npm ci`, the build, and the checksum-pinned Electron archive — the same command
+      # the build Mac runs. GitHub's own network needs no `ELECTRON_MIRROR` (docs/lessons/macos.md, item 7).
+      - run: npm run dist:mac
+      - id: dmg
+        run: |
+          version=$(node -p "require('./package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "### Spekterm-$version-arm64.dmg" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          (cd release && shasum -a 256 "Spekterm-$version-arm64.dmg") >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Spekterm-${{ steps.dmg.outputs.version }}-arm64
+          path: release/Spekterm-${{ steps.dmg.outputs.version }}-arm64.dmg
+          if-no-files-found: error
+          # A zip of a dmg saves nothing.
+          compression-level: 0
+      # The acceptance runs, but does not gate: the runner has no `claude` to resolve, so its two agent checks
+      # cannot pass here. Everything else, the keystroke checks included, passed on macos-26-arm64 (31/33,
+      # measured): the runner allows UI scripting. Its log is kept next to the dmg for whoever attaches it.
+      - name: probe:package:mac (informational)
+        continue-on-error: true
+        # An explicit `bash` runs with `pipefail`: without it, `tee` would report the probe as passed.
+        shell: bash
+        run: npm run probe:package:mac 2>&1 | tee "$RUNNER_TEMP/probe-package-mac.log"
+      # `continue-on-error` shows the step green either way; the summary says what the probe found.
+      - if: always()
+        run: |
+          log="$RUNNER_TEMP/probe-package-mac.log"
+          echo "### probe:package:mac" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f "$log" ]; then
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            grep -E '✗|not run|^(FAILED|All passed)' "$log" >> "$GITHUB_STEP_SUMMARY" || true
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'did not run' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: probe-package-mac-log
+          path: ${{ runner.temp }}/probe-package-mac.log
+          if-no-files-found: ignore
