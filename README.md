@@ -88,7 +88,7 @@ Download the latest `Spekterm-<version>-arm64.dmg` from the
 - **Data** lives in `~/Library/Application Support/Spekterm`.
 - **Closing the window** ends every session (asking first if any is running) but leaves spekterm running
   in the Dock, as Terminal and iTerm2 do; click the Dock icon to get the window back with the sessions
-  restored as dormant. While it runs without a window, the inbox and the Slack check (every five minutes,
+  restored as after a restart (the ones that were running start again). While it runs without a window, the inbox and the Slack check (every five minutes,
   if configured) keep running. `Cmd+Q` asks like closing the window; quitting from the Dock, logging out,
   or shutting down does not ask about running sessions (it still asks about unsaved files).
 

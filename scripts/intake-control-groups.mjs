@@ -257,6 +257,15 @@ export const MUTATIONS = [
     expectRed: "a close written before the target's last start or end, or before this run, is dropped",
     why: "**A command never yields to what happened afterwards** (design D11): a self-close left unread at quit closes the session after a restart.",
   },
+  {
+    name: 'control-no-staleness-restart',
+    section: 'runSessionControl',
+    file: 'src/main/session-control.ts',
+    from: `    return mtimeMs < since`,
+    to: `    return false`,
+    expectRed: 'a self-close left unread at quit does not act after a restart',
+    why: '**A command written before this run is carried out** (restore-running-sessions): the session that starts again on its own is offered a close nobody asked for in this run.',
+  },
 
   {
     name: 'count-only-when-open',

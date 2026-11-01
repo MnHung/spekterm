@@ -91,7 +91,7 @@ spekterm 的 session 裡執行的程式觸發隱私權提示時，macOS 會以 s
 
 ### macOS 上不一樣的地方
 
-- **關掉視窗不會結束 spekterm。** 和「終端機」、iTerm2 一樣，關掉視窗會結束每個 session（有 session 在執行時會先問你），spekterm 則繼續在 Dock 裡執行。點它的 Dock 圖示就會重新打開視窗，session 會以休眠狀態還原。spekterm 在沒有視窗的狀態下執行時，收件匣照常收件；若設定了 Slack，也照樣每五分鐘檢查一次提及。要結束 spekterm，請用 `Cmd+Q` 或 **Spekterm → 結束 Spekterm**；見[終端機與 session](/zh-tw/docs/using/terminals-and-sessions/#在-macos-上關閉與結束)。
+- **關掉視窗不會結束 spekterm。** 和「終端機」、iTerm2 一樣，關掉視窗會結束每個 session（有 session 在執行時會先問你），spekterm 則繼續在 Dock 裡執行。點它的 Dock 圖示就會重新打開視窗，session 會和重啟之後一樣還原。spekterm 在沒有視窗的狀態下執行時，收件匣照常收件；若設定了 Slack，也照樣每五分鐘檢查一次提及。要結束 spekterm，請用 `Cmd+Q` 或 **Spekterm → 結束 Spekterm**；見[終端機與 session](/zh-tw/docs/using/terminals-and-sessions/#在-macos-上關閉與結束)。
 - **精簡的選單列**：**Spekterm** 選單（關於、隱藏、隱藏其他、顯示全部、結束）與 **編輯** 選單（還原、重做、剪下、拷貝、貼上、全選）。沒有 `Cmd+W`；關閉 session 和 Linux 上一樣用 `Ctrl+Shift+W`。
 
 macOS 上已知的限制：

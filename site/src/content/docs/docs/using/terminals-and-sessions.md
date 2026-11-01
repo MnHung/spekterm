@@ -70,16 +70,21 @@ The agent does not report two things. If you press `Esc` to interrupt a turn, th
 **Working** until your next prompt. If you answer a permission prompt by typing in the terminal, your
 keystroke counts as the answer.
 
-## After a restart: dormant sessions
+## After a restart
 
 Closing spekterm ends every session's process. If any session is still running, spekterm asks first and
 lists them. A build, a dev server, or a reply an agent is still writing is lost: spekterm cannot keep
 processes alive while it is closed.
 
-What spekterm keeps is the session itself. When you open it again, every session is back in its tab,
-**dormant**: shown, but with no process. Nothing starts until you ask:
+What spekterm keeps is the session itself. When you open it again, every session is back in its tab, and:
 
-- Press **Wake**, or press `Enter` while the dormant session has focus.
+- **The sessions that were running start again on their own**, in the background: they do not change which
+  folder or tab is selected, and they do not take the keyboard from where you are typing.
+- **The sessions that were hibernated stay dormant**: shown, but with no process, until you press **Wake**
+  (or `Enter` while the dormant session has focus). See [Hibernation](#hibernation).
+
+Either way, a session that starts again picks up where it was:
+
 - A `claude` session resumes **the same conversation** where it left off.
 - A shell starts again **in its last working directory**. Its previous screen appears above a line that
   reads **end of previous content**, so old output is easy to tell from new. On macOS, a shell starts
@@ -88,13 +93,24 @@ What spekterm keeps is the session itself. When you open it again, every session
 If a conversation cannot be resumed (for example, because it was deleted), the session starts a new
 conversation, so you are not left with a tab you cannot use.
 
+When agents cannot start at all, spekterm does not try every session in turn. If your shell environment
+could not be read when spekterm opened (so `claude` may not be found), or the first agent it starts again
+stops at once, the other agent sessions stay dormant and say why; press **Wake** to try one now, or they are
+tried again the next time spekterm opens.
+
+An agent session that starts again before you look at it lays out what it prints at a default width of 80
+columns; it takes the real width the first time you show it.
+
+The first time you open a version of spekterm with this behavior, every session is dormant, because the
+earlier version did not record which ones were running.
+
 ## Closing and quitting on macOS
 
 On Linux, closing the window quits spekterm. On macOS, spekterm behaves like Terminal and iTerm2:
 
 - **Closing the window** ends every session (asking first if any is running, as above) but leaves
-  spekterm running in the Dock. Click the Dock icon to open the window again. Your sessions are back,
-  dormant, just as after a restart: `claude` resumes its conversation, and shells start again.
+  spekterm running in the Dock. Click the Dock icon to open the window again. Your sessions are back just
+  as after a restart: the ones that were running start again, and the hibernated ones stay dormant.
 - **While spekterm runs without a window**, the inbox keeps receiving, and if you set up Slack, spekterm
   keeps checking for mentions every five minutes. See [Inbox and Slack](/docs/using/inbox-and-slack/).
 - **`Cmd+Q`** (or **Spekterm → Quit Spekterm**) asks the same question as closing the window when
@@ -105,8 +121,8 @@ On Linux, closing the window quits spekterm. On macOS, spekterm behaves like Ter
 ## Hibernation
 
 A session you only use now and then does not need a running process. **Hibernate** it to end its process
-and leave it dormant in place. That is the same state a restart leaves it in, and you wake it the same
-way.
+and leave it dormant in place. It stays dormant, across restarts too, until you press **Wake** (or `Enter`
+while it has focus).
 
 - **By hand:** press `Ctrl+Shift+H`, or choose **Hibernate** in the menu of its tab or rail row.
 - **Automatically:** a session idle for 24 hours is hibernated. Change the time, or turn this off, under

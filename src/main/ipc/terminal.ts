@@ -17,6 +17,9 @@ import type { PreferencesStore } from '../preferences-store'
 import { SessionStatusService } from '../session-status'
 import type { RendererSession, SessionLineage, SessionStore } from '../session-store'
 import { SESSION_END, type SessionEnd, type SpawnTarget, TerminalError, TerminalService } from '../terminal'
+import { releaseSessions } from '../session-release'
+import { recordExit, recordHibernated, recordSpawned } from '../session-running'
+import { userEnvFailed, whenUserEnvReady } from '../user-env'
 import { agentSettingsFile } from '../agent-injection'
 import { prepareHandoffInjection } from '../handoff-injection'
 import { endHandoffSession } from '../handoff-service'
@@ -66,6 +69,8 @@ export const TERMINAL_CHANNELS = {
 /** 重建一個 session 所需的一切。`scrollback` 只有 shell 目標會有（design D3）。 */
 export interface RestoredSession extends RendererSession {
   scrollback?: string
+  /** It had a running process when its ptys were last ended: the renderer starts it again (`restore-running-sessions`). */
+  running?: true
   /** 主行程寫下的交接來源（唯讀）。renderer 靠它畫樹與標示；它不含路徑。 */
   lineage?: SessionLineage
 }
@@ -305,7 +310,10 @@ function serviceFor(
       if (contents.isDestroyed()) return
       contents.send(TERMINAL_CHANNELS.data, sessionId, chunk)
     },
-    spawned: (sessionId) => remoteTerminalOutput.spawned(sessionId),
+    spawned: (sessionId) => {
+      recordSpawned(sessions, sessionId)
+      remoteTerminalOutput.spawned(sessionId)
+    },
     resized: (sessionId, cols, rows) => remoteTerminalOutput.resized(sessionId, cols, rows),
     exit: (sessionId, exitCode, reason) => {
       hibernation.untrack(sessionId)
@@ -316,6 +324,7 @@ function serviceFor(
       // Nor can any permission prompt of it still be on screen (`agent-event-bridge`). Without this a reload
       // left a request open, and a device saw it as answerable.
       forgetRequests(sessionId)
+      recordExit(sessions, sessionId, reason)
       if (reason === 'hibernated') {
         // **Before `ptyChanged()`**: the relations refresh it triggers must see the wait state reset.
         // A hibernated session has no state to show (`lifecycleOf` maps `unknown` to idle), as a
@@ -386,13 +395,11 @@ function serviceFor(
     // The next page has not restored its sessions yet: session commands wait for it (`agent-session-control` D9).
     closeRestoreGate(contents.id)
     hibernation.setDisplayed(contents.id, null)
-    // 尚未被 renderer 送來持久化的 session 永遠不會被送來了（新頁面不知道它們）。
-    sessions.dropProvisional()
+    releaseSessions(sessions, () => flush(service, sessions))
     disposeConversationFor(contents.id)
     // reload 之後 renderer 會重新告訴我們要盯誰；先停掉，否則它會繼續對一個已消失的頁面推送。
     statusServices.get(contents.id)?.dispose()
     statusServices.delete(contents.id)
-    flush(service, sessions)
     service.dispose()
   }
 
@@ -510,10 +517,18 @@ export function registerTerminalHandlers(
 
   // 喚醒＝以持久化的續接資訊重新 spawn，**沿用同一個 sessionId**（分頁、名字、順序、錨定都掛在
   // 它身上，不能因為重建而改變）。renderer 只給 sessionId —— 對話識別碼與 cwd 都在主行程手上。
-  ipcMain.handle(TERMINAL_CHANNELS.wake, (event, sessionId: string) =>
+  ipcMain.handle(TERMINAL_CHANNELS.wake, (event, sessionId: string, automatic?: unknown) =>
     toResult(async () => {
       const persisted = sessions.get(sessionId)
       if (!persisted) throw new TerminalError('UNKNOWN_SESSION', `unknown session: ${sessionId}`)
+
+      // An automatic start (`restore-running-sessions` D3) refuses an agent when the user's environment could not
+      // be read: without its `PATH` the agent may not be found, and each resumed agent would fail, heal into a new
+      // conversation and be removed as an ending — on every session at once, on every slow boot.
+      if (automatic === true && persisted.spawnTarget === 'claude') {
+        await whenUserEnvReady()
+        if (userEnvFailed()) throw new TerminalError('USER_ENV_UNAVAILABLE', t('terminalError.userEnvUnavailable'))
+      }
 
       const { cwd: worktreeCwd, worktreeRoots } = await resolveWorktreeForRebuild(
         store,
@@ -645,7 +660,10 @@ export function registerTerminalHandlers(
       const facts = service.idleFactsOf(sessionId)
       if (!facts || !hibernation.authorize(sessionId, token, facts.shell, thresholdMs(preferences))) return { ok: false }
     }
-    return { ok: service.hibernate(sessionId) }
+    const ok = service.hibernate(sessionId)
+    // At acceptance, not only at the exit: a quit right after may end the process before the exit arrives.
+    if (ok) recordHibernated(sessions, sessionId)
+    return { ok }
   })
 
   scheduleIdleHibernation(preferences)

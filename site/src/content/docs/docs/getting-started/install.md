@@ -119,7 +119,7 @@ prompts is safe, unless one of your repositories lives in that protected place: 
 
 - **Closing the window does not quit spekterm.** As in Terminal and iTerm2, closing the window ends every
   session (asking first if any is running) and leaves spekterm running in the Dock. Click its Dock icon to
-  open the window again, with the sessions restored as dormant. While spekterm runs without a window, the
+  open the window again, with the sessions restored as after a restart. While spekterm runs without a window, the
   inbox keeps receiving items and, if you set up Slack, spekterm keeps checking for mentions every five
   minutes. To quit, use `Cmd+Q` or **Spekterm → Quit Spekterm**; see
   [Terminals and sessions](/docs/using/terminals-and-sessions/#closing-and-quitting-on-macos).

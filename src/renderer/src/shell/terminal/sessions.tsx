@@ -1,7 +1,9 @@
+import { t } from '@shared/i18n'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { SessionLineage } from '../../../../shared/lineage/types'
 import { buildForest, childInsertIndex } from '../session-forest'
 import type { FsFailure, SpawnTarget } from '../types'
+import { CANARY_WINDOW_MS, type CanaryVerdict, type LaunchState, startAtLaunch } from './launch-start'
 
 /**
  * `dormant` = 已從持久化重建、具備完整身分（名字、順序、錨定），但**還沒有 pty**。
@@ -12,6 +14,10 @@ import type { FsFailure, SpawnTarget } from '../types'
  * Since `session-hibernation` a running session can also go back to `dormant` (by the user's hand or
  * after a period of idleness), and a dormant session starts **only on an explicit wake** — displaying
  * it does not. There is one dormant state: a hibernated session is exactly a restored one.
+ *
+ * **The one exception** (`restore-running-sessions`): a restored session that had a running process when
+ * its ptys were last ended starts again on its own, right after the restore (`startAtLaunch`). The lazy rule
+ * above stays true for every session that was dormant then — those the user or the idle policy hibernated.
  */
 export type SessionStatus = 'dormant' | 'running' | 'exited'
 
@@ -88,7 +94,7 @@ export type CreateOutcome =
   | { status: 'created'; sessionId: string }
   | { status: 'failed'; failure: FsFailure }
 
-export type WakeOutcome = { status: 'woken' } | { status: 'failed'; message: string }
+export type WakeOutcome = { status: 'woken' } | { status: 'failed'; message: string; code?: string }
 
 /** Which view's automatic focus a quiet arrival holds back (`remote-protocol`, design D4). */
 export type QuietConsumer = 'terminal' | 'conversation'
@@ -146,16 +152,20 @@ export interface SessionsApi {
     /**
    * 喚醒一個休眠的 session（＝為它 spawn pty）。
    *
-   * **Called only on the user's explicit wake** (the dormant screen's Wake button, or `Enter` on it) —
-   * displaying a dormant session does not start it (`session-persistence`). So nothing calls this on
-   * re-render, and a failed wake can be retried by pressing Wake again.
+   * **Called on the user's explicit wake** (the dormant screen's Wake button, or `Enter` on it), a paired
+   * device's wake, and the start at launch of a session that was running (`launch`) — displaying a dormant
+   * session does not start it (`session-persistence`). So nothing calls this on re-render, and a failed wake
+   * can be retried by pressing Wake again.
    *
    * 重複呼叫是安全的（已在喚醒中或已有 pty 者為 no-op）。
    *
    * `quiet`: requested from a paired device — the session starting does not take keyboard focus.
+   * `launch`: started again at launch because it was running before (`restore-running-sessions`) — the
+   * main process treats it as automatic, and its arrival takes focus only where focus is nowhere
+   * (`takeLaunchArrival`).
    * Resolves with the outcome (a device is told whether it worked).
    */
-  wake(sessionId: string, options?: { quiet?: boolean }): Promise<WakeOutcome>
+  wake(sessionId: string, options?: { quiet?: boolean; launch?: boolean }): Promise<WakeOutcome>
   /**
    * Whether this view should hold back its automatic focus for a session that arrived quietly (created or
    * woken for a paired device). **One-shot per view**: the answer is consumed. A view asks only at the
@@ -165,6 +175,15 @@ export interface SessionsApi {
    * session (`focus()`, a wake the user asks for) clears the mark.
    */
   takeQuietArrival(sessionId: string, consumer: QuietConsumer): boolean
+  /**
+   * Whether this view's arrival is a start at launch (`restore-running-sessions` D3). Such an arrival focuses
+   * the session's input **only when focus is nowhere** (`focusIsNowhere`) — typically the user displayed it
+   * and its Wake button held the focus, which is gone with the button — and otherwise leaves focus where the
+   * user put it. **One-shot per view**, asked at the same moments as `takeQuietArrival`. Unlike the quiet
+   * mark, **`focus()` does not clear it**: the user turning to the session while it is being started must not
+   * turn its arrival into a focus grab. A wake the user asks for clears it.
+   */
+  takeLaunchArrival(sessionId: string, consumer: QuietConsumer): boolean
   /**
    * Whether a view of this session holds its automatic focus because a paired device just hibernated it, or
    * closed the session it replaces (`remote-hibernate-close` D4). **Read, not consumed**: the hold lasts
@@ -409,6 +428,11 @@ export function SessionsProvider({ children }: { children: React.ReactNode }): R
   const waking = useRef(new Set<string>())
   /** Sessions that arrived quietly, with the views whose automatic focus is still held back. */
   const quietArrivals = useRef(new Map<string, Set<QuietConsumer>>())
+  /** Sessions started at launch, with the views that have not asked yet (`takeLaunchArrival`). */
+  const launchArrivals = useRef(new Map<string, Set<QuietConsumer>>())
+  /** Restored sessions that were running, in persisted order, to start once the restore has committed. */
+  const launchQueue = useRef<string[]>([])
+  const launchWalked = useRef(false)
   /**
    * The views whose automatic focus is held, for the commit of one transition a device caused
    * (`remote-hibernate-close` D4). `against` is the session list that transition replaced: the hold is cleared
@@ -471,7 +495,8 @@ export function SessionsProvider({ children }: { children: React.ReactNode }): R
   const restoredScrollback = useRef(new Map<string, string>())
 
   /**
-   * 從持久化重建 session。**每個都是休眠的** —— 有身分、有畫面，但沒有 pty（design D11）。
+   * 從持久化重建 session。**每個都先是休眠的** —— 有身分、有畫面，但沒有 pty（design D11）。
+   * Those that were running are then started again by the launch walk below (`restore-running-sessions`).
    */
   useEffect(() => {
     // **StrictMode 會把 effect 跑兩次（且只在 dev）。** 少了這道 ref，`restore()` 會被呼叫兩次，
@@ -491,6 +516,9 @@ export function SessionsProvider({ children }: { children: React.ReactNode }): R
           const seen = nextOrdinal.current.get(entry.folderId) ?? 0
           nextOrdinal.current.set(entry.folderId, Math.max(seen, entry.ordinal))
         }
+        // Started again once this restore has committed (`restore-running-sessions`): the views must mount and
+        // begin their replay first.
+        launchQueue.current = persisted.filter((entry) => entry.running === true).map((entry) => entry.id)
 
         // **合併，不是覆蓋。**
         //
@@ -566,33 +594,36 @@ export function SessionsProvider({ children }: { children: React.ReactNode }): R
    * 的第一次喚醒會讀到一份還是空的 ref，然後什麼都不做。休眠與否由呼叫端判斷（它手上的
    * `SessionState` 是當下這一次渲染的），這裡只負責「同一個 session 不送出兩次」。
    */
-  const wake = useCallback((sessionId: string, options?: { quiet?: boolean }): Promise<WakeOutcome> => {
+  const wake = useCallback((sessionId: string, options?: { quiet?: boolean; launch?: boolean }): Promise<WakeOutcome> => {
     // A wake the user asks for is the user turning to the session: no held-back focus survives it.
     if (options?.quiet) quietArrivals.current.set(sessionId, new Set<QuietConsumer>(['terminal', 'conversation']))
     else quietArrivals.current.delete(sessionId)
+    if (options?.launch) launchArrivals.current.set(sessionId, new Set<QuietConsumer>(['terminal', 'conversation']))
+    else launchArrivals.current.delete(sessionId)
     // A device's hibernation that never produced an exit must not make a later one quiet.
     quietHibernations.current.delete(sessionId)
     if (waking.current.has(sessionId)) return Promise.resolve({ status: 'woken' })
     waking.current.add(sessionId)
 
-        const fail = (message: string): WakeOutcome => {
+        const fail = (message: string, code?: string): WakeOutcome => {
       // A failed wake leaves the set: waking is only ever the user's explicit action now (nothing
       // calls it on re-render), so pressing Wake again is the retry.
       waking.current.delete(sessionId)
       quietArrivals.current.delete(sessionId)
+      launchArrivals.current.delete(sessionId)
       setSessions((previous) =>
         previous.map((session) =>
           // session 維持休眠，並把原因呈現出來 —— 而不是靜默地什麼都不發生。
           session.id === sessionId ? { ...session, wakeError: message } : session,
         ),
       )
-      return { status: 'failed', message }
+      return { status: 'failed', message, code }
     }
 
     return window.workspace.terminal
-      .wake(sessionId)
+      .wake(sessionId, options?.launch === true)
       .then((result): WakeOutcome => {
-        if (!result.ok) return fail(result.message)
+        if (!result.ok) return fail(result.message, result.code)
         setSessions((previous) =>
           previous.map((session) =>
             session.id === sessionId
@@ -614,6 +645,63 @@ export function SessionsProvider({ children }: { children: React.ReactNode }): R
     if (pending.size === 0) quietArrivals.current.delete(sessionId)
     return true
   }, [])
+
+  const takeLaunchArrival = useCallback((sessionId: string, consumer: QuietConsumer): boolean => {
+    const pending = launchArrivals.current.get(sessionId)
+    if (!pending?.delete(consumer)) return false
+    if (pending.size === 0) launchArrivals.current.delete(sessionId)
+    return true
+  }, [])
+
+  /**
+   * Start again the restored sessions that were running when their ptys were last ended
+   * (`restore-running-sessions`, design D3). **After the restore has committed**: every view has mounted
+   * and begun its replay, and the terminal wrapper holds a new process's output back until the replay is
+   * written. Once per provider — the ref gate covers StrictMode's second run.
+   */
+  useEffect(() => {
+    if (!restored || launchWalked.current) return
+    launchWalked.current = true
+    const queue = launchQueue.current
+    launchQueue.current = []
+    if (queue.length === 0) return
+
+    const stateOf = (id: string): LaunchState => {
+      const session = sessionsRef.current.find((candidate) => candidate.id === id)
+      return session
+        ? { kind: 'present', target: session.spawnTarget, dormant: session.status === 'dormant' }
+        : { kind: 'gone' }
+    }
+    const watchCanary = (id: string): Promise<CanaryVerdict> =>
+      new Promise((resolve) => {
+        const started = Date.now()
+        const timer = window.setInterval(() => {
+          const session = sessionsRef.current.find((candidate) => candidate.id === id)
+          let verdict: CanaryVerdict | null = null
+          // Only an end on its own counts: the heal's final exit is the one the renderer sees.
+          if (session?.status === 'exited') verdict = 'exited'
+          else if (!session || session.status === 'dormant') verdict = 'left'
+          else if (Date.now() - started >= CANARY_WINDOW_MS) verdict = 'survived'
+          if (verdict === null) return
+          window.clearInterval(timer)
+          resolve(verdict)
+        }, 200)
+      })
+
+    void startAtLaunch(queue, {
+      stateOf,
+      isWaking: (id) => waking.current.has(id),
+      wake: (id) => wake(id, { launch: true }),
+      watchCanary,
+      notStarted: (id, reason) => {
+        const message =
+          reason === 'env' ? t('terminalError.userEnvUnavailable') : t('sessions.notStartedAfterCanary')
+        setSessions((previous) =>
+          previous.map((session) => (session.id === id ? { ...session, wakeError: message } : session)),
+        )
+      },
+    })
+  }, [restored, wake])
 
     const hibernate = useCallback((sessionId: string, token?: string, options?: { quiet?: boolean }): Promise<boolean> => {
     const target = sessionsRef.current.find((session) => session.id === sessionId)
@@ -860,6 +948,7 @@ export function SessionsProvider({ children }: { children: React.ReactNode }): R
       create,
       wake,
       takeQuietArrival,
+      takeLaunchArrival,
       isFocusHeld,
       hibernate,
       registerSerializer,
@@ -889,6 +978,7 @@ export function SessionsProvider({ children }: { children: React.ReactNode }): R
       create,
       wake,
       takeQuietArrival,
+      takeLaunchArrival,
       isFocusHeld,
       hibernate,
       registerSerializer,

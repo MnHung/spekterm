@@ -693,11 +693,19 @@ try {
 
     execFileSync('open', ['-a', appPath])
     const reopened = await pollFor({ read: () => windowCount(mainPid), settled: (n) => n === 1, timeoutMs: 15_000, label: 'the window reopens' })
-    const shells = descendants(mainPid).filter(isShell)
+    // The shell was running when the window closed, so the new window starts it again on its own
+    // (restore-running-sessions) — a new process, not the one the close ended.
+    const shells = await pollFor({
+      read: () => descendants(mainPid).filter(isShell),
+      settled: (live) => live.length === 1,
+      timeoutMs: 20_000,
+      label: 'the running shell starts again in the new window',
+    })
     const persisted = JSON.parse(readFileSync(join(first.profile, 'sessions.json'), 'utf8'))
     const count = persisted.sessions?.length ?? 0
-    check(results, 'activating the application opens a window whose sessions are dormant',
-      reopened === 1 && shells.length === 0 && count > 0, `windows=${reopened} live shells=${shells.length} persisted=${count}`)
+    check(results, 'activating the application opens a window whose running session started again',
+      reopened === 1 && shells.length === 1 && shells[0].pid !== shellPid && count > 0,
+      `windows=${reopened} live shells=${JSON.stringify(shells.map((p) => p.pid))} (closed one ${shellPid}) persisted=${count}`)
     const appMenu = menuItems(mainPid, 2)
     check(results, 'the second window still has the menu (Quit and Edit)',
       appMenu.includes(copy('appMenu.quit', { name: 'Spekterm' })) && menuItems(mainPid, 3).includes(copy('appMenu.paste')),

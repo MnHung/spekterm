@@ -254,7 +254,7 @@ function peerLines(name: string | undefined, relations: string | undefined): str
           `  ${relations}`,
           'It is kept up to date, including sessions created after you started. If this session was opened by a handoff, it has a parent.',
           "To contact one, use Claude Code's own session messaging (ListAgents / SendMessage), addressed by the name in that file; spekterm does not carry the message.",
-          'A session listed with "running": false is hibernated: it still exists but cannot receive messages. It comes back when the user wakes it; spekterm will not start it for you, and you must not try to wake it yourself.',
+          'A session listed with "running": false has no process now: it still exists but cannot receive messages. It was hibernated, or spekterm has not started it again yet after a restart; it comes back when the user wakes it or spekterm starts it again, and you must not try to wake it yourself.',
           'A message can also go unanswered - if you need a reply, ask for one.',
           'Each child and sibling also has a "state" (working, waiting, done, or idle) and, once it has reported finishing its work, a "summary".',
           'Children nest: a child lists the sessions it handed off under its own "children", at every depth. A descendant marked "parentGone": true lost its direct parent (closed, or its repo left the workspace) and is listed under its nearest ancestor that still exists.',

@@ -6,6 +6,7 @@ import { useColorScheme } from '../../color-scheme'
 import { CloseOffer } from './CloseOffer'
 import { type SessionStatus, useSessions } from './sessions'
 import { type XtermHandle, createXterm } from './xterm'
+import { focusIsNowhere } from './focus-nowhere'
 import { useTranslation } from 'react-i18next'
 import { t } from '@shared/i18n'
 
@@ -63,7 +64,7 @@ export function TerminalView({
   const { t } = useTranslation()
   // 解構出穩定的 callback。若依賴整個 api 物件，session 清單一變動就會重建 xterm
   // （連同 scrollback 一起消失）。
-    const { attach, setTitle, restoredScrollbackOf, registerFocus, registerSerializer, wake, takeQuietArrival, isFocusHeld } =
+    const { attach, setTitle, restoredScrollbackOf, registerFocus, registerSerializer, wake, takeQuietArrival, takeLaunchArrival, isFocusHeld } =
       useSessions()
   // Read in render only, never in an effect: `closeOffered` changes with every offer (D12 of
   // `agent-session-control`).
@@ -99,8 +100,17 @@ export function TerminalView({
   const snapshots = spawnTarget === 'shell'
   const snapshotTimer = useRef<number | undefined>(undefined)
 
+  /**
+   * This view replayed a restored screen and has not been measured since (`restore-running-sessions` D5).
+   * A shell started again at launch while not displayed is running, so the "only with a pty" guard below no
+   * longer stops it — but its xterm holds the replayed history at a size never measured, and saving it would
+   * rewrap that history and add a replay separator at every restart. The first fit ends it.
+   */
+  const unmeasuredReplay = useRef(false)
+
   const scheduleSnapshot = useCallback(() => {
     if (!snapshots) return
+    if (unmeasuredReplay.current) return
     window.clearTimeout(snapshotTimer.current)
     snapshotTimer.current = window.setTimeout(() => {
       const data = handleRef.current?.serialize()
@@ -129,6 +139,7 @@ export function TerminalView({
     if (status !== 'running') return
 
     const flush = (): void => {
+      if (unmeasuredReplay.current) return
       const data = handleRef.current?.serialize()
       if (data) window.workspace.terminal.snapshot(sessionId, data)
     }
@@ -173,7 +184,10 @@ export function TerminalView({
     }
 
     const history = restoredScrollbackOf(sessionId)
-    if (history) handle.replay(history, separator(), streamLive)
+    if (history) {
+      unmeasuredReplay.current = true
+      handle.replay(history, separator(), streamLive)
+    }
     else streamLive()
 
     const stopInput = handle.onInput((data) => {
@@ -382,19 +396,24 @@ export function TerminalView({
     previousStatus.current = status
     previousActive.current = active
     const quiet = arriving && takeQuietArrival(sessionId, 'terminal')
+    const launched = arriving && takeLaunchArrival(sessionId, 'terminal')
     if (!active) return
     if (!wasActive || was !== status) {
       const size = handleRef.current?.fit()
       if (size) window.workspace.terminal.resize(sessionId, size.cols, size.rows)
+      // Measured now: the replayed history is laid out at a real size, so saving it is safe again.
+      unmeasuredReplay.current = false
     }
     if (covered) return
     if (was !== status && was !== 'dormant' && status !== 'dormant') return
     if (quiet) return
+    // Started at launch: take focus only where it is nowhere (`restore-running-sessions` D3).
+    if (launched && !focusIsNowhere()) return
     if (isFocusHeld(sessionId)) heldFor.current = evaluation
     if (heldFor.current === evaluation) return
     if (status === 'dormant') wakeButtonRef.current?.focus()
     else handleRef.current?.focus()
-  }, [active, covered, sessionId, status, takeQuietArrival, isFocusHeld])
+  }, [active, covered, sessionId, status, takeQuietArrival, takeLaunchArrival, isFocusHeld])
 
   /**
    * GPU 加速：**只給當下顯示的那一個終端**，且使用者可以整個關掉。

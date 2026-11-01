@@ -494,3 +494,26 @@ describe('主行程專屬的關係與名字（handoff-lineage）', () => {
     assert.ok(count >= 2)
   })
 })
+
+describe('the running record is read back strictly (restore-running-sessions)', () => {
+  const entry = (extra: Record<string, unknown>): string =>
+    JSON.stringify({
+      version: 1,
+      sessions: [{ id: UUID_A, folderId: 'f1', spawnTarget: 'claude', ordinal: 1, ...extra }],
+    })
+
+  it('only the literal true reads as running; anything else, and absence, read as dormant', () => {
+    for (const [value, expected] of [
+      [true, true],
+      ['true', undefined],
+      [1, undefined],
+      [false, undefined],
+    ] as const) {
+      write(entry({ running: value }))
+      assert.equal(store().list()[0].running, expected, JSON.stringify(value))
+    }
+    // A file written before the record existed: every session is dormant — the first launch after upgrading.
+    write(entry({}))
+    assert.equal(store().list()[0].running, undefined)
+  })
+})

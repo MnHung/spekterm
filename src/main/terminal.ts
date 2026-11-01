@@ -27,6 +27,8 @@ export type TerminalCode =
   | 'UNKNOWN_WORKTREE'
   | 'FOLDER_UNAVAILABLE'
   | 'SPAWN_FAILED'
+  /** An automatic start of an agent, refused because the user's environment could not be read (`restore-running-sessions`). */
+  | 'USER_ENV_UNAVAILABLE'
 
 export class TerminalError extends Error {
   constructor(

@@ -172,7 +172,10 @@ export function getUserEnv(): Readonly<Record<string, string>> {
  */
 export function applyUserEnvOnce(): Promise<void> {
   pending ??= startUserEnvResolution().then((resolved) => {
-    if (resolved === null) return
+    if (resolved === null) {
+      failed = !resolutionSkipped()
+      return
+    }
 
     const { PATH: userPath, ...rest } = resolved
     if (userPath !== undefined && userPath.length > 0) {
@@ -181,6 +184,26 @@ export function applyUserEnvOnce(): Promise<void> {
     userEnv = rest
   })
   return pending
+}
+
+/** Whether the resolution failed or timed out (`restore-running-sessions`). */
+let failed = false
+
+/**
+ * Whether the user's environment could not be read: the resolution ran and failed (spawn error, non-zero exit,
+ * timeout, unparsable output). **A skipped resolution is not a failure** (an unsupported platform or shell): those
+ * users always run with the desktop's environment. Meaningful once `whenUserEnvReady()` has resolved.
+ *
+ * An automatic start refuses agents on a failure (`restore-running-sessions` D3): without the user's `PATH` the
+ * agent may not be found, and every resumed agent would then fail, heal and be removed as an ending.
+ */
+export function userEnvFailed(): boolean {
+  return failed
+}
+
+/** The same conditions under which `startUserEnvResolution` returns `null` without trying. */
+function resolutionSkipped(): boolean {
+  return process.platform === 'win32' || !isQueryableShell(process.env.SHELL || '/bin/bash')
 }
 
 /**

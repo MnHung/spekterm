@@ -77,7 +77,7 @@ spekterm 的資料放在 `~/.config/Spekterm`。
   權限，包括那些隱私權提示。
 - **資料**放在 `~/Library/Application Support/Spekterm`。
 - **關掉視窗**會結束每個 session（若有 session 在執行，會先問你），但 spekterm 會像「終端機」與 iTerm2
-  那樣繼續在 Dock 裡執行；點 Dock 圖示就會拿回視窗，session 以休眠狀態還原。沒有視窗地執行時，收件匣
+  那樣繼續在 Dock 裡執行；點 Dock 圖示就會拿回視窗，session 和重啟之後一樣還原（原本在執行的會重新啟動）。沒有視窗地執行時，收件匣
   與 Slack 檢查（若有設定，每五分鐘一次）照常運作。`Cmd+Q` 會像關掉視窗那樣先問；從 Dock 結束、登出
   或關機則不會問正在執行的 session（仍會問未儲存的檔案）。
 

@@ -47,30 +47,40 @@ spekterm 的快捷鍵刻意避開 shell 與 Claude Code 需要的按鍵。完整
 
 有兩件事 agent 不會回報。按 `Esc` 中斷一輪之後，圓點會停在**工作中**，直到你送出下一則訊息。直接在終端機裡打字回答權限詢問，則以你的按鍵當作已經回答。
 
-## 重啟之後：休眠中的 session
+## 重啟之後
 
 關閉 spekterm 會結束每個 session 的行程。若還有 session 在執行，spekterm 會先列出它們並詢問你。build、dev server，以及 agent 還沒寫完的回覆都會遺失：spekterm 關著的時候，無法讓行程繼續活著。
 
-spekterm 保留的是 session 本身。再次打開 spekterm，每個 session 都回到原本的分頁，處於**休眠**狀態：看得到，但沒有行程。在你要求之前，什麼都不會啟動：
+spekterm 保留的是 session 本身。再次打開 spekterm，每個 session 都回到原本的分頁，而且：
 
-- 按 **喚醒**；或在休眠的 session 有焦點時按 `Enter`。
+- **關閉時還在執行的 session 會自己重新啟動**，在背景進行：不會改變選中的資料夾或分頁，也不會把鍵盤從你正在打字的地方搶走。
+- **被休眠的 session 維持休眠**：看得到，但沒有行程，直到你按 **喚醒**（或在它有焦點時按 `Enter`）。見[休眠](#休眠)。
+
+無論哪一種，重新啟動的 session 都會接續原本的狀態：
+
 - `claude` session 會從中斷的地方，接回**同一段對話**。
 - shell 會**在它最後的工作目錄**重新啟動。先前的畫面會顯示在一行 **以上為先前的內容** 之上，新舊輸出一眼就分得出來。在 macOS 上，shell 則在它的資料夾重新啟動，不是最後的目錄；關閉時的對話框會寫明這一點。
 
 如果對話接不回來（例如已被刪除），session 會改開一段新對話，不會留給你一個用不了的分頁。
 
+agent 完全起不來時，spekterm 不會一個個 session 輪流試。如果 spekterm 開啟時讀不到你的 shell 環境（可能因此找不到 `claude`），或第一個重新啟動的 agent 一啟動就停了，其餘的 agent session 會維持休眠並寫明原因；按 **喚醒** 可以現在試，否則下次打開 spekterm 時會再試一次。
+
+在你看到之前就重新啟動的 agent session，印出來的內容會先以預設的 80 欄排版；第一次顯示它時才會換成實際的寬度。
+
+第一次打開具備這個行為的 spekterm 版本時，所有 session 都會是休眠的，因為舊版沒有記錄哪些 session 在執行。
+
 ## 在 macOS 上關閉與結束
 
 在 Linux 上，關掉視窗就會結束 spekterm。在 macOS 上，spekterm 的行為和「終端機」與 iTerm2 一樣：
 
-- **關掉視窗**會結束每個 session（若有 session 在執行，會像上面那樣先問你），但 spekterm 仍留在 Dock 裡執行。點 Dock 圖示就能重新打開視窗。session 都會回來，處於休眠，和重啟之後完全一樣：`claude` 接回它的對話，shell 重新啟動。
+- **關掉視窗**會結束每個 session（若有 session 在執行，會像上面那樣先問你），但 spekterm 仍留在 Dock 裡執行。點 Dock 圖示就能重新打開視窗。session 都會回來，和重啟之後完全一樣：原本在執行的會重新啟動，被休眠的維持休眠。
 - **spekterm 沒有視窗地執行時**，收件匣照常收件；若設定了 Slack，spekterm 也照樣每五分鐘檢查一次提及。見[收件匣與 Slack](/zh-tw/docs/using/inbox-and-slack/)。
 - 有 session 在執行時，**`Cmd+Q`**（或 **Spekterm → 結束 Spekterm**）會問和關掉視窗時一樣的問題。
 - **從 Dock 結束、登出或關機**時，不會問正在執行的 session，但有未儲存變更的檔案時仍然會問。
 
 ## 休眠
 
-偶爾才用的 session，不需要一直佔著執行中的行程。把 session **休眠**，就會結束它的行程，讓它原地休眠。這和重啟之後的狀態完全相同，喚醒的方式也一樣。
+偶爾才用的 session，不需要一直佔著執行中的行程。把 session **休眠**，就會結束它的行程，讓它原地休眠。重啟之後它也維持休眠，直到你按 **喚醒**（或在它有焦點時按 `Enter`）。
 
 - **手動**：按 `Ctrl+Shift+H`，或在分頁或 rail 列的選單裡選 **休眠**。
 - **自動**：閒置 24 小時的 session 會自動休眠。要改時間或關掉這項功能，到 **設定 → Agent 與 session → 讓閒置的 session 休眠**。畫面上正在顯示的 session 絕不會自動休眠，正在工作的 agent 與正在跑工作的 shell 也不會。在 macOS 上，閒置的 shell 永遠不會自動休眠，但仍可手動休眠。

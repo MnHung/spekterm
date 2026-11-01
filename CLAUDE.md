@@ -33,6 +33,12 @@ OpenSpec 結構的側欄，讓使用者不必另外開 IDE 就能一邊駕駛 ag
   **every dormant session starts only on an explicit Wake**, never on display. Hibernation is a
   per-session `dispose`, not a `kill`: the record, drop point and lineage stay. The shell idle test and
   why are in `docs/lessons/terminal.md`.
+  **The one exception** (`restore-running-sessions`): a session that was running when its ptys were last
+  ended (quit, crash, reload, macOS window close) **starts again on its own after the restore**, quietly
+  (it takes focus only where focus is nowhere). The record (`running` in `sessions.json`) is **main-owned**:
+  set at spawn, cleared when a hibernation is accepted, untouched by `disposed`; absent means dormant, so the
+  first launch after upgrading starts nothing. Agents are guarded against a systemic failure: none starts if the
+  user's environment could not be read, and the first one is a canary.
 - **側欄** —— OpenSpec 與 Files 兩個身分、artifact 分頁與兩棵樹、Graph／Timeline、
   **maximize over the main stage** (`Ctrl+Shift+M`; it covers the terminal without resizing it, and
   Graph／Timeline are views shown only maximized)、
@@ -332,8 +338,8 @@ npm run probe:intake    # agent-intake / intake-routing（收件匣的兩條入�
                         #   只有「session 被還原」這個形狀驗得出來（新建落點是唯一沒壞的那一種）。
                         #   **母子關係的兩段**（`runLineage` / `runLineageDrag`）：替身回報每次
                         #   啟動拿到的 `--name` 與環境變數；拖曳一律三個以上兄弟、往下拖
-                        #   對照組見 `scripts/intake-control-groups.mjs`（**61** 個 mutation，
-                        #   每一個都指名哪一條斷言必須變紅；`section` 欄位讓它只跑需要的那一段）
+                        #   對照組見 `scripts/intake-control-groups.mjs`（每一個
+                        #   mutation 都指名哪一條斷言必須變紅；`section` 欄位讓它只跑需要的那一段）
                         #   **失敗的可見性也在這一支**：`TOO_LONG` / `TOO_LARGE` 的通知、
                         #   痕跡逐則呈現與逐則清除、痕跡活過重啟
                         #   **接受之前改選 folder 與已開好那一段的去留**（`runChooseFolder` /

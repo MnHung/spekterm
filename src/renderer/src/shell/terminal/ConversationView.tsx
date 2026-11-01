@@ -6,6 +6,7 @@ import { MarkdownView } from '../files/MarkdownView'
 import { useSessions } from './sessions'
 import { CloseOffer } from './CloseOffer'
 import { WakeButton } from './TerminalView'
+import { focusIsNowhere } from './focus-nowhere'
 
 /**
  * agent session 的結構化呈現。
@@ -133,7 +134,7 @@ export function ConversationView({ sessionId, active, dormant, covered = false }
   const [draft, setDraft] = useState('')
   const [blocked, setBlocked] = useState<WaitState | null>(null)
     const bottomRef = useRef<HTMLDivElement | null>(null)
-  const { wake, takeQuietArrival, isFocusHeld, closeOffered, close, keepCloseOffer } = useSessions()
+  const { wake, takeQuietArrival, takeLaunchArrival, isFocusHeld, closeOffered, close, keepCloseOffer } = useSessions()
   const rootRef = useRef<HTMLDivElement | null>(null)
   const wakeButtonRef = useRef<HTMLButtonElement | null>(null)
 
@@ -160,13 +161,16 @@ export function ConversationView({ sessionId, active, dormant, covered = false }
     wasCovered.current = covered
     // A session woken for a paired device does not take the composer's focus (`remote-protocol`).
     const quiet = was && !dormant && takeQuietArrival(sessionId, 'conversation')
+    const launched = was && !dormant && takeLaunchArrival(sessionId, 'conversation')
     if (!active || covered) return
     if (isFocusHeld(sessionId)) heldFor.current = evaluation
     if (heldFor.current === evaluation) return
     if (dormant) wakeButtonRef.current?.focus()
     else if (quiet) return
+    // Started at launch: take focus only where it is nowhere (`restore-running-sessions` D3).
+    else if (launched && !focusIsNowhere()) return
     else if (was || uncovered) rootRef.current?.querySelector('textarea')?.focus()
-  }, [active, dormant, covered, sessionId, takeQuietArrival, isFocusHeld])
+  }, [active, dormant, covered, sessionId, takeQuietArrival, takeLaunchArrival, isFocusHeld])
 
 
   useEffect(() => {

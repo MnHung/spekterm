@@ -114,6 +114,14 @@ export interface PersistedSession {
    * 它會成為 agent CLI 的參數，所以讀回時以 `isValidPeerName` 驗證；不合法就丟掉、重新決定。
    */
   peerName?: string
+  /**
+   * The session had a running process when this was last written (`session-persistence`,
+   * `restore-running-sessions`). **Main-supplied**: set when a pty is spawned, cleared when the session
+   * is hibernated, and left alone when ptys are disposed (window close, reload, quit) — so after any of
+   * those, it says what was running before. Absent means dormant, which is also what every file written
+   * before this field existed says: the first launch after upgrading starts nothing.
+   */
+  running?: true
 }
 
 export type { SessionLineage }
@@ -186,7 +194,7 @@ interface PersistedSessions {
 export type RendererSession = Omit<PersistedSession, MainOwnedField>
 
 /** 只有主行程能寫的欄位。**加一個進來，這裡、`replace()`、`parseSessionEntry` 三處都要改。** */
-type MainOwnedField = 'claudeSessionId' | 'cwd' | 'lineage' | 'peerName' | 'completion'
+type MainOwnedField = 'claudeSessionId' | 'cwd' | 'lineage' | 'peerName' | 'completion' | 'running'
 
 /** 主行程專屬欄位的暫存形狀。 */
 type MainFields = Partial<Pick<PersistedSession, MainOwnedField>>
@@ -259,6 +267,8 @@ export function parseSessionEntry(entry: unknown): PersistedSession | null {
     peerName: raw.spawnTarget === 'claude' && isValidPeerName(raw.peerName) ? raw.peerName : undefined,
     // 沒有來源的 session 不會有完成狀態 —— 一份壞掉或憑空出現的只丟該欄位。
     completion: raw.lineage !== undefined ? parseCompletion(raw.completion) : undefined,
+    // Only the literal `true`: anything else reads as dormant, the safe side (nothing starts on its own).
+    running: raw.running === true ? true : undefined,
   }
 }
 
@@ -516,6 +526,7 @@ export class SessionStore {
         lineage: kept?.lineage,
         peerName: kept?.peerName,
         completion: kept?.completion,
+        running: waiting?.running ?? kept?.running,
       })
     }
 
@@ -535,7 +546,7 @@ export class SessionStore {
    */
   update(
     sessionId: string,
-    patch: Partial<Pick<PersistedSession, 'claudeSessionId' | 'cwd'>>,
+    patch: Partial<Pick<PersistedSession, 'claudeSessionId' | 'cwd' | 'running'>>,
   ): void {
     const target = this.#sessions.find((session) => session.id === sessionId)
     const provisional = this.#provisional.get(sessionId)
@@ -558,6 +569,10 @@ export class SessionStore {
     }
     if ('cwd' in patch && patch.cwd !== target.cwd) {
       target.cwd = patch.cwd
+      changed = true
+    }
+    if ('running' in patch && patch.running !== target.running) {
+      target.running = patch.running
       changed = true
     }
     if (changed) this.save()

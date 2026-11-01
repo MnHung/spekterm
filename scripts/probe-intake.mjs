@@ -4197,7 +4197,13 @@ async function runLineage(_mode, _modeConfig, context) {
   check(results, '母 session 關閉之後子 session 查得到它已不存在，且兄弟仍互列', relAClosed?.parent?.closed === true && relAClosed?.parent?.repo === nameA && (relAClosed?.siblings ?? []).some((s) => s.name === childB.peerName), JSON.stringify(relAClosed))
 
   // ── 重新啟動：關係與名字都還在 ──
+  // Hibernate child A first, so that after the restart it is dormant (a hibernated sibling) while child B, running
+  // when the application closes, starts again on its own (restore-running-sessions).
+  const hibernatedA = await app.client.evaluate(`window.workspace.terminal.hibernate(${JSON.stringify(childA.id)})`)
+  await pollFor({ read: () => persistedSessions(profile).find((s) => s.id === childA.id)?.running, settled: (r) => r === undefined, timeoutMs: 10_000, label: 'child A hibernated' })
+  check(results, 'precondition: child A hibernated before the restart', hibernatedA?.ok === true, JSON.stringify(hibernatedA))
   const before = Object.fromEntries(persistedSessions(profile).map((s) => [s.id, { lineage: s.lineage, peerName: s.peerName }]))
+  const launchesBefore = stub.peerNames().length
   app = await freshApp(context, { profile, configDir, stub, marker })
   const after = Object.fromEntries(persistedSessions(profile).map((s) => [s.id, { lineage: s.lineage, peerName: s.peerName }]))
   check(results, '重新啟動之後關係與名字與關閉之前相同', JSON.stringify(after) === JSON.stringify(before), JSON.stringify({ before, after }))
@@ -4210,22 +4216,15 @@ async function runLineage(_mode, _modeConfig, context) {
   }).catch(() => null)
   check(results, '母 session 關閉後重新啟動，快照仍在', uiRestarted?.sources?.[0]?.disabled === true && uiRestarted?.sources?.[0]?.label === uiClosed?.sources?.[0]?.label, JSON.stringify(uiRestarted))
 
-  // 喚醒跨 folder 的子 session：它以相同的名字啟動；休眠的兄弟在它的關係檔裡不在執行中。
-  const launchesBefore = stub.peerNames().length
-  await pollFor({
-    read: () => app.client.evaluate(`(() => { ${railRowClick(nameB)} return ${RAIL_SELECTION} === ${JSON.stringify(nameB)} })()`),
-    settled: Boolean,
-    timeoutMs: 15_000,
-        label: '選中 folder B（喚醒它的 session）',
-  })
-  await pollFor({ read: () => app.client.evaluate(CLICK_WAKE), settled: Boolean, timeoutMs: 15_000, label: 'Wake the child in folder B' })
+  // 跨 folder 的子 session B 重新啟動時以相同的名字啟動（it starts again on its own: it was running）；
+  // 休眠的兄弟 A 在它的關係檔裡不在執行中。
   const relaunch = await pollFor({
     read: () => stub.peerNames().slice(launchesBefore),
     settled: (list) => list.length >= 1,
     timeoutMs: 30_000,
-    label: '子 session 被喚醒',
+    label: '子 session 重新啟動',
   }).catch(() => [])
-  check(results, '重新啟動之後名字不變（喚醒時帶著同一個名字）', relaunch.length >= 1 && relaunch.every((entry) => entry.argv === childB.peerName && entry.env === childB.peerName), JSON.stringify(relaunch))
+  check(results, '重新啟動之後名字不變（重新啟動時帶著同一個名字）', relaunch.length >= 1 && relaunch.every((entry) => entry.argv === childB.peerName && entry.env === childB.peerName), JSON.stringify(relaunch))
   const relB = await pollFor({
     read: () => relationsOf(profile, childB.id),
     settled: (r) => r !== null,
@@ -4989,6 +4988,41 @@ async function runSessionControl(_mode, _modeConfig, context) {
   await clickOffer(copy('sessions.closeOffer.close'))
   const closedE = await pollFor({ read: () => !alive(E) && recordOf(E) === null, settled: Boolean, timeoutMs: 20_000, label: 'E closed by the user' }).catch(() => false)
   check(results, 'choosing Close closes the session', closedE, `alive=${alive(E)} record=${recordOf(E) !== null}`)
+
+  // ── A self-close left unread at quit does not act after a restart (restore-running-sessions). P is running when
+  // the application closes (D was hibernated above); its close command for itself is written while the application is closed — the strongest
+  // form of "unread at quit". After the restart P starts again on its own (it was running), and is not closed.
+  await context.app.close()
+  context.app = null
+  await pollFor({ read: () => !alive(P), settled: Boolean, timeoutMs: 15_000, label: 'P ends with the application' })
+  const pOutbox = join(outboxRootOf(profile), P.id)
+  mkdirSync(pOutbox, { recursive: true })
+  writeFileSync(join(pOutbox, '.self-close.json.tmp'), JSON.stringify({ kind: 'close' }))
+  renameSync(join(pOutbox, '.self-close.json.tmp'), join(pOutbox, 'self-close.json'))
+  await freshApp(context, { profile, configDir, stub, marker, port: RESTART_PORT })
+  const pBack = await pollFor({ read: () => alive(P), settled: Boolean, timeoutMs: 45_000, label: 'P starts again after the restart' }).catch(() => false)
+  // Display P, so that an offer on it would be on screen.
+  const pDisplayed = await pollFor({
+    read: () => context.app.client.evaluate(`(() => {
+      // P is the only session of the first folder: selecting that folder displays it.
+      document.querySelector('aside${label('rail.label')} div[role="button"][aria-label="${folders[0].name}"]')?.click()
+      const stage = document.querySelector('[aria-label="${copy('stage.terminal')}"]')
+      return Boolean(stage && [...stage.querySelectorAll('.xterm-screen')].some((el) => el.getBoundingClientRect().width > 0))
+    })()`),
+    settled: Boolean,
+    timeoutMs: 15_000,
+    label: 'P displayed',
+  }).catch(() => false)
+  const pShown = await context.app.client.evaluate(`document.querySelector('[aria-label="${copy('sessions.tabs')}"] [role="tab"][aria-selected="true"]')?.textContent ?? null`)
+  // Long enough for the drop point to be read and a close to be carried out or offered (P's turn is not running).
+  await sleep(5_000)
+  const pOffer = await context.app.client.evaluate(OFFER)
+  check(
+    results,
+    'a self-close left unread at quit does not act after a restart (the session started again, is still there, and no close is offered)',
+    pBack === true && alive(P) && recordOf(P) !== null && pDisplayed === true && pOffer?.shown === false,
+    `started again=${pBack} alive=${alive(P)} record=${recordOf(P) !== null} displayed=${pDisplayed} (tab ${JSON.stringify(pShown)}) offer=${JSON.stringify(pOffer)}`,
+  )
 }
 
 const SECTIONS = [

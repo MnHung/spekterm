@@ -22,6 +22,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -199,7 +200,7 @@ function conversationOf(argv) {
   return match ? { mode: match[1], id: match[2] } : null
 }
 
-function makeStubClaude({ resumeFails = false, honorSettings = false, logInput = false, screenMarker = false } = {}) {
+function makeStubClaude({ resumeFails = false, honorSettings = false, logInput = false, screenMarker = false, exitsAtOnce = false } = {}) {
   const home = mkTemp('spekterm-terminal-stubhome-')
   const bin = join(home, '.local', 'bin')
   mkdirSync(bin, { recursive: true })
@@ -269,6 +270,9 @@ function makeStubClaude({ resumeFails = false, honorSettings = false, logInput =
     // 這一段要驗的只有「指示抵達 pty，且帶著 Enter」—— 那不需要一個能執行命令的 shell，只需要
     // 一個**讀 pty、寫檔、而且不會自己結束**的行程。`cat` 正是它，且它由 pty 直接持有 tty。
     // （pty 預設是 canonical 模式且 ICRNL，於是送出的 `\r` 落到檔案裡是 `\n` —— 兩者本就都收。）
+    // `exitsAtOnce`: an agent that cannot start at all (restore-running-sessions: the canary). Every start, new or
+    // resumed, ends at once with a non-zero code.
+    exitsAtOnce ? 'echo "stub agent cannot start"; exit 1' : '',
     logInput ? `exec cat >> "${inputLog}"` : 'exec "$SHELL" -i',
   ].filter(Boolean)
 
@@ -923,6 +927,9 @@ const WAKE_RECT = `(() => {
   const r = button.getBoundingClientRect()
   return { x: r.x, y: r.y, width: r.width, height: r.height }
 })()`
+
+/** How many rail items are selected (`aria-current`). None at launch: starting sessions again selects nothing. */
+const SELECTED_RAIL_ITEMS = `document.querySelectorAll('aside[aria-label="${copy('rail.label')}"] [aria-current="true"]').length`
 
 /** Whether the focused element is a Wake button. */
 const WAKE_FOCUSED = `document.activeElement?.tagName === 'BUTTON' && document.activeElement.textContent === ${JSON.stringify(copy('sessions.wake'))}`
@@ -3025,8 +3032,23 @@ async function runRestore(label, { port, rendererUrl }) {
     )
 
 
-    // ── 第二次啟動：同一個 profile
+    // ── Second launch, same profile. Both sessions were running when the application closed, so both start again
+    // on their own (restore-running-sessions) — before any rail item is selected, and with none selected by it.
     app = await launch({ port, profileDir: profile, rendererUrl, marker, stub })
+    const startedAtLaunch = await pollFor({
+      read: () => ptySessionPids(marker),
+      settled: (pids) => pids.length === 2,
+      timeoutMs: 20_000,
+      interval: 150,
+      label: 'the sessions that were running start again at launch',
+    })
+    const selectedAtLaunch = await app.client.evaluate(SELECTED_RAIL_ITEMS)
+    check(
+      results,
+      `${label}：sessions that were running start again when the application opens (no click, no item selected)`,
+      startedAtLaunch.length === 2 && selectedAtLaunch === 0,
+      `pty count=${startedAtLaunch.length} selected rail items=${selectedAtLaunch} cmdlines=${JSON.stringify(ptyCmdlines(marker))}`,
+    )
     await pollUntil(app.client, SELECT_FOLDER('repo-a'), (value) => value === true, 10_000)
 
     const labelsAfter = await pollUntil(
@@ -3042,10 +3064,146 @@ async function runRestore(label, { port, rendererUrl }) {
       `之前=${JSON.stringify(labelsBefore)} 之後=${JSON.stringify(labelsAfter)}`,
     )
 
-    // **休眠不是結束。** 這條驗的是使用者重開 app 之後看到的第一個畫面。
+    // The claude started again resumes **the same** conversation (--resume, the original id).
+    // The stub logs its start a moment after its pid appears: wait for the second call.
+    const resumeCalls = await pollFor({
+      read: () => stub.calls(),
+      settled: (calls) => calls.length >= 2,
+      timeoutMs: 10_000,
+      interval: 150,
+      label: 'the claude started again logs its start',
+    })
+    check(
+      results,
+      `${label}：重建的 claude session 續接同一個對話（--resume 同一個 id）`,
+      resumeCalls.length === 2 &&
+        conversationOf(resumeCalls[1])?.mode === 'resume' &&
+        conversationOf(resumeCalls[1])?.id === conversation,
+      `argv=${JSON.stringify(resumeCalls)}`,
+    )
+
+    // claude **不重播快照** —— 它自己會重現對話，重播會讓使用者看到兩份歷史。
+    // **這是一條否定式斷言** —— 讀不到終端時它會靜默通過，所以再明寫一次「內容非空」。
+    await awaitRunning(app.client, 0)
+    const claudeText = await readTerminalText(app.client)
+    check(
+      results,
+      `${label}：claude session 不重播快照（否則歷史會出現兩份）`,
+      !claudeText.includes(copy('sessions.replaySeparator')) && claudeText.trim() !== '',
+      `終端內容（${claudeText.length} 字元）=${JSON.stringify(claudeText.slice(0, 80))}`,
+    )
+
+    // ── **Close and reopen without ever displaying the shell.** It started again hidden: its terminal holds the
+    // replayed history at a size never measured, so it must not save that screen (restore-running-sessions D5) —
+    // or the next replay rewraps it and carries a second separator.
+    await sleep(SNAPSHOT_SETTLE_MS)
+    await app.quitGracefully()
+    await waitPtysGone(marker)
+
+    // ── Third launch: both start again once more.
+    app = await launch({ port, profileDir: profile, rendererUrl, marker, stub })
+    await pollFor({
+      read: () => ptySessionPids(marker),
+      settled: (pids) => pids.length === 2,
+      timeoutMs: 20_000,
+      interval: 150,
+      label: 'both start again on the third launch',
+    })
+    await pollUntil(app.client, SELECT_FOLDER('repo-a'), (value) => value === true, 10_000)
+    await pollUntil(app.client, TAB_LABELS, (value) => value.length === labelsBefore.length, 10_000)
+
+    // Display the shell for the first time since the first launch, by keyboard.
+    await pressCtrlTab(app.client)
+    await pollUntil(app.client, TABS, (value) => value[1]?.selected === true, 8000)
+
+    // 上次的畫面被重播，且與 live 明確區分 —— **順序也要驗**：歷史必須完整，且整段在分隔線之前。
+    const replayed = await pollTerminalText(app.client, (value) => value.includes('MARK_42'), 10_000)
+    const historyEnd = replayed.indexOf(copy('sessions.replaySeparator'))
+    const history = historyEnd === -1 ? '' : replayed.slice(0, historyEnd)
+    check(
+      results,
+      `${label}：重建的 shell session 完整顯示上次的畫面`,
+      history.includes('MARK_42') && history.includes('echo MARK_'),
+      `分隔線之前的內容=${JSON.stringify(history.slice(-120))}`,
+    )
+    check(
+      results,
+      `${label}：重播的歷史與 live 內容明確區分`,
+      historyEnd !== -1,
+      '缺少分隔 —— 使用者會以為那個 shell 還活著',
+    )
+    // Two restarts later, of which one started it hidden: still exactly **one** separator.
+    const separators = replayed.split(copy('sessions.replaySeparator')).length - 1
+    check(
+      results,
+      `${label}：a shell started while hidden keeps its saved screen until displayed (separators do not pile up)`,
+      separators === 1,
+      `separators=${separators} (two means the hidden shell saved its replayed screen)`,
+    )
+
+    // The shell respawned in its **last known directory** (not the folder root), and typing reaches it: the
+    // focus moved to it when it was displayed.
+    const rebornCwdFile = join(out, 'reborn-cwd.txt')
+    await typeLine(app.client, `pwd > ${rebornCwdFile}`)
+    const cwdText = await waitForFile(rebornCwdFile, (value) => value.trim().startsWith('/'), 10_000)
+    check(
+      results,
+      `${label}：重建的 shell session 於最後已知的工作目錄重生`,
+      cwdText.trim() === sub,
+      `期待 ${sub}；實得 ${JSON.stringify(cwdText.trim())}`,
+    )
+
+    // Started hidden at the default size, it takes the terminal's real size when first displayed. The criterion
+    // is "not the spawn default 80", not "more than 80" — the probe window's terminal is 60-odd columns.
+    const shownColsFile = join(out, 'shown-cols.txt')
+    await typeLine(app.client, `stty size | cut -d' ' -f2 > ${shownColsFile}`)
+    const shownCols = Number((await waitForFile(shownColsFile, (value) => /\d/.test(value), 10_000)).trim() || 0)
+    check(
+      results,
+      `${label}：a session started at launch takes the terminal's size when shown`,
+      shownCols > 0 && shownCols !== 80,
+      `pty columns=${shownCols} (80 means nobody told it the terminal's size)`,
+    )
+
+    // ── Hibernate the shell only, and close: on the next launch the claude starts again and the shell stays dormant.
+    await hibernateTab(app.client, 1)
+    await pollFor({
+      read: () => ptySessionPids(marker),
+      settled: (pids) => pids.length === 1,
+      timeoutMs: 10_000,
+      interval: 150,
+      label: 'the hibernated shell ends',
+    })
+    await sleep(800)
+    await app.quitGracefully()
+    await waitPtysGone(marker)
+
+    // ── Fourth launch.
+    app = await launch({ port, profileDir: profile, rendererUrl, marker, stub })
+    await pollUntil(app.client, SELECT_FOLDER('repo-a'), (value) => value === true, 10_000)
+    await pollUntil(app.client, TAB_LABELS, (value) => value.length === labelsBefore.length, 10_000)
+    await pollFor({
+      read: () => ptySessionPids(marker),
+      settled: (pids) => pids.length === 1,
+      timeoutMs: 20_000,
+      interval: 150,
+      label: 'the claude starts again',
+    })
+    // The wait gives a start-everything implementation time to start the shell too.
+    await sleep(2000)
+    const mixed = await app.client.evaluate(TAB_STATUS)
+    check(
+      results,
+      `${label}：sessions that were dormant stay dormant when the application opens`,
+      ptySessionPids(marker).length === 1 &&
+        !mixed[0]?.title?.includes(copy('sessions.statusDormant')) &&
+        Boolean(mixed[1]?.title?.includes(copy('sessions.statusDormant'))),
+      `pty count=${ptySessionPids(marker).length} tooltips=${JSON.stringify(mixed.map((tab) => tab.title))}`,
+    )
+
+    // **休眠不是結束。** 這條驗的是使用者重開 app 之後看到的休眠分頁。
     const danger = await app.client.evaluate(DANGER_COLOR)
-    const status = await app.client.evaluate(TAB_STATUS)
-    const dormantTab = status[1] // 分頁 1（shell）此刻仍休眠 —— 只有被顯示的那個會被喚醒
+    const dormantTab = mixed[1]
     check(
       results,
       `${label}：休眠的 session 不被呈現為「已結束」`,
@@ -3053,15 +3211,37 @@ async function runRestore(label, { port, rendererUrl }) {
       `tooltip=${JSON.stringify(dormantTab?.title)} 狀態燈=${dormantTab?.dot}（danger=${danger}）`,
     )
 
-        // **No session has a pty** (session-hibernation): selecting the item displays its focused session
-    // dormant. The wait gives a wake-on-display implementation time to show itself.
+    // Hibernate the claude too, and close: now every session is dormant at close.
+    await hibernateTab(app.client, 0)
+    await waitPtysGone(marker)
+    await sleep(800)
+    await app.quitGracefully()
+    await waitPtysGone(marker)
+
+    // ── Fifth launch: nothing was running, so nothing starts — and the shell, left dormant across a restart,
+    // is still there and still dormant.
+    app = await launch({ port, profileDir: profile, rendererUrl, marker, stub })
+    await pollUntil(app.client, SELECT_FOLDER('repo-a'), (value) => value === true, 10_000)
+    const labelsAgain = await pollUntil(
+      app.client,
+      TAB_LABELS,
+      (value) => value.length === labelsBefore.length,
+      10_000,
+    )
+    check(
+      results,
+      `${label}：未喚醒的休眠 session 於再次重啟後仍然存在`,
+      JSON.stringify(labelsAgain) === JSON.stringify(labelsBefore),
+      `分頁=${JSON.stringify(labelsAgain)}`,
+    )
+    // The wait gives a wake-on-display (or wake-everything) implementation time to show itself.
     await sleep(2000)
     const awake = ptySessionPids(marker)
     check(
       results,
-      `${label}：opening the application starts no session (selecting the item does not wake its focused session)`,
+      `${label}：opening the application starts no session when every session was dormant at close (selecting the item does not wake its focused session)`,
       awake.length === 0,
-      `pty count=${awake.length} (rebuilt ${labelsAfter.length}) cmdlines=${JSON.stringify(ptyCmdlines(marker))}`,
+      `pty count=${awake.length} (rebuilt ${labelsAgain.length}) cmdlines=${JSON.stringify(ptyCmdlines(marker))}`,
     )
 
     // The Wake button starts it — and only it.
@@ -3079,93 +3259,34 @@ async function runRestore(label, { port, rendererUrl }) {
       wokenByButton.length === 1,
       `pty count=${wokenByButton.length}`,
     )
-
-        // 被喚醒的是 claude —— 它續接**同一個**對話（--resume，沿用原 id）。
-    // The stub logs its start a moment after its pid appears: wait for the second call.
-    const resumeCalls = await pollFor({
+    const wakeCalls = await pollFor({
       read: () => stub.calls(),
-      settled: (calls) => calls.length >= 2,
+      settled: (calls) => calls.length >= 5,
       timeoutMs: 10_000,
       interval: 150,
       label: 'the woken claude logs its start',
     })
     check(
       results,
-      `${label}：重建的 claude session 續接同一個對話（--resume 同一個 id）`,
-      resumeCalls.length === 2 &&
-        conversationOf(resumeCalls[1])?.mode === 'resume' &&
-        conversationOf(resumeCalls[1])?.id === conversation,
-      `argv=${JSON.stringify(resumeCalls)}`,
+      `${label}：the woken claude resumes the same conversation`,
+      conversationOf(wakeCalls[wakeCalls.length - 1])?.mode === 'resume' &&
+        conversationOf(wakeCalls[wakeCalls.length - 1])?.id === conversation,
+      `argv=${JSON.stringify(wakeCalls)}`,
     )
 
-    // claude **不重播快照** —— 它自己會重現對話，重播會讓使用者看到兩份歷史。
-    //
-    // **這是一條否定式斷言**（「畫面上**沒有**分隔線」）—— 讀不到終端時它會靜默通過。
-    // `readTerminalText` 複製不成就丟錯（哨兵內建），這裡再明寫一次「內容非空」：
-    // 「沒有分隔線」只有在「確實讀到了東西」的前提下才有意義。
-    const claudeText = await readTerminalText(app.client)
-    check(
-      results,
-      `${label}：claude session 不重播快照（否則歷史會出現兩份）`,
-      !claudeText.includes(copy('sessions.replaySeparator')) && claudeText.trim() !== '',
-      `終端內容（${claudeText.length} 字元）=${JSON.stringify(claudeText.slice(0, 80))}`,
-    )
-
-    // ── **再關一次、再開一次，全程不碰那個休眠的 shell session。**
-    //
-    // 驗兩件事：(1) 未喚醒的休眠 session 於再次重啟後仍然存在；(2) 它**不會把重播的歷史再序列化
-    // 回自己的快照** —— 那個 xterm 裡此刻已經有「歷史 + 分隔線」了，若關窗時照樣 serialize，
-    // 下次重播就會再追加一條分隔線。使用者一路不碰它，每重開一次就多一條。
-    await app.quitGracefully()
-    await waitPtysGone(marker)
-
-    app = await launch({ port, profileDir: profile, rendererUrl, marker, stub })
-    await pollUntil(app.client, SELECT_FOLDER('repo-a'), (value) => value === true, 10_000)
-    const labelsAgain = await pollUntil(
-      app.client,
-      TAB_LABELS,
-      (value) => value.length === labelsBefore.length,
-      10_000,
-    )
-    check(
-      results,
-      `${label}：未喚醒的休眠 session 於再次重啟後仍然存在`,
-      JSON.stringify(labelsAgain) === JSON.stringify(labelsBefore),
-      `分頁=${JSON.stringify(labelsAgain)}`,
-    )
-
-    /*
-      **「存在」與「仍為休眠」是兩件事，而上一條只驗了前者。**
-
-      分頁標籤相同只證明它沒有消失 —— 一個「重建時把全部 session 都喚醒」的實作在那條斷言下
-      **照樣全綠**，而那正是「開啟應用程式至多啟動一個 session」要防的事。
-
-      這裡在點擊之前先量一次 pty 數：只有被顯示的那一個該有 pty。緊接其後的等待是
-      `pids.length === 2`，若它們早就都醒了，那個等待會**立刻收斂** —— 於是連下一條也一起假綠。
-    */
-        // The wait gives a wake-on-display (or wake-everything) implementation time to show itself.
-    await sleep(2000)
-    const dormantPids = ptySessionPids(marker)
-    check(
-      results,
-      `${label}：after another restart no session has started`,
-      dormantPids.length === 0,
-      `pty count=${dormantPids.length} (tabs ${labelsAgain.length})`,
-    )
-
-    // ── Ctrl+Tab onto the dormant shell: it is displayed, and still has no pty.
+    // ── Ctrl+Tab onto the dormant shell: it is displayed, and still has no pty of its own.
     // By keyboard on purpose: the focus rule is what lets Enter wake it without a click.
     await pressCtrlTab(app.client)
     const wakeFocused = await pollUntil(app.client, WAKE_FOCUSED, (value) => value === true, 8000)
     await sleep(800)
-        const afterSwitch = ptySessionPids(marker)
+    const afterSwitch = ptySessionPids(marker)
     // The switch must have happened, or "no pty" says nothing: the shell's tab is the selected one.
     const switchedTabs = await app.client.evaluate(TABS)
     check(
       results,
       `${label}：displaying a dormant session by keyboard does not start it`,
-      afterSwitch.length === 0 && switchedTabs[1]?.selected === true,
-      `pty count=${afterSwitch.length} selected=${JSON.stringify(switchedTabs.map((tab) => tab.selected))}`,
+      afterSwitch.length === 1 && switchedTabs[1]?.selected === true,
+      `pty count=${afterSwitch.length} (the claude's only) selected=${JSON.stringify(switchedTabs.map((tab) => tab.selected))}`,
     )
     check(
       results,
@@ -3174,14 +3295,12 @@ async function runRestore(label, { port, rendererUrl }) {
       `activeElement=${JSON.stringify(await app.client.evaluate('document.activeElement?.outerHTML?.slice(0, 120)'))}`,
     )
 
-        // Enter wakes it — no click in between.
+    // Enter wakes it — no click in between.
     await pressEnter(app.client)
-    // The pty exists before the renderer hears the wake succeeded; typing in between reaches nothing
-    // (there is no terminal to focus yet). Wait for the tab to show it running.
     await awaitRunning(app.client, 1)
     const woken = await pollFor({
       read: () => ptySessionPids(marker),
-      settled: (pids) => pids.length === 1,
+      settled: (pids) => pids.length === 2,
       timeoutMs: 10_000,
       interval: 150,
       label: 'Enter wakes the displayed dormant session',
@@ -3189,74 +3308,22 @@ async function runRestore(label, { port, rendererUrl }) {
     check(
       results,
       `${label}：Enter wakes the displayed dormant session`,
-      woken.length === 1,
+      woken.length === 2,
       `pty count=${woken.length}`,
     )
 
     // Typing reaches it with no click either: focus moved from the Wake button to the terminal.
-    // The file is written only if the command ran, and its content is where the shell started.
-    const rebornCwdFile = join(out, 'reborn-cwd.txt')
-    await typeLine(app.client, `pwd > ${rebornCwdFile}`)
-    const cwdText = await waitForFile(rebornCwdFile, (value) => value.trim().startsWith('/'), 10_000)
+    const wokenCwdFile = join(out, 'woken-cwd.txt')
+    await typeLine(app.client, `pwd > ${wokenCwdFile}`)
+    const wokenCwd = await waitForFile(wokenCwdFile, (value) => value.trim().startsWith('/'), 10_000)
     check(
       results,
       `${label}：typing after a keyboard wake reaches the session`,
-      cwdText.trim().startsWith('/'),
-      `file content=${JSON.stringify(cwdText.trim())}`,
-    )
-
-    // 上次的畫面被重播，且與 live 明確區分。
-    const replayed = await pollTerminalText(app.client, (value) => value.includes('MARK_42'), 10_000)
-    // **順序也要驗，不能只驗「這些字串都在」。**
-    //
-    // 只斷言 `includes('MARK_42')` 的版本，對一個把畫面弄壞的實作照樣是綠的：`?1049l` 曾把游標
-    // 拉回左上角，於是分隔線蓋掉了歷史的第二行、live 的 prompt 又蓋掉第三行 —— `MARK_42` 仍然
-    // 「存在」（雖然它變成了 `RK_42` 且跑到分隔線後面）。**歷史必須完整，且整段在分隔線之前。**
-    const historyEnd = replayed.indexOf(copy('sessions.replaySeparator'))
-    const history = historyEnd === -1 ? '' : replayed.slice(0, historyEnd)
-    check(
-      results,
-      `${label}：重建的 shell session 完整顯示上次的畫面`,
-      history.includes('MARK_42') && history.includes('echo MARK_'),
-      `分隔線之前的內容=${JSON.stringify(history.slice(-120))}`,
-    )
-    check(
-      results,
-      `${label}：重播的歷史與 live 內容明確區分`,
-      historyEnd !== -1,
-      '缺少分隔 —— 使用者會以為那個 shell 還活著',
-    )
-
-    // 經過兩次「重建但不喚醒」之後，分隔線仍然**恰好一條**。
-    const separators = replayed.split(copy('sessions.replaySeparator')).length - 1
-    check(
-      results,
-      `${label}：休眠期間不把重播的歷史再序列化回快照（分隔線不累積）`,
-      separators === 1,
-      `分隔線數量=${separators}（每重開一次就多一條，表示休眠中的終端把自己的重播內容寫回了快照）`,
-    )
-
-        // shell 於**最後已知的工作目錄**重生（不是 folder 根目錄）。
-    await realClick(app.client, await app.client.evaluate(TERMINAL_RECT))
-    check(
-      results,
-      `${label}：重建的 shell session 於最後已知的工作目錄重生`,
-      cwdText.trim() === sub,
-      `期待 ${sub}；實得 ${JSON.stringify(cwdText.trim())}`,
+      wokenCwd.trim() === sub,
+      `file content=${JSON.stringify(wokenCwd.trim())} (expected ${sub})`,
     )
 
     // 喚醒之後，pty 最終要拿到終端真正的尺寸（而不是 spawn 時的 80 欄）。
-    //
-    // **這條擋的是「完全沒有人告訴 pty 尺寸」的回歸，它證明不了那個競態被修好了。**
-    // dogfooding 抓到的 bug 是：`active` 的 effect 先 `fit()` 成功（量到 63）→ 送出 resize →
-    // **pty 還不存在，被丟掉** → 而 `lastCols` 已記成 63，之後 ResizeObserver 的 `fit()` 一律回
-    // `null`，於是 pty 一輩子停在 80 欄。但**走不走到這條路，取決於 xterm 何時量到字元尺寸** ——
-    // 探針一直走另一條（`fit()` 當下回 null → ResizeObserver 事後補救成功）。**對照組證實：把修正
-    // 拿掉，這條斷言照樣是綠的。** 真正的防護是 `TerminalView` 裡「pty 一誕生就告訴它當下尺寸」
-    // 的那個 effect，它由 code review 與 design 承擔（比照 OSC 8 linkHandler 的先例）。
-    //
-    // 判準是「**不等於 spawn 的預設值 80**」，不是「大於 80」—— 探針視窗裡終端的真實寬度是 60 幾欄。
-    // 判準走檔案（回顯與執行的區別由檔案的存在與否承擔，不再倚賴「回顯裡不含答案」的巧思）。
     const wakeColsFile = join(out, 'wake-cols.txt')
     await typeLine(app.client, `stty size | cut -d' ' -f2 > ${wakeColsFile}`)
     const colsText = await waitForFile(wakeColsFile, (value) => /\d/.test(value), 10_000)
@@ -3390,11 +3457,11 @@ async function runHealAndCrash(label, { port, rendererUrl }) {
     await app.quitGracefully()
     await waitPtysGone(marker)
 
-        // ── 重新開啟：--resume 會失敗（沒有對話可續）→ 必須自癒成一個全新的對話
+        // ── 重新開啟：--resume 會失敗（沒有對話可續）→ 必須自癒成一個全新的對話。
+    // It was running when the application closed, so it starts again on its own (restore-running-sessions).
     app = await launch({ port, profileDir: profile, rendererUrl, marker, stub })
     await pollUntil(app.client, SELECT_FOLDER('repo-a'), (value) => value === true, 10_000)
     await pollUntil(app.client, TAB_LABELS, (value) => value.length === 1, 10_000)
-    await clickWake(app.client)
 
 
     const healed = await pollFor({
@@ -3472,8 +3539,14 @@ async function runHealAndCrash(label, { port, rendererUrl }) {
 
         app = await launch({ port, profileDir: profile, rendererUrl, marker, stub })
     await pollUntil(app.client, SELECT_FOLDER('repo-a'), (value) => value === true, 10_000)
-    await clickWake(app.client)
-    await waitForPtyCount(marker, 1)
+    // Started again on its own: it was running when the application closed.
+    await pollFor({
+      read: () => ptySessionPids(marker),
+      settled: (pids) => pids.length === 1,
+      timeoutMs: 20_000,
+      interval: 150,
+      label: 'the tampered session starts again',
+    })
     await sleep(800)
 
     const afterTamper = stub.calls().slice(3)
@@ -3516,6 +3589,20 @@ async function runHealAndCrash(label, { port, rendererUrl }) {
     app = await launch({ port, profileDir: profile, rendererUrl, marker, stub })
     await pollUntil(app.client, SELECT_FOLDER('repo-a'), (value) => value === true, 10_000)
     await pollUntil(app.client, TAB_LABELS, (value) => value.length === 2, 10_000)
+    // Killed with both running: the record was written at their spawns, not at a quit, so both start again.
+    const afterCrash = await pollFor({
+      read: () => ptySessionPids(marker),
+      settled: (pids) => pids.length === 2,
+      timeoutMs: 20_000,
+      interval: 150,
+      label: 'the sessions running when the application was killed start again',
+    })
+    check(
+      results,
+      `${label}：a session that ended abnormally comes back running`,
+      afterCrash.length === 2,
+      `pty count=${afterCrash.length} cmdlines=${JSON.stringify(ptyCmdlines(marker))}`,
+    )
     await realClick(app.client, await app.client.evaluate(TAB_RECT(1)))
 
     const crashText = await pollTerminalText(app.client, (value) => value.includes('CRASH_64'), 10_000)
@@ -3578,8 +3665,9 @@ async function runAltScreen(label, { port, rendererUrl }) {
     app = await launch({ port, profileDir: profile, rendererUrl, marker, stub })
     await pollUntil(app.client, SELECT_FOLDER('repo-a'), (value) => value === true, 10_000)
         await pollUntil(app.client, TABS, (value) => value.length === 1, 10_000)
-    await clickWake(app.client)
-    await waitForPtyCount(marker, 1)
+    // It was running when the application closed, so it starts again on its own (restore-running-sessions).
+    await waitForPtyCount(marker, 1, 20_000)
+    await awaitRunning(app.client, 0)
     await realClick(app.client, await app.client.evaluate(TERMINAL_RECT))
 
     // 回顯不含答案 —— 只有真的執行了才會出現 `ALT_OK_81`。
@@ -4099,32 +4187,31 @@ async function runGlobalSession(label, { port, rendererUrl }) {
     await pollUntil(app.client, `!!document.querySelector('aside[aria-label="${copy('rail.label')}"]')`, (v) => v === true, 10_000)
 
     /*
-      **冷啟動：不選中全域項目、也不喚醒它的 session。**
-
-      少了前者，重建的 session 會**立刻被顯示**，而「顯示即喚醒」會讓開 app 就起一個 pty ——
-      那正是 `session-restore` 的「開 app 只起一個 claude」要防的事，只是換成全域項目恆存所以
-      恆有東西可喚醒。分頁列為空是「沒有選中全域項目」的憑據（它明明有一個 session）。
+      **冷啟動不選中全域項目** —— 分頁列為空是「沒有選中全域項目」的憑據（它明明有一個 session）。
+      **But the global shell was running when the application closed, so it starts again on its own**
+      (restore-running-sessions), without the item being selected.
     */
-    await sleep(1500)
+    const startedGlobal = await pollFor({
+      read: () => ptySessionPids(marker),
+      settled: (pids) => pids.length === 1,
+      timeoutMs: 20_000,
+      interval: 150,
+      label: 'the running global session starts again at launch',
+    })
     const coldTabs = await app.client.evaluate(TAB_LABELS)
     check(results, `${label}：冷啟動不預設選中全域項目（分頁列為空，儘管它有一個 session）`,
       Array.isArray(coldTabs) && coldTabs.length === 0, JSON.stringify(coldTabs))
-    check(results, `${label}：冷啟動不因全域項目恆存而喚醒它的 session（沒有任何 pty）`,
-      ptyPids(marker).length === 0, `pty 數 = ${ptyPids(marker).length}`)
+    check(results, `${label}：a running global session starts again when the application opens (no item selected)`,
+      startedGlobal.length === 1 && Array.isArray(coldTabs) && coldTabs.length === 0,
+      `pty count=${startedGlobal.length} tabs=${JSON.stringify(coldTabs)}`)
 
     await realClick(app.client, await app.client.evaluate(GLOBAL_ROW_RECT))
     const rebuilt = await pollUntil(app.client, TAB_LABELS, (v) => v.length === 1, 8000)
         check(results, `${label}：關掉 app 再開，全域 session 原樣重建於全域項目之下`,
       Array.isArray(rebuilt) && rebuilt.length === 1, JSON.stringify(rebuilt))
 
-    // Selecting the global item displays its session dormant — it does not start it.
-    await sleep(1500)
-    check(results, `${label}：selecting the global item does not start its sessions`,
-      ptyPids(marker).length === 0, `pty count = ${ptyPids(marker).length}`)
-
-    // Wake ⇒ the pty is born in the **last known** directory, not the home directory.
-    await clickWake(app.client)
-    await waitForPtyCount(marker, 1, 15_000)
+    // Started again ⇒ the pty was born in the **last known** directory, not the home directory.
+    await awaitRunning(app.client, 0)
     await realClick(app.client, await app.client.evaluate(TERMINAL_RECT))
     const afterFile = join(stub.home, 'global-after-restart.txt')
     await typeLine(app.client, `pwd > ${afterFile}`)
@@ -4135,6 +4222,24 @@ async function runGlobalSession(label, { port, rendererUrl }) {
     )
     check(results, `${label}：全域 shell session 於最後的目錄重生（家目錄之外，未被夾制回去）`,
       respawned === out, `${respawned} vs ${out}（家目錄是 ${stub.home}）`)
+
+    // ── Hibernate it and close: dormant at close, it neither starts at launch nor when its item is selected.
+    await hibernateTab(app.client, 0)
+    await waitPtysGone(marker)
+    await sleep(800)
+    await app.quitGracefully()
+    await waitPtysGone(marker)
+    app = await launch({ port, profileDir: profile, rendererUrl, marker, stub })
+    await pollUntil(app.client, `!!document.querySelector('aside[aria-label="${copy('rail.label')}"]')`, (v) => v === true, 10_000)
+    await sleep(1500)
+    check(results, `${label}：冷啟動不因全域項目恆存而喚醒它的 session（沒有任何 pty）`,
+      ptyPids(marker).length === 0, `pty 數 = ${ptyPids(marker).length}`)
+    await realClick(app.client, await app.client.evaluate(GLOBAL_ROW_RECT))
+    await pollUntil(app.client, TAB_LABELS, (v) => v.length === 1, 8000)
+    // Selecting the global item displays its session dormant — it does not start it.
+    await sleep(1500)
+    check(results, `${label}：selecting the global item does not start its sessions`,
+      ptyPids(marker).length === 0, `pty count = ${ptyPids(marker).length}`)
   } finally {
     if (app) await app.destroy()
     rmSync(profile, { recursive: true, force: true })
@@ -4937,7 +5042,8 @@ async function runCloseConfirm(label, { port, rendererUrl }) {
       `responsive after SIGTERM=${upAfterSignal} after cancel=${upAfterCancel} prompts=${askedAgain.length} (expected ${promptsBefore + 2})`,
     )
 
-    // ── Confirm: the app exits by itself, no pty remains, the sessions come back dormant.
+    // ── Confirm: the app exits by itself, no pty remains, and the sessions come back — started again with new
+    // processes, since they were running when it closed (restore-running-sessions).
     close.answer('quit')
     close.close()
     const exited = await app.waitForExit(10_000)
@@ -4951,14 +5057,28 @@ async function runCloseConfirm(label, { port, rendererUrl }) {
     const statuses = await pollUntil(
       app.client,
       TAB_STATUS,
-      (value) => value.length === 2 && value.every((tab) => tab.title.includes(copy('sessions.statusDormant'))),
-      10_000,
+      (value) => value.length === 2 && value.every((tab) => !tab.title.includes(copy('sessions.statusDormant'))),
+      20_000,
     )
+    const restarted = ptySessionPids(marker)
     check(
       results,
-      `${label}: confirming closes the window and ends the sessions (exits by itself, no pty, dormant on relaunch)`,
-      exited && ptysGone && statuses.length === 2 && statuses.every((tab) => tab.title.includes(copy('sessions.statusDormant'))),
-      `exited=${exited} ptysGone=${ptysGone} relaunch=${JSON.stringify(statuses.map((tab) => tab.title))}`,
+      `${label}: confirming closes the window and ends the sessions (exits by itself, no pty, started again on relaunch)`,
+      exited && ptysGone && statuses.length === 2 && restarted.length === 2 &&
+        statuses.every((tab) => !tab.title.includes(copy('sessions.statusDormant'))),
+      `exited=${exited} ptysGone=${ptysGone} relaunch=${JSON.stringify(statuses.map((tab) => tab.title))} ptys=${restarted.length}`,
+    )
+
+    // Hibernate both, so that every session is dormant for the next step.
+    await hibernateTab(app.client, 0)
+    await waitForPtyCount(marker, 1)
+    await hibernateTab(app.client, 1)
+    await waitPtysGone(marker)
+    await pollUntil(
+      app.client,
+      TAB_STATUS,
+      (value) => value.length === 2 && value.every((tab) => tab.title.includes(copy('sessions.statusDormant'))),
+      10_000,
     )
 
     // ── Only dormant sessions: no prompt, the window closes.
@@ -5272,6 +5392,311 @@ async function runSettingsApply(label, { port, rendererUrl }) {
   }
 }
 
+// ── Starting again at launch (restore-running-sessions) ─────────────────────────────────────────
+
+/** Seed `sessions.json` directly: `[folderId, spawnTarget, running]` per session, in order. Returns their ids. */
+function seedSessions(profile, entries) {
+  const ids = entries.map(() => randomUUID())
+  writeFileSync(
+    join(profile, 'sessions.json'),
+    JSON.stringify({
+      version: 1,
+      sessions: entries.map(([folderId, spawnTarget, running], index) => ({
+        id: ids[index],
+        folderId,
+        spawnTarget,
+        ordinal: index + 1,
+        ...(running ? { running: true } : {}),
+      })),
+    }),
+  )
+  return ids
+}
+
+/**
+ * Hold every start back for a while: the user's environment is read once at launch with a login shell, and every
+ * spawn waits for that read (`whenUserEnvReady`). A `sleep` in the stand-in HOME's `.profile` makes the read slow
+ * — past its 5 s timeout, which shells do not care about (only agents are refused then). That is the window in
+ * which a session that was running is displayed but still being started.
+ */
+function slowEnvironment(stub) {
+  writeFileSync(join(stub.home, '.profile'), 'sleep 8\n')
+}
+
+/** The text of the dormant card the stage shows on top, or null. */
+const DORMANT_CARD_TEXT = `(() => {
+  const term = document.querySelector('section[aria-label="${copy('stage.terminal')}"]')
+  if (!term) return null
+  const box = term.getBoundingClientRect()
+  const top = document.elementFromPoint(Math.round(box.left + box.width / 2), Math.round(box.top + box.height / 2))
+  return (top?.closest('.z-10') ?? top)?.innerText ?? null
+})()`
+
+/** Where the keyboard focus is: in the stage's terminal, in the side panel, on a Wake button, or elsewhere. */
+const FOCUS_PLACE = `(() => {
+  const active = document.activeElement
+  if (!active || active === document.body) return 'nowhere'
+  if (active.closest('section[aria-label="${copy('openspec.sidePanel')}"]')) return 'side panel'
+  if (active.tagName === 'BUTTON' && active.textContent === ${JSON.stringify(copy('sessions.wake'))}) return 'wake'
+  if (active.closest('section[aria-label="${copy('stage.terminal')}"] .xterm')) return 'terminal'
+  return active.tagName + ':' + (active.getAttribute('aria-label') ?? '')
+})()`
+
+async function runLaunchStart(label, { port, rendererUrl }) {
+  console.log(`\n── ${label}（starting again at launch）──`)
+
+  const marker = `spek-launch-${process.pid}-${Date.now()}`
+  const { repo } = makeFixture()
+  let app = null
+  const relaunch = async (profile, stub) => {
+    if (app) await app.destroy()
+    for (const pid of ptyPids(marker)) {
+      try {
+        process.kill(pid, 'SIGKILL')
+      } catch {
+        // 已經走了
+      }
+    }
+    app = await launch({ port, profileDir: profile, rendererUrl, marker, stub })
+    await pollUntil(app.client, SELECT_FOLDER('repo-a'), (value) => value === true, 10_000)
+  }
+  try {
+    // ── (1) Displayed while being started, its Wake button holding the focus: once it starts, focus is on its input.
+    // A second session without the record stays dormant — the first launch after upgrading starts nothing.
+    {
+      const profile = seedProfile([['f1', repo]])
+      const stub = makeStubClaude()
+      slowEnvironment(stub)
+      seedSessions(profile, [['f1', 'shell', true], ['f1', 'shell', false]])
+      await relaunch(profile, stub)
+      const before = await pollUntil(app.client, FOCUS_PLACE, (value) => value === 'wake', 8000)
+      const dormantThen = ptySessionPids(marker).length
+      await awaitRunning(app.client, 0)
+      const after = await pollUntil(app.client, FOCUS_PLACE, (value) => value === 'terminal', 4000)
+      check(
+        results,
+        `${label}：a displayed session whose wake action has focus gets its input focused when it starts again`,
+        before === 'wake' && dormantThen === 0 && after === 'terminal',
+        `focus before=${before} (ptys then ${dormantThen}) after=${after}`,
+      )
+      // The wait gives a start-everything implementation time to start the second one too.
+      await sleep(2000)
+      check(
+        results,
+        `${label}：a session recorded before the running record existed stays dormant`,
+        ptySessionPids(marker).length === 1,
+        `pty count=${ptySessionPids(marker).length}`,
+      )
+    }
+
+    // ── (2) The user turns to it and moves the focus into the side panel while it is being started: the start does
+    // not take the focus back. Clicking its tab is what calls the provider's `focus()`.
+    {
+      const profile = seedProfile([['f1', repo]])
+      const stub = makeStubClaude()
+      slowEnvironment(stub)
+      seedSessions(profile, [['f1', 'shell', true]])
+      await relaunch(profile, stub)
+      await pollUntil(app.client, FOCUS_PLACE, (value) => value === 'wake', 8000)
+      await realClick(app.client, await app.client.evaluate(TAB_RECT(0)))
+      await app.client.evaluate(`document.querySelector('section[aria-label="${copy('openspec.sidePanel')}"]')?.focus()`)
+      const movedWhileDormant = await app.client.evaluate(FOCUS_PLACE)
+      const dormantThen = ptySessionPids(marker).length
+      await awaitRunning(app.client, 0)
+      // Give a focusing arrival its commit, then read.
+      await sleep(600)
+      const after = await app.client.evaluate(FOCUS_PLACE)
+      check(
+        results,
+        `${label}：starting again does not take focus the user moved while it was starting`,
+        movedWhileDormant === 'side panel' && dormantThen === 0 && after === 'side panel',
+        `focus moved to=${movedWhileDormant} (ptys then ${dormantThen}) after the start=${after}`,
+      )
+    }
+
+    // ── (3) The user wakes it while it is waiting for its turn: an explicit wake — one process, focus on its input.
+    {
+      const profile = seedProfile([['f1', repo]])
+      const stub = makeStubClaude()
+      slowEnvironment(stub)
+      seedSessions(profile, [['f1', 'shell', true]])
+      await relaunch(profile, stub)
+      await pollUntil(app.client, FOCUS_PLACE, (value) => value === 'wake', 8000)
+      const dormantThen = ptySessionPids(marker).length
+      await pressEnter(app.client)
+      await awaitRunning(app.client, 0)
+      const after = await pollUntil(app.client, FOCUS_PLACE, (value) => value === 'terminal', 4000)
+      await sleep(1500)
+      const ptys = ptySessionPids(marker).length
+      check(
+        results,
+        `${label}：waking a session that is waiting for its turn is an explicit wake (started once, input focused)`,
+        dormantThen === 0 && ptys === 1 && after === 'terminal',
+        `ptys before=${dormantThen} after=${ptys} focus=${after}`,
+      )
+    }
+
+    // ── (4) The agent cannot start at all: the first one is the canary; the others stay dormant and say why.
+    {
+      const profile = seedProfile([['f1', repo]])
+      const stub = makeStubClaude({ exitsAtOnce: true })
+      seedSessions(profile, [['f1', 'claude', true], ['f1', 'claude', true], ['f1', 'claude', true]])
+      await relaunch(profile, stub)
+      await pollUntil(app.client, TABS, (value) => value.length === 3, 10_000)
+      // Past the canary window (7 s from the first start), with a margin: a walk without a canary has long started
+      // the other two by then.
+      const calls = await pollFor({
+        read: () => stub.calls(),
+        settled: (value) => value.length > 1,
+        timeoutMs: 11_000,
+        interval: 250,
+        label: 'only the canary starts (this wait should run out)',
+      })
+      await pressCtrlTab(app.client)
+      const reason = await pollUntil(
+        app.client,
+        DORMANT_CARD_TEXT,
+        (value) => Boolean(value?.includes(copy('sessions.notStartedAfterCanary'))),
+        6000,
+      )
+      check(
+        results,
+        `${label}：the first agent's failure keeps the others dormant and says why`,
+        calls.length === 1 && Boolean(reason?.includes(copy('sessions.notStartedAfterCanary'))),
+        `agent starts=${calls.length} (${JSON.stringify(calls)}) second session's screen=${JSON.stringify(reason)}`,
+      )
+    }
+
+    // ── (5) The user hibernates the first agent right after it starts: not a systemic failure — the others start.
+    {
+      const profile = seedProfile([['f1', repo]])
+      const stub = makeStubClaude()
+      seedSessions(profile, [['f1', 'claude', true], ['f1', 'claude', true]])
+      await relaunch(profile, stub)
+      await pollFor({
+        read: () => ptySessionPids(marker),
+        settled: (pids) => pids.length === 1,
+        timeoutMs: 15_000,
+        interval: 150,
+        label: 'the first agent starts',
+      })
+      await awaitRunning(app.client, 0)
+      await hibernateTab(app.client, 0)
+      const calls = await pollFor({
+        read: () => stub.calls(),
+        settled: (value) => value.length === 2,
+        timeoutMs: 15_000,
+        interval: 250,
+        label: 'the second agent starts after the first is hibernated',
+      })
+      const status = await app.client.evaluate(TAB_STATUS)
+      check(
+        results,
+        `${label}：a first agent the user hibernates does not stop the others`,
+        calls.length === 2 && Boolean(status[0]?.title?.includes(copy('sessions.statusDormant'))),
+        `agent starts=${calls.length} tooltips=${JSON.stringify(status.map((tab) => tab.title))}`,
+      )
+    }
+
+    // ── (6) The user's environment cannot be read (the login shell fails): no agent starts, each says why; a shell
+    // in the same workspace still starts.
+    {
+      const profile = seedProfile([['f1', repo]])
+      const stub = makeStubClaude()
+      writeFileSync(join(stub.home, '.profile'), 'exit 3\n')
+      seedSessions(profile, [['f1', 'claude', true], ['f1', 'claude', true]])
+      await relaunch(profile, stub)
+      await pollUntil(app.client, TABS, (value) => value.length === 2, 10_000)
+      const first = await pollUntil(
+        app.client,
+        DORMANT_CARD_TEXT,
+        (value) => Boolean(value?.includes(copy('terminalError.userEnvUnavailable'))),
+        15_000,
+      )
+      await pressCtrlTab(app.client)
+      const second = await pollUntil(
+        app.client,
+        DORMANT_CARD_TEXT,
+        (value) => Boolean(value?.includes(copy('terminalError.userEnvUnavailable'))),
+        6000,
+      )
+      check(
+        results,
+        `${label}：without the user's environment no agent is started, and each says why`,
+        stub.calls().length === 0 &&
+          Boolean(first?.includes(copy('terminalError.userEnvUnavailable'))) &&
+          Boolean(second?.includes(copy('terminalError.userEnvUnavailable'))),
+        `agent starts=${stub.calls().length} first=${JSON.stringify(first)} second=${JSON.stringify(second)}`,
+      )
+    }
+
+    // ── (8) A session that was running whose directory is gone: it cannot be started again, so it stays dormant and
+    // says why — without anyone pressing Wake.
+    {
+      const gone = makeFixture()
+      const profile = seedProfile([['f1', gone.repo]])
+      const stub = makeStubClaude()
+      seedSessions(profile, [['f1', 'shell', true]])
+      rmSync(gone.repo, { recursive: true, force: true })
+      await relaunch(profile, stub)
+      const card = await pollUntil(
+        app.client,
+        DORMANT_CARD_TEXT,
+        (value) => Boolean(value?.includes(prefixOf('sessions.wakeFailed'))),
+        12_000,
+      )
+      check(
+        results,
+        `${label}：a session that fails to start again stays dormant and says why (no Wake pressed)`,
+        Boolean(card?.includes(prefixOf('sessions.wakeFailed'))) && ptyPids(marker).length === 0,
+        `screen=${JSON.stringify(card)} ptys=${ptyPids(marker).length}`,
+      )
+    }
+
+    // ── (7) A renderer reload: the session that was running starts again, the hibernated one does not.
+    {
+      const profile = seedProfile([['f1', repo]])
+      const stub = makeStubClaude()
+      await relaunch(profile, stub)
+      await openSessionViaMenu(app.client, copy('sessions.spawnShell'))
+      await pollUntil(app.client, TABS, (value) => value.length === 1, 8000)
+      await openSessionViaMenu(app.client, copy('sessions.spawnShell'))
+      await pollUntil(app.client, TABS, (value) => value.length === 2, 8000)
+      await waitForPtyCount(marker, 2)
+      await hibernateTab(app.client, 1)
+      await waitForPtyCount(marker, 1)
+      const runningBefore = ptySessionPids(marker)
+      // The renderer's list is persisted on a debounce: let the hibernation reach it before reloading.
+      await sleep(1200)
+      await app.client.send('Page.reload', {})
+      await awaitMounted(app.client)
+      const after = await pollFor({
+        read: () => ptySessionPids(marker),
+        settled: (pids) => pids.length === 1 && !runningBefore.includes(pids[0]),
+        timeoutMs: 15_000,
+        interval: 150,
+        label: 'the running session starts again after the reload',
+      })
+      await sleep(1500)
+      check(
+        results,
+        `${label}：sessions that were running start again after a renderer reload (and only those)`,
+        ptySessionPids(marker).length === 1 && after.length === 1 && !runningBefore.includes(after[0]),
+        `before=${JSON.stringify(runningBefore)} after=${JSON.stringify(ptySessionPids(marker))}`,
+      )
+    }
+  } finally {
+    if (app) await app.destroy()
+    for (const pid of ptyPids(marker)) {
+      try {
+        process.kill(pid, 'SIGKILL')
+      } catch {
+        // 已經走了
+      }
+    }
+  }
+}
+
 /** 五次冷啟動的兩段給更長的時限；dev 模式的冷啟動是 30 秒級（unbundled ESM + Monaco）。 */
 const LONG = 14 * 60 * 1000
 
@@ -5287,6 +5712,7 @@ const SECTIONS = [
   { name: 'runAltScreen', run: runAltScreen, onTimeout: killStrays },
     { name: 'runDormantHint', run: runDormantHint, onTimeout: killStrays },
   { name: 'runHibernate', run: runHibernate, timeoutMs: LONG, onTimeout: killStrays },
+  { name: 'runLaunchStart', run: runLaunchStart, timeoutMs: LONG, onTimeout: killStrays },
   { name: 'runAutoHibernateShell', run: runAutoHibernateShell, timeoutMs: LONG, onTimeout: killStrays },
   { name: 'runAgentStatus', run: runAgentStatus, onTimeout: killStrays },
   { name: 'runContinuation', run: runContinuation, onTimeout: killStrays },

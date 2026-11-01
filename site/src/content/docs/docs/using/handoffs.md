@@ -114,8 +114,8 @@ by the same parent can coordinate. spekterm keeps each agent's list of relatives
 siblings, and its children together with the sessions they handed off, at every depth. Claude Code delivers
 the messages.
 
-A hibernated or dormant session has no process and cannot receive messages until you wake it. Agents are
-told this, and told not to wake sessions themselves.
+A hibernated or dormant session has no process and cannot receive messages until you wake it, or, after a
+restart, until spekterm starts it again. Agents are told this, and told not to wake sessions themselves.
 
 Giving each session a fixed name has a side effect: Claude Code shows that name as the terminal title. To
 see a task name on the tab instead, rename the tab. Your name takes priority.

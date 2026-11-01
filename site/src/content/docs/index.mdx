@@ -81,8 +81,9 @@ updates as the agent writes to disk.
 
 - **Real terminals** — `claude` and your login shell in real ptys, several per repository, git
   worktrees included.
-- **They survive a restart** — `claude` sessions resume their conversation; shells come back with the
-  previous screen replayed, in their last directory (on macOS, in their folder).
+- **They survive a restart** — the ones that were running start again on their own: `claude` sessions resume
+  their conversation; shells come back with the previous screen replayed, in their last directory (on macOS,
+  in their folder).
 - **See who needs you** — a dot on every agent session says whether it is working, waiting for you, or
   asking for a choice, and a count above the terminal covers the whole workspace.
 - **Hibernate what you are not using** — by hand, or automatically after a day idle. A hibernated session

@@ -68,11 +68,11 @@ When you close spekterm with sessions still running, it asks first and lists the
 processes: a build or dev server running in a shell stops. On macOS, closing the window ends the sessions
 the same way but leaves spekterm running in the Dock; click its Dock icon to open the window again.
 
-The next time you open spekterm, your sessions are back as tabs but **dormant**: no process is running
-until you press **Wake** (or `Enter` while the session has focus). A `claude` session resumes the same
-conversation; a shell starts again in its last directory (on macOS, in its folder), with the previous
-screen shown above a line that reads **end of previous content**. Details are in
-[Terminals and sessions](/docs/using/terminals-and-sessions/).
+The next time you open spekterm, your sessions are back as tabs, and the ones that were running start again
+on their own. A `claude` session resumes the same conversation; a shell starts again in its last directory
+(on macOS, in its folder), with the previous screen shown above a line that reads **end of previous
+content**. Sessions you hibernated stay **dormant** — no process — until you press **Wake** (or `Enter`
+while the session has focus). Details are in [Terminals and sessions](/docs/using/terminals-and-sessions/).
 
 ## Next steps
 

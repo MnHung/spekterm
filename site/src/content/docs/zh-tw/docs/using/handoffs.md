@@ -64,7 +64,7 @@ agent 會寫一份帶有 **重複排程** 的交接。排程用 cron 格式，�
 
 spekterm 裡的每個 `claude` session 都以固定的名字執行，名字由它的 rail 項目加上一段短碼組成，例如 `web-app-3f9a`。這個名字跨重啟、跨喚醒都不變。agent 透過這些名字使用 Claude Code 自己的本機 session 訊息功能：子 session 可以告訴母 session 它做完了，同一個母 session 交接出去的兄弟 session 也能互相協調。spekterm 會隨時更新每個 agent 的親屬清單：它的母 session、兄弟 session，以及子 session 和子 session 再交接出去的 session（一路往下）。訊息本身由 Claude Code 傳遞。
 
-休眠中的 session 沒有行程，在你喚醒它之前收不到訊息。agent 會被告知這一點，也會被告知不能自己去喚醒 session。
+休眠中的 session 沒有行程，在你喚醒它（或重啟後 spekterm 重新啟動它）之前收不到訊息。agent 會被告知這一點，也會被告知不能自己去喚醒 session。
 
 給每個 session 固定的名字有一個副作用：Claude Code 會把這個名字顯示成終端機標題。想在分頁上看到任務名稱，就替分頁重新命名，你取的名字會優先。
 

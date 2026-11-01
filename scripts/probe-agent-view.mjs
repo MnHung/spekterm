@@ -391,6 +391,26 @@ async function runViewAndSend(_mode, _config, context) {
  * `session.view` 與 session 本身來自同一次 `restore()`，是原子的。
  */
 async function runRebuiltWidth(_mode, _config, context) {
+  const readJson = (name) => {
+    try {
+      return JSON.parse(readFileSync(join(context.profile, name), 'utf8'))
+    } catch {
+      return null
+    }
+  }
+  // Hibernate the agent session first: a session running when the application closes starts again on its own
+  // (restore-running-sessions), and this section is about waking a dormant one straight into the conversation view.
+  const agentId = readJson('sessions.json')?.sessions?.find((entry) => entry.spawnTarget === 'claude')?.id ?? null
+  const hibernated = agentId
+    ? await context.app.client.evaluate(`window.workspace.terminal.hibernate(${JSON.stringify(agentId)})`)
+    : null
+  await pollFor({
+    read: () => readJson('sessions.json')?.sessions?.find((entry) => entry.id === agentId)?.running,
+    settled: (running) => running === undefined,
+    timeoutMs: 10_000,
+    label: 'the agent session is recorded as not running',
+  })
+  check(results, 'precondition: the agent session is hibernated before the restart', hibernated?.ok === true, JSON.stringify({ agentId, hibernated }))
   await context.app.close()
   context.app = null
 

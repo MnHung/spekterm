@@ -574,6 +574,30 @@ watched until it was waiting, then left and given work, reads a stale `ready` an
 Consequence: events are now always drained, so a transcript relocation could be consumed with no view
 open — `agent-wait` keeps the last reported `transcriptPath` and the conversation view starts from it.
 
+## Starting again at launch (`restore-running-sessions`)
+
+- **"Was it running?" is recorded at spawn and at hibernation, never at quit.** A quit handler never runs on a
+  crash, and the renderer's list is debounced and lags a hibernation. The main process sets `running` when a pty
+  spawns and clears it **when the hibernate IPC is accepted** — the hibernated pty leaves the service at once, so
+  a quit right after does not wait for its exit, and a clear left to the exit can be lost. `disposed` never
+  touches it: that is how quit, reload and window close end ptys.
+- **`releaseRenderer` flushes before it drops provisional entries.** A session created in the last ~500 ms
+  before a close has its main-owned fields only in its provisional entry; dropped first, it came back dormant and
+  without its lineage (`src/main/session-release.ts`).
+- **A shell started while hidden must not save its screen.** Its xterm holds the replayed history at a size never
+  measured, and the old guard ("only a session with a pty snapshots") no longer stops it once it runs. Saving it
+  rewraps the history and adds a replay separator at every restart. The guard is "replayed and not measured
+  since" (`unmeasuredReplay` in `TerminalView`).
+- **"Focus was on its Wake button" cannot be observed when the session arrives.** Removing a focused element
+  blurs it synchronously (measured in this Electron), and the Wake button goes in the very commit that makes the
+  session running — so the arrival sees `<body>`. The launch arrival therefore focuses only where focus is
+  nowhere (`focusIsNowhere`), and its mark is not cleared by `focus()`, unlike a device's quiet mark.
+- **One systemic failure would otherwise remove every agent session.** An agent that cannot start exits at once,
+  the resume heal swaps its conversation id, the fresh one exits too, and the session is removed as an ending. An
+  explicit wake does that to one session in view; an automatic start would do it to all, on every slow boot. So
+  no agent starts when the user's environment failed to resolve (failed, not skipped), and the first agent is a
+  canary watched for two heal windows (`launch-start.ts`).
+
 ## Theme and zoom (`ui-appearance`)
 
 Four measured facts behind the theme and the interface zoom (Electron 43.5.0). Each fails silently when forgotten.

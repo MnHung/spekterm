@@ -415,8 +415,8 @@ const workspaceApi = {
      * **只收 sessionId** —— 續接用的對話識別碼與最後的工作目錄都在主行程手上，renderer 連
      * 這兩個詞彙都沒有（session-persistence 的「持久化不得把路徑詞彙交給 renderer」）。
      */
-    wake: (sessionId: string): Promise<FsResult<{ sessionId: string }>> =>
-      ipcRenderer.invoke('workspace:terminal:wake', sessionId),
+    wake: (sessionId: string, automatic?: boolean): Promise<FsResult<{ sessionId: string }>> =>
+      ipcRenderer.invoke('workspace:terminal:wake', sessionId, automatic === true),
     /** 啟動時取回要重建的 session（含各自的終端畫面快照）。 */
     restore: (): Promise<RestoredSession[]> => ipcRenderer.invoke('workspace:terminal:restore'),
     /** 推送 session 清單以供持久化。payload **不含任何路徑，也不含對話識別碼**。 */
