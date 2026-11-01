@@ -82,7 +82,7 @@
 - [x] 4.6 `probe:intake` / agent-session-control: "A self-close left unread at quit does not act after a restart" —
   after relaunch S is present, running, and no close is offered; the introduction sentence of 3.3 where the probe
   reads the introduction
-- [ ] 4.7 `scripts/probe-package-mac.mjs` (~699, `shells.length === 0` after reopening the window): assert the
+- [x] 4.7 `scripts/probe-package-mac.mjs` (~699, `shells.length === 0` after reopening the window): assert the
   running session started again; rename its check label; run `probe:package:mac` on the Mac
 - [x] 4.8 `scripts/scenario-coverage.test.mjs`: register `restore-running-sessions` in `COVERED_CHANGES`; edit in
   place the existing rows of the rewritten scenarios (`Opening the application starts no session`,

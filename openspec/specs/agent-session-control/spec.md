@@ -292,8 +292,8 @@ While a close or hibernate command waits for its target's turn to end:
 - when the target's process ends for any other reason (the user hibernates or closes it, or it exits), the waiting
   command SHALL be dropped without being carried out and without a notice;
 - a waiting command SHALL NOT survive the application quitting. **This gap SHALL be recorded, not claimed absent**:
-  after a restart every session is dormant, so a dropped hibernate changes nothing. A dropped close leaves a
-  dormant session in the workspace.
+  the target was running when the application quit, so after a restart it starts again (`session-persistence`) —
+  a dropped hibernate leaves it running, and a dropped close leaves it in the workspace, running.
 
 **A close or hibernate command SHALL yield to anything that happened to its target after the command was
 written.** It SHALL be dropped without a notice when the target's process started or ended after the command was
@@ -322,7 +322,8 @@ late as well as for one that waited. A rename is not subject to this rule.
 
 - **WHEN** the agent in S writes a close command for itself, and the application quits before the drop point is
   read
-- **THEN** after the next start, S is dormant and still in the workspace
+- **THEN** after the next start, S is still in the workspace and has started again, and it is not closed and no
+  close is offered for it
 
 #### Scenario: The user's own action drops a waiting command
 

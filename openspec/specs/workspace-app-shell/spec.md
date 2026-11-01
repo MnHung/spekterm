@@ -317,7 +317,8 @@ is ended. Closing the window ends every running process; nothing a session was r
   or has been replaced by another program — SHALL be marked as such and listed first. A session whose
   state is not known SHALL be listed without a mark, not as idle and not as working.
 - The dialog SHALL say what closing loses and what it keeps: running commands and an agent's reply in
-  progress are lost; claude sessions resume their conversation when woken. **What it says about shells
+  progress are lost; when the sessions start again (at the next launch, when the window opens again on macOS, or
+  after the update's restart) claude sessions resume their conversation. **What it says about shells
   and about what is closing SHALL be true on the platform it runs on.** Shells restart in their last
   directory only where the application can read a session's directory; elsewhere they restart in their
   folder, and the dialog says so. On macOS closing the window does not quit the application, and the dialog
@@ -325,8 +326,8 @@ is ended. Closing the window ends every running process; nothing a session was r
 - The dialog SHALL offer exactly two answers, closing and cancelling. **Cancelling SHALL be the
   default and the cancel answer** — pressing `Enter` or `Escape` in the dialog SHALL NOT end any
   session.
-- Choosing to close SHALL close the window; its sessions end as they do on any close and are restored
-  as dormant on the next launch (`session-persistence`), or, on macOS, when the window is opened again.
+- Choosing to close SHALL close the window; its sessions end as they do on any close, and the ones that were
+  running start again on the next launch (`session-persistence`), or, on macOS, when the window is opened again.
 - Choosing to cancel SHALL leave the window open and every session running, with the same process.
 
 The dialog's text is user-visible copy and SHALL come from the dictionaries in the current UI
@@ -364,7 +365,7 @@ signal (which this requirement does not ask about) or a window close (which it w
 
 - **WHEN** on Linux the user confirms that dialog
 - **THEN** the application exits, no process of its sessions remains, and on the next launch the
-  session is present as dormant
+  session is present and has started again with a new process
 
 #### Scenario: The safe answer is the default
 
@@ -536,8 +537,9 @@ is not listed.
 On macOS, closing the window SHALL end its sessions exactly as on other platforms (with the same
 confirmation), and SHALL NOT quit the application. This follows the convention of macOS terminal
 applications. Activating the application while it has no window (clicking its Dock icon, opening it
-again) SHALL open a new window, whose sessions are restored as dormant, as they are after a restart
-(`session-persistence`).
+again) SHALL open a new window, whose sessions are restored as they are after a restart
+(`session-persistence`): the ones that were running when the window closed start again, and the others are
+dormant.
 
 The second window SHALL behave as the first: its menu, its close confirmation, and the delivery of inbox
 and handoff events. Nothing the closed window held SHALL outlive it: its ptys, its watchers, its
@@ -559,7 +561,8 @@ the window and performs its action. The logic is covered without a real notifica
 #### Scenario: Activating the application restores the sessions
 
 - **WHEN** on macOS the application is running with no window and is activated
-- **THEN** a window opens and the session that was running is present as dormant
+- **THEN** a window opens, the session that was running when the window closed is present and has started
+  again, and a session that was dormant then is present as dormant
 
 #### Scenario: The second window has the menu
 
