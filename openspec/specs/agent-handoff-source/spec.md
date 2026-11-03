@@ -39,6 +39,14 @@ agent session。
   must be a single value, what is not accepted (seconds, macros, `L`, `W`, `#`, `?`) and that a schedule with no
   time within the search bound is refused, that the user approves it before anything opens, that each time opens a new session
   until the user stops it, and that times missed while spekterm was closed run once at the next start;
+- **while the user holds a team membership with the Team feature on** (see `team-membership`), **that a handoff may
+  go to a person on the team** with the `to` field in place of `target`, that the user confirms it on the desktop
+  before anything leaves, and **that the agent must read the teammates file before writing one**, with its location.
+  That file (see `teammate-handoff`) states every rule that refuses or holds a teammate handoff and lists the
+  teammates; **those rules count as stated** for the rule below, because the introduction directs the agent to read
+  them before the only action they constrain. The teammates themselves SHALL NOT be listed in the introduction: the
+  list grows with the team, and display names are text each teammate chose. Without a membership, or with the
+  feature off, the paragraph SHALL be absent, and introductions SHALL be rewritten when either changes;
 - **它自己的固定名字**（見 `agent-peer-name`），以及**如何取得它當下的母、子、兄弟 session**
   （見 `session-lineage`）—— 含對方的名字、對方此刻是否在執行，以及聯絡對方用的是 agent CLI
   自身的訊息功能、以對方的名字定址。
@@ -65,9 +73,14 @@ separate value, so that the grouping cannot drift from the paths. The directory 
 repo — in a workspace of 29 repos the flat list was 1,963 characters of the longest introduction's 7,458, and it
 grows with every folder added.
 
-**The introduction SHALL stay within a size budget**: 8,000 characters for a workspace of 30 folders, with
-outbox, relations and receipts paths of the length a real user data directory gives, for a session created by a
-handoff (the longest variant), checked by a test. Measured with Claude Code 2.1.303, in `-p` and interactive
+**The introduction SHALL stay within a size budget**: 8,500 characters for a workspace of 30 folders, with
+outbox, relations, receipts and teammates-file paths of the length a real user data directory gives, for a session
+created by a handoff while the user is on a team (the longest variant), checked by a test. (It was 8,000 before
+`teammate-handoff`; the 30-folder variant then measured 7,882, and the teammate paragraph does not fit in the
+remaining 118.) **The threshold this budget sits under SHALL be re-measured with the agent CLI in use when the budget
+is raised**, and the version recorded: the CLI's binary also carries an 8,000-character / 200-line cut for injected
+context that did not apply when last measured (CLI 2.1.303), and a budget above a cut that now applies would lose
+the end of every long introduction silently. Measured with Claude Code 2.1.303, in `-p` and interactive
 mode alike: an injected context of 10,000 characters reached the agent whole; one of 10,001 characters was
 replaced by a pointer to a file and a preview of about its first 2,000 characters. Past that threshold the agent keeps only the opening — the repo
 list, the receipts and every later section are gone at once, and the agent does not know what it was not told.
@@ -114,8 +127,8 @@ never reads the receipt. 它會照著自己手上那份說明去寫，被拒絕�
 
 #### Scenario: The introduction stays within its budget
 
-- **WHEN** the introduction is built for a workspace of 30 folders under three directories, with real-length paths, for a session created by a handoff
-- **THEN** it has at most 8,000 characters
+- **WHEN** the introduction is built for a workspace of 30 folders under three directories, with real-length paths, for a session created by a handoff while the user is on a team
+- **THEN** it has at most 8,500 characters
 
 #### Scenario: A very large workspace keeps every rule and cuts the list
 
@@ -177,6 +190,17 @@ never reads the receipt. 它會照著自己手上那份說明去寫，被拒絕�
 
 - **WHEN** the desktop's time zone is Asia/Taipei and an agent proposes `0 21 * * 3`
 - **THEN** the introduction names Asia/Taipei, and the proposal's next times are Wednesdays at 21:00 Taipei time
+
+#### Scenario: The teammate paragraph appears only on a team
+
+- **WHEN** the introduction is built once while the user holds no team membership and once while they hold one
+- **THEN** only the second states the `to` field and the teammates file's location, and neither lists a teammate's
+  display name
+
+#### Scenario: The introduction's size does not grow with the team
+
+- **WHEN** the introduction is built for the same workspace while the team has 2 members and while it has 60
+- **THEN** the two introductions have the same length
 
 ### Requirement: 投遞落點為每個 session 各一，且來源身分由落點推導而非投遞內容
 

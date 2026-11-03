@@ -389,6 +389,18 @@ repo 檔案）。**被移除的是人類閘門與隨它而來的預算，不是�
 **系統資源的消耗 SHALL NOT 作為該上限的依據。** 已量測：可預見量級上的落盤與跨行程傳輸
 皆在毫秒級。以資源為依據會讓這個上限看起來可以「等硬體變快再調大」，而那與真正的失效模式無關。
 
+**A teammate's handoff (`teammate-handoff`) is the one item that passes the acceptance gate with the
+first-party limit.** Its body was written by another person's agent, so to the recipient it is third-party text:
+the gate, the full body before accepting, the folder the user confirms, normalization, plain-text rendering and the
+first prompt filled in but not sent all apply. **Its length limit SHALL be the same-machine handoff's**
+(the first-party value above), not the third-party one, as decided in spekterm-server's PRD (§7.2, §13.1,
+2026-11-03): a handoff is the same kind of thing whether it crosses a repository or a person, so the sending agent
+works with one limit, and a body that fits on one machine is never refused for going to a teammate. **The cost is
+stated, not hidden**: the recipient may have a longer text to read before accepting, which weakens the reading
+budget this requirement calls the gate's only knob — for this source only. The third-party limit for every other
+source SHALL NOT change. The two choices — which prompt, which limit — SHALL be carried as two separate facts of the
+item, so that one cannot change with the other.
+
 **分流的是「套哪一個」，不是「怎麼量」** —— 長度的尺度對兩類本文 SHALL 相同。兩種尺度並存
 會使邊界上的一次拒絕無法向任何人解釋。
 
@@ -453,6 +465,18 @@ markdown」的紀律，其作用域是使用者自己 repo 裡的檔案，不涵
 - **WHEN** 一則不經接受即建立 session 的交接，其本文遠長於一個畫面可容納的量
 - **THEN** 其本文的呈現與交給 agent 的內容逐字元相同
 - **AND** 該呈現附有本文的長度
+
+#### Scenario: A teammate's long body passes the gate whole
+
+- **WHEN** a teammate's handoff arrives with a body longer than the third-party limit and within the handoff limit
+- **THEN** it waits in the inbox as a pending item with its whole body and its length shown, and no session is
+  created until the user accepts it
+
+#### Scenario: Other third-party sources keep their limit
+
+- **WHEN** a delivery in the shared drop point has a body longer than the third-party limit and within the handoff
+  limit
+- **THEN** it is refused as too long
 
 ### Requirement: 待送出的 prompt 在輸入處不可見時仍須可見
 
@@ -614,6 +638,11 @@ waits for the user, and a badge that counts it would stay lit for days. Once its
 attempted and it is still pending, it is an ordinary pending item and SHALL count. The count and the inbox SHALL still come from one evaluation:
 the inbox lists scheduled handoffs apart from the pending items the count describes.
 
+**A teammate handoff waiting for the user to send or discard it SHALL count** (`teammate-handoff`): it waits for
+the user as a pending item does, and it may wait while its agent has ended. A confirmed one that waits only for the
+connection or a rate limit SHALL NOT count: nothing about it waits for the user. The count and the inbox SHALL still
+come from one evaluation: the Outgoing tab lists exactly the waiting teammate handoffs the count includes.
+
 **被拒絕的投遞其彙整計數 SHALL NOT 計入本標示** —— 兩者是不同的東西，其可見性仍由收件匣之內
 的彙整呈現承擔（見「投遞以檔案落點為契約，且落點的內容是不受信任的」）。
 
@@ -679,6 +708,12 @@ the inbox lists scheduled handoffs apart from the pending items the count descri
 - **GIVEN** a scheduled handoff whose time came but whose session could not be created
 - **WHEN** the user looks at the activity bar's inbox entry
 - **THEN** that handoff is counted
+
+#### Scenario: A teammate handoff waiting for confirmation counts
+
+- **GIVEN** the inbox has one pending item
+- **WHEN** an agent writes a valid teammate handoff
+- **THEN** the activity bar's inbox entry shows `2`, and after the user presses Send on it, `1`
 
 ### Requirement: 新項目到達時發出作業系統通知，且合併與總量皆有界
 

@@ -314,6 +314,14 @@ spekterm's documentation SHALL state, in a page about data and network:
 - what the app itself connects to and when: Slack (or the endpoint the user configured) only after Slack
   credentials are saved; remote `https:` images in rendered markdown; links the user opens, in the user's
   browser;
+- **the team server** (`team-membership`): that the app connects to one only while the user has turned the Team
+  feature on, only to the address in the invite the user pasted, over TLS (pinned when the invite carries a
+  fingerprint); that it keeps one connection open while on and reconnects when it drops; what passes through it and
+  what the server keeps (the device's credential at authentication, the member's handle and display name, the
+  device's name, the team's member list, and **handoffs to and from teammates** — their title and body kept until
+  delivered or expired, their sender, recipient, times and status after that; see `teammate-handoff`); and that **the server's operator can read everything that passes through
+  it**, since nothing is end-to-end encrypted. Statements elsewhere on the page that everything spekterm keeps is on
+  the user's machine SHALL be qualified accordingly;
 - the update check: that a packaged build contacts GitHub (the releases of `spekhq/spekterm`, and on Linux the
   download of a newer AppImage) shortly after startup and periodically, that it sends nothing but the requests
   themselves, that it is on by default and how to turn it off, and that the integrity of an update rests on the
@@ -347,6 +355,13 @@ allow-list names this page.
 - **WHEN** spekterm's data and network page of the built site is read in either language
 - **THEN** it names GitHub as the update check's destination, says the check is on by default, and names the
   setting that turns it off
+
+#### Scenario: The page states the team server connection
+
+- **WHEN** spekterm's data and network page of the built site is read in either language
+- **THEN** it states that the app connects to a team server only while the Team feature is on and only to the
+  address from the invite, that the connection stays open while on, what the server keeps — handoffs to and from
+  teammates among it — and that the server's operator can read what passes through it
 
 ### Requirement: Screenshots come only from the capture script
 

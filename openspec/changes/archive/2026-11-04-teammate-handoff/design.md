@@ -287,7 +287,14 @@ against a server that breaks it.
   same length for 2 and 60 members, the 8,500 budget; the teammates file's rules derived from constants.
 - **`probe:team`** gains sending and receiving sections against the stub team server (task 6); the cross-process
   assertion is the recorded request's body against the Outgoing tab's `textContent`.
-- **Two real spekterms through a real spekterm-server** is a dogfood task.
+- **Two real spekterms through a real spekterm-server** is a dogfood task. **Coverage gap, stated**: the two cases
+  that hinge on the moment between storing an offer and sending its acknowledgement (the connection cut there; the
+  device revoked there, which must show the entry marked) cannot be produced by hand against a real server — it is a
+  few milliseconds inside the client, and the TLS connection cannot be intercepted. They are carried by
+  `probe:team`'s stand-in server (which can withhold an acknowledgement's answer and then cut or revoke) and by the
+  unit tests, with the control group `acknowledge-before-storing`. The dogfood runs their nearest real-server
+  versions: an offer leased to a connection that cannot answer is offered again at the next connection, and a
+  revoked device stops reconnecting.
 
 ## Risks / Trade-offs
 
