@@ -11,6 +11,7 @@
     "docs/using/inbox-and-slack",
     "docs/using/handoffs",
     "docs/using/remote-access",
+    "docs/using/teams",
     "docs/reference/keyboard-shortcuts",
     "docs/reference/settings",
     "docs/reference/data-and-network",
@@ -41,7 +42,9 @@
       "login shell",
       "remote access",
       "GitHub",
-      "Check for updates automatically"
+      "Check for updates automatically",
+      "team server",
+      "Its operator can read everything"
     ],
     "zh-TW": [
       "Slack",
@@ -50,7 +53,9 @@
       "openspec",
       "openspec config set telemetry.enabled false",
       "login shell",
-      "遠端存取"
+      "遠端存取",
+      "團隊 server",
+      "它的管理者讀得到經過它的所有內容"
     ]
   },
   "forbiddenPhrases": [

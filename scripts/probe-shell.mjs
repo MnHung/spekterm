@@ -248,6 +248,9 @@ const PROBE_EXPRESSION = `(async () => {
           'conversation',
           'intake',
           'slack',
+          // team (team-membership): being on a spekterm-server team — its projection (no credential), joining,
+          // renaming, leaving, Reconnect.
+          'team',
           // remote 於 mobile-remote-bridge 引入（remote-access 規格）：遠端存取（Settings 的一個分類）的狀態與控制，
           // 以及裝置請求的橋接（主行程 → renderer 的請求、renderer → 主行程的回覆）。
           'remote',

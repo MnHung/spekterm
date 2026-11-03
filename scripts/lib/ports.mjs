@@ -43,6 +43,8 @@ export const STUB_PORTS = {
    */
   remoteListener: 18471,
   remoteListenerAlt: 18472,
+  /** The stand-in team server (`probe-team.mjs`, `lib/stub-team-server.mjs`). */
+  team: 18480,
 }
 
 /** 探針名 → 該支所有 debugging port（鍵名說明它是哪一次啟動）。 */
@@ -97,6 +99,11 @@ export const PROBE_PORTS = {
    * with the same certificate). The second port follows the `intake` lesson above.
    */
   remote: { main: 9250, restart: 9251 },
+  /**
+   * Two launches: the main one, and one **on the same profile after a restart** with the stand-in server gone (the
+   * members kept offline). The second port follows the `intake` lesson above.
+   */
+  team: { main: 9252, restart: 9253 },
   /** The macOS packaging acceptance (`probe-package-mac.mjs`), run on a Mac, never in `test:e2e`. */
   packageMac: { main: 9249 },
   /** Not a probe: the website's screenshot capture (`scripts/capture-screenshots.mjs`) drives the built app. */

@@ -118,6 +118,7 @@
     "probe:agent-view": "node scripts/run-probe.mjs agent-view",
     "probe:intake": "node scripts/run-probe.mjs intake",
     "probe:slack": "node scripts/run-probe.mjs slack",
+    "probe:team": "node scripts/run-probe.mjs team",
     "probe:remote": "node scripts/run-probe.mjs remote",
     "probe:package": "npm run dist:linux && node scripts/run-probe.mjs package",
     "probe:package:mac": "node scripts/probe-package-mac.mjs"

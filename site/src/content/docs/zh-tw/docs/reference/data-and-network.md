@@ -16,6 +16,10 @@ spekterm 沒有帳號，也沒有遙測（telemetry）。這一頁列出 spekter
 
 除此之外沒有別的連線。像是瀏覽器引擎內建的拼字檢查，spekterm 也關掉了，否則它會在啟動時從第三方伺服器下載字典。
 
+## 團隊 server（預設關閉，加入團隊才會連線）
+
+當你開啟 **設定 → 團隊** 並用邀請連結加入團隊後，spekterm 會連到那個團隊的 server —— **只連到你貼上的邀請裡的那個位址**，走 TLS（邀請有指定憑證時，只接受那一張）。功能開著時它維持一條連線，斷線就重連；關掉功能就會關閉連線。經過這條連線的有：你這台裝置的憑證（連線時）、你的 handle、顯示名稱與裝置名稱，以及團隊的成員清單。這台 server 由你的團隊自己架設，不是本專案的，而它會保存這些資料。**它的管理者讀得到經過它的所有內容**：沒有任何端對端加密。見[團隊](/zh-tw/docs/using/teams/)。
+
 ## 遠端存取（預設關閉，由你開啟）
 
 打開**遠端存取**之後，spekterm 會在每一張網路介面的同一個 port（預設 47615，可以改）上**等待**連線，讓你[手機上的 spekterm app](/zh-tw/docs/getting-started/phone/) 透過區域網路、Tailscale 或你轉發的 port 連過來。只有配對過的裝置能使用這條連線。每台裝置都以 TLS 連向它配對時確認過的憑證，並用裝置自己的憑證驗證身分；裝置的憑證你可以撤銷。**遠端存取自己不往外連任何地方**：它只回應你的裝置，手機也只在連線中才會收到事件。整個過程不經過任何推播服務、中繼站或本專案的伺服器。遠端存取關閉時，沒有任何東西在等待連線。見[遠端存取](/zh-tw/docs/using/remote-access/)。
@@ -36,7 +40,7 @@ spekterm 會執行你安裝的程式。這些程式送出什麼由它們自己�
 
 ## 你的資料存在哪裡
 
-spekterm 保存的一切都在你的電腦上：Linux 上位於 `~/.config/Spekterm`，macOS 上位於 `~/Library/Application Support/Spekterm`（在 Linux 上，下載中的更新暫放在 `~/.cache/spekterm-updater`）。
+spekterm 保存的一切都在你的電腦上（你加入的團隊 server 所保存的除外，見上文）：Linux 上位於 `~/.config/Spekterm`，macOS 上位於 `~/Library/Application Support/Spekterm`（在 Linux 上，下載中的更新暫放在 `~/.cache/spekterm-updater`）。
 
 - 你的 workspace（資料夾清單、順序、置頂了哪些），以及每個資料夾的側欄位置；
 - 你的 session，以及每個 shell session 最後的畫面，重新啟動後用來重播；
@@ -44,6 +48,7 @@ spekterm 保存的一切都在你的電腦上：Linux 上位於 `~/.config/Spekt
 - 收件匣與交接的檔案；
 - 一份 Claude Code 對話的副本，供對話計量與讀後感使用，以及你產生過的讀後感；
 - 你的 Slack 憑證，單獨存在一個只有你的使用者帳號能讀寫的檔案裡。這個檔案沒有加密：任何能以你的使用者帳號讀取檔案的人都讀得到它；
+- 你的團隊成員資格（`team.json`：server、團隊、你的 handle 與裝置名稱、成員清單），以及你這台裝置的團隊憑證（和 Slack 憑證存在同一個檔案裡）；
 - 遠端存取的設定、憑證與已配對的裝置（`remote.json`，只有你的使用者帳號讀得到；每台裝置的憑證只存雜湊，不存憑證本身），以及憑證的私鑰（和 Slack 憑證存在同一個檔案裡）；
 - 你從手機附加到訊息裡的檔案（`remote-attachments`，每個 session 一個資料夾，只有你的使用者帳號讀得到）。關閉 session 時刪除；沒送出的一天後刪除；任何檔案最晚 30 天後刪除。
 

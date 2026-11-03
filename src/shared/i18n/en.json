@@ -392,9 +392,11 @@
       "terminal": "Terminal",
       "agents": "Agents & sessions",
       "integrations": "Integrations",
+      "team": "Team",
       "remote": "Remote access",
       "about": "About",
-      "remoteFailed": "Remote access failed to start"
+      "remoteFailed": "Remote access failed to start",
+      "teamFailed": "The team connection stopped"
     },
     "restoreDefaults": "Restore defaults",
     "restoreConfirm": "Restore this section's settings to their defaults?",
@@ -998,6 +1000,104 @@
       "appimage-replaced": "the AppImage had been replaced since spekterm started",
       "copy-failed": "the new version could not be copied next to the AppImage",
       "replace-failed": "the AppImage could not be replaced"
+    }
+  },
+  "team": {
+    "label": "Team",
+    "enable": "Be on a team",
+    "operatorStatement": "A team's server is run by the team. Its operator can read everything that passes through it, including handoffs; nothing is end-to-end encrypted.",
+    "status": {
+      "off": "Off.",
+      "unjoined": "On, not on a team yet.",
+      "connecting": "Connecting…",
+      "connected": "Connected.",
+      "reconnecting": "Reconnecting — next try at {{when}}.",
+      "stopped": "Stopped."
+    },
+    "retry": {
+      "NETWORK": "The server could not be reached.",
+      "TLS": "The server's certificate could not be verified.",
+      "TIMEOUT": "The server did not answer in time.",
+      "SERVER_CLOSED": "The server closed the connection.",
+      "SERVER_ERROR": "The server reported an error."
+    },
+    "stop": {
+      "REPLACED": "Another spekterm is using this device's credential, so this one stopped. Reconnect takes it back.",
+      "UNSUPPORTED_VERSION": "spekterm and the team server do not speak the same protocol version.",
+      "UNSUPPORTED_VERSION_spekterm": "spekterm is older than the team server. Update spekterm.",
+      "UNSUPPORTED_VERSION_server": "The team server is older than spekterm. Ask the team's admin to upgrade it.",
+      "FAULT": "spekterm and the team server could not understand each other. Reconnect to try again.",
+      "PIN_MISMATCH": "The server's certificate changed since you joined. You need a new device invite from the team's admin.",
+      "CREDENTIAL_UNAVAILABLE": "This computer's credential for the team cannot be found (device “{{device}}”). Reconnect reads it again; if it is gone, remove the team from this computer and ask the admin to revoke the device and send a device invite.",
+      "REVOKED": "This device was removed from the team (device “{{device}}”). Joining again needs a new invite from the team's admin."
+    },
+    "loadIssue": {
+      "damaged": "The team settings file could not be read and was set aside. Join again with a new invite.",
+      "unreadable": "The team settings file could not be read."
+    },
+    "reconnect": "Reconnect",
+    "invite": {
+      "label": "Invite link",
+      "hint": "Paste the link your team's admin sent you.",
+      "continue": "Continue",
+      "invalid": "This is not a valid invite link.",
+      "kindMember": "Joins team “{{team}}” as a new member.",
+      "kindDevice": "Adds this computer to {{name}} (@{{handle}}) on team “{{team}}”.",
+      "expires": "The invite expires {{when}}.",
+      "handle": "Handle",
+      "handleRule": "1–32 of a–z, 0–9 and -, starting with a letter or digit. It cannot be changed later.",
+      "displayName": "Display name",
+      "deviceName": "This device's name",
+      "join": "Join",
+      "cancel": "Cancel",
+      "joined": "Joined team “{{team}}”."
+    },
+    "joinError": {
+      "INVALID_LINK": "This is not a valid invite link.",
+      "INVITE_UNKNOWN": "This invite does not exist or was cancelled. Ask the team's admin for a new one.",
+      "INVITE_EXPIRED": "This invite has expired. Ask the team's admin for a new one.",
+      "INVITE_USED": "This invite was already used. Ask the team's admin for a new one.",
+      "HANDLE_TAKEN": "Another member has this handle. Choose another; the invite is still good.",
+      "BAD_PARAMS": "The server refused a field: {{field}}.",
+      "UNSUPPORTED_VERSION": "spekterm and the team server do not speak the same protocol version.",
+      "INTERNAL": "The server reported an error. Try again.",
+      "NETWORK": "The server could not be reached. Try again.",
+      "PIN_MISMATCH": "This invite does not match the server it names. Ask the team's admin for a new one.",
+      "LOST_ANSWER": "The connection ended before the server answered. The invite may have been used: ask the team's admin to check for a device named “{{device}}”, revoke it, and send a new invite.",
+      "NOT_STORED": "The join could not be completed because the credential could not be saved. Ask the team's admin for a new invite.",
+      "NOT_STORED_device": "The join could not be completed because the credential could not be saved. Ask the team's admin to revoke the device named “{{device}}” and send a new invite."
+    },
+    "team": "Team",
+    "member": "You",
+    "device": "This device",
+    "server": "Server",
+    "pinned": "pinned certificate",
+    "members": "Members",
+    "membersFetched": "as of {{when}}",
+    "you": "you",
+    "renameOffline": "Renaming this device needs the connection.",
+    "renameNotOffered": "This server does not offer renaming.",
+    "renameRefused": "The server refused this name.",
+    "leave": "Leave team",
+    "leaveAskingCount": "Checking your devices…",
+    "leaveLast": "This is your last device: leaving removes you from team “{{team}}”, frees your handle, and handoffs to you stop.",
+    "leaveOne": "Only this device leaves. You stay on team “{{team}}” on your other {{count}} devices.",
+    "leaveUnknown": "Your device count could not be checked. Leaving removes this device, and removes you from the team if it is your last one.",
+    "leaveConfirm": "Leave",
+    "leaveFailed": "Leaving failed. Try again.",
+    "leaveOffline": "Leaving needs the connection.",
+    "removeLocally": "Remove from this computer",
+    "removeLocallyStatement": "The server keeps listing this device until the team's admin revokes it.",
+    "removeLocallyConfirm": "Remove",
+    "pasteNew": "Paste a new invite",
+    "notify": {
+      "title": "Team “{{team}}”",
+      "REPLACED": "Another spekterm is using this device's credential, so this one stopped.",
+      "UNSUPPORTED_VERSION": "spekterm and the team server do not speak the same protocol version.",
+      "FAULT": "spekterm and the team server could not understand each other.",
+      "PIN_MISMATCH": "The server's certificate changed. You need a new device invite.",
+      "CREDENTIAL_UNAVAILABLE": "This computer's team credential cannot be found.",
+      "REVOKED": "This device was removed from the team."
     }
   }
 }

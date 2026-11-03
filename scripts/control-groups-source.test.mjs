@@ -19,6 +19,7 @@ import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { MUTATIONS as INTAKE } from './intake-control-groups.mjs'
 import { MUTATIONS as SLACK } from './slack-control-groups.mjs'
+import { MUTATIONS as TEAM } from './team-control-groups.mjs'
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -36,6 +37,7 @@ function countOf(haystack, needle) {
 for (const [label, mutations] of [
   ['intake', INTAKE],
   ['slack', SLACK],
+  ['team', TEAM],
 ]) {
   test(`${label} 的每個 mutation 都還對得上原始碼`, () => {
     assert.ok(mutations.length > 0, '一份空的 mutation 清單會讓這條守衛恆真')

@@ -28,6 +28,16 @@ update check, and the programs it starts that make connections of their own.
 Nothing else. In particular, spekterm turns off the spell checker built into its browser engine, which would
 otherwise download a dictionary from a third-party server at startup.
 
+## A team server (off unless you join a team)
+
+When you turn on **Settings → Team** and join a team with an invite link, spekterm connects to that team's
+server — **only to the address in the invite you pasted**, over TLS (to exactly the certificate the invite names,
+when it names one). It keeps one connection open while the feature is on, and reconnects when it drops; turning
+the feature off closes it. Through it pass your device's credential (when it connects), your handle, display name
+and device name, and the team's member list. The server is run by your team, not by the project, and it keeps
+those. **Its operator can read everything that passes through it**: nothing is end-to-end encrypted. See
+[Teams](/docs/using/teams/).
+
 ## Remote access (off unless you turn it on)
 
 When you turn on **remote access**, spekterm **listens** for connections on one port (47615 unless you change
@@ -64,7 +74,7 @@ observe what these programs do**:
 
 ## Where your data is stored
 
-Everything spekterm keeps is on your machine, under `~/.config/Spekterm` on Linux and
+Everything spekterm keeps is on your machine — except what a team server you joined keeps (see above) — under `~/.config/Spekterm` on Linux and
 `~/Library/Application Support/Spekterm` on macOS (on Linux, an update being downloaded waits in
 `~/.cache/spekterm-updater`):
 
@@ -76,6 +86,8 @@ Everything spekterm keeps is on your machine, under `~/.config/Spekterm` on Linu
   you generated;
 - your Slack credentials, in a file of their own that only your user account can read or write. The file
   is not encrypted: anyone who can read files as your user account can read it;
+- your team membership (`team.json`: the server, the team, your handle and device name, the members), and your
+  device's team credential in the same file as the Slack credentials;
 - remote access: its settings, its certificate, and your paired devices (`remote.json`, readable only by your
   user account; it stores a hash of each device's credential, not the credential), and the certificate's
   private key in the same file as the Slack credentials;

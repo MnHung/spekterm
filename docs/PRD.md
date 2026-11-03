@@ -139,7 +139,7 @@ Electron，目標產出 macOS / Windows / Linux 三平台安裝檔。
 | F7 | 打包發佈 | electron-builder 三平台安裝檔、主題、持久化 layout | Phase 6 |
 | F7b | UI 語言 | 介面文案可切換語言（`en` / `zh-TW`），立即生效且跨重啟保留；首次啟動取自作業系統的偏好語言。**寫給 agent 讀的文字不在地化**（見下） | Phase 6 ✅ |
 | F8 | Handoff（本機免費） | 寫 handoff → daemon probe → 同機自動開 session + context 注入 | Phase 7（moat）|
-| F9 | Handoff（跨機/跨人/編排，付費） | relay、跨人核准、自動編排 Claude→Codex→Gemini、稽核、遠端核准。**2026-09-29 已裁決不做**：同一人的跨機與手機核准已由官方覆蓋（§10）。**2026-10: same-person phone control is back** as an open-source feature with no relay and no paid tier — remote access and the companion Android app (`mobile-remote-bridge`, §10) | —（付費層不做） |
+| F9 | Handoff（跨機/跨人/編排，付費） | relay、跨人核准、自動編排 Claude→Codex→Gemini、稽核、遠端核准。**2026-09-29 已裁決不做**：同一人的跨機與手機核准已由官方覆蓋（§10）。**2026-10: same-person phone control is back** as an open-source feature with no relay and no paid tier — remote access and the companion Android app (`mobile-remote-bridge`, §10). **2026-11: handing work between people is back**, free and self-hosted: a team runs spekterm-server and spekterm connects to it (`team-membership`, `teammate-handoff`; §10) | —（付費層不做） |
 
 ---
 
@@ -324,8 +324,12 @@ spek 背景 router 主動 probe → 比對 to 命中的 repo-B
    - **信封（envelope）= 本機 daemon inbox**（`~/.spek/handoffs/`，workspace 範圍）。router 住這，看得到本機所有 repo 的 handoff，`to` 命中就路由。**同機跨 repo 完全本機、零 backend。**
    - **內容（payload）= 磁碟狀態快照（git diff／檔案）為底**；當工作對應到 change 時，再連到 repo 內的 OpenSpec change、不重抄（豐富內容跟著 repo 走 git、天然 spec 錨定）。無 change 時就只有磁碟快照。
    - **跨機 / 跨人 = relay**（spek 自己的中繼）：本機 daemon 把 outbox 同步到 relay，relay 送到別台機 / 別人的 daemon。
+     **2026-11 revision**: the relay ruled out on 2026-09-29 was a **paid, hosted** one for the **same person across
+     machines**. Between **different people**, a **free, self-hosted** server is in scope: spekterm-server (its own
+     repository), which a team runs for itself; spekterm is its client (`team-membership`). The sender confirms each
+     handoff on the desktop before it leaves, and the recipient accepts it through the inbox's gate.
    - **不採**「主要存 repo 內用 git 傳」：解不了跨 repo 路由、又會弄髒版控。
-3. **Freemium**：本機單人 handoff 免費；跨機 / 跨人 / 自動編排 / 稽核 / 遠端核准付費（見 §10）。**2026-09-29 已裁決不做付費層**（§10）。Phone access for the same person came back in 2026-10, free and direct (`mobile-remote-bridge`).
+3. **Freemium**：本機單人 handoff 免費；跨機 / 跨人 / 自動編排 / 稽核 / 遠端核准付費（見 §10）。**2026-09-29 已裁決不做付費層**（§10）。Phone access for the same person came back in 2026-10, free and direct (`mobile-remote-bridge`). Handoffs between people came back in 2026-11, free and self-hosted (spekterm-server).
 
 ### 7.7 元件（work breakdown）
 
@@ -336,6 +340,8 @@ spek 背景 router 主動 probe → 比對 to 命中的 repo-B
 5. **Spawner + context 注入器** — 開新 pty session + 把 handoff 餵進目標 agent；每種 agent 注入方式不同，需抽象層。
 6. **Consumer / ack** — 回寫處理紀錄、狀態流轉、通知發送方 ack。
 7. **Relay（付費）** — 跨機 / 跨人中繼 + 身分 / Team registry + 存取控制。（已裁決不做，§10。）
+   **Between people, free and self-hosted, it is in scope (2026-11)**: spekterm-server holds the team, invites,
+   device credentials and the mailbox; spekterm is the client (`team-membership`).
 8. **UI** — 見 §6.4。
 
 ---
@@ -467,6 +473,13 @@ handoffs, the OpenSpec side panel), and says nothing when an agent starts waitin
 (`mobile-remote-bridge`) lets a companion Android app (a separate repository) reach spekterm directly — LAN,
 Tailscale or a port forward — with a pinned certificate and per-device credentials. There is still no relay,
 no push service and no paid tier: the phone learns of events only over its own connection.
+
+**2026-11: handing work to another person, free and self-hosted.** What 2026-09 ruled out was a paid, hosted
+relay for the same person across machines, which first-party tooling covers. Handing work to a **teammate** is
+different, and nothing else covers it: spekterm-server (MIT, its own repository) is a small server a team runs for
+itself — a mailbox, a team directory, device credentials — and spekterm connects to it only when the user joins a
+team (`team-membership`). The server's operator can read the handoffs (no end-to-end encryption in v1); the
+project runs no instance and has no paid tier.
 
 The only income is sponsorship, which supports the maintainer personally and is not distributed based on
 contributions (see `CONTRIBUTING.md`).
@@ -749,7 +762,8 @@ session 脈絡裡送出的，彙整成一份跨數十天、跨數十個專案的
 
 > **2026-09-29：已裁決不做付費層（§10）。** relay（同一人跨機）與手機核准已由官方覆蓋。跨廠牌 agent 的擴充是否還要做，見 §14。
 
-- **Relay**：跨機 / 跨人中繼 + 身分 / Team registry + 存取控制 + 跨人核准。
+- **Relay**：跨機 / 跨人中繼 + 身分 / Team registry + 存取控制 + 跨人核准。**Between people it came back in
+  2026-11, free and self-hosted** (spekterm-server; `team-membership`, `teammate-handoff`).
 - **多 agent**：擴充 spawner 注入抽象至 Codex / Gemini；**自動編排** Claude→Codex→Gemini。
 - handoff 歷史 / 稽核、手機遠端核准。**Phone access for the same person shipped free in 2026-10** (`mobile-remote-bridge`): direct, no relay; the Android app lives in its own repository.
 
@@ -811,7 +825,9 @@ session 脈絡裡送出的，彙整成一份跨數十天、跨數十個專案的
 - **跨 agent 注入抽象**：Claude / Codex / Gemini CLI 的 context 注入方式不同（prompt / flag / 初始訊息 / 檔案引用），需一層統一介面。（2026-09：Gemini CLI 已對個人用戶停止，由 Antigravity CLI 接替。）
 - **cascade 上限**：自動接力深度上限與迴圈偵測方式。
 - **產生時機**：agent 結束主動產生？人手動觸發？狀態自動推導？（傾向混合）
-- **relay 信任模型**：跨人核准的身分驗證、handoff 內容完整性 / 來源可信。
+- ~~**relay 信任模型**：跨人核准的身分驗證、handoff 內容完整性 / 來源可信。~~ **Decided for spekterm-server
+  (2026-11)**: the server vouches for the sender (per-device credentials); the sender confirms the full text before
+  it leaves; the recipient treats it as third-party text through the inbox's gate. See spekterm-server's PRD §7.
 - **OpenSpec 增強層**：核心 / 增強兩層已定（§7.4，不綁 OpenSpec）；待決的是增強欄位的自動偵測——如何判定「這一棒對應到哪個 change」以自動帶入（branch↔change 對應、focused session 上下文、或使用者指定）。
 - **UI 呈現**：handoff 是 OpenSpec 側欄裡的一個區塊，還是 session 之間的獨立產物 / inbox？（mockup 目前採 workspace 層級收件匣 + rail badge）
 

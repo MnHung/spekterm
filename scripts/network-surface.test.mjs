@@ -29,6 +29,9 @@ const API_ALLOW = [
   { file: 'src/main/slack-api.ts', api: 'fetch' },
   // Slack's Socket Mode, only after the user saved an app-level token.
   { file: 'src/main/slack-realtime.ts', api: 'WebSocket' },
+  // The team server (`team-membership`), only while the Team feature is on and the device joined — or to inspect and
+  // redeem an invite the user pasted. One connection, to the address from that invite.
+  { file: 'src/main/team-connection.ts', api: 'WebSocket' },
   // The app's own page from the dev server (development only; production uses `loadFile`).
   { file: 'src/main/index.ts', api: 'loadURL' },
   // The update check of a build that only tells (`app-update`): GitHub's latest-release endpoint, from a packaged
@@ -78,6 +81,11 @@ const MODULE_ALLOW_FILES = [
   // The update check and download of a Linux AppImage (`app-update`): GitHub Releases of spekhq/spekterm only,
   // through Electron's `net`. It never installs (`update-install.ts` does).
   { file: 'src/main/update-installer.ts', module: 'electron-updater' },
+  // The team server's connection (`team-membership`): `tls` to open the socket and verify the certificate before
+  // anything is sent, then the `ws` client over that socket. A client: it creates no server
+  // (`scripts/server-source.test.mjs`).
+  { file: 'src/main/team-connection.ts', module: 'tls' },
+  { file: 'src/main/team-connection.ts', module: 'ws' },
 ]
 
 function sourceFiles() {

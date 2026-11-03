@@ -31,6 +31,8 @@ spec —— 並且在 agent 寫入磁碟時跟著更新。
   另一個 repo。
 - **遠端存取**（預設關閉）—— 已配對的手機直接連到 spekterm，不經中繼：session、對話、收件匣，以及 agent 在等你時的
   通知。Android app 仍在開發中；協定寫在 [`docs/remote-protocol.md`](docs/remote-protocol.md)。
+- **團隊**（預設關閉）—— 用邀請連結加入你的團隊自己架設的 [spekterm-server](https://github.com/spekhq/spekterm-server)。
+  server 的管理者讀得到經過它的內容。
 
 完整說明都在[文件](https://spekterm.com/zh-tw/docs/)，包括[快捷鍵](https://spekterm.com/zh-tw/docs/reference/keyboard-shortcuts/)、
 [疑難排解](https://spekterm.com/zh-tw/docs/help/troubleshooting/)，以及

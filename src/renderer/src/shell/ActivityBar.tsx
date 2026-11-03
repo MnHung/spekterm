@@ -160,6 +160,15 @@ export function ActivityBar(): React.JSX.Element {
     })
   }, [])
 
+  // A team notification was activated (`team-membership`): Settings on Team, the inbox and the metrics closing first.
+  useEffect(() => {
+    return window.workspace.team.onShowTeam(() => {
+      setIntakeOpener(null)
+      setInsightsOpener(null)
+      setSettings({ section: 'team' })
+    })
+  }, [])
+
   // Sessions 恆為當前 view；**Search 仍是停用的 placeholder**
   //（`workspace-layout`：尚未實作的入口為停用狀態）。Handoffs 已由 `agent-intake-inbox` 接上。
   // The entry the user is in: Sessions is the base view; Settings, the inbox and the metrics are while

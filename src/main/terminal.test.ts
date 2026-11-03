@@ -532,12 +532,15 @@ describe('pty 的環境', () => {
     const store = new SecretStore(path.join(secretsBase, 'secrets.json'))
     store.load()
     store.set('slack.userToken', sentinel)
+    // The team's device secret too (`team-membership`): it is stored the same way and must reach no pty either.
+    const teamSentinel = 'team-SENTINEL-5d21b0f4-do-not-leak'
+    store.set('team.deviceSecret', teamSentinel)
 
     const env = ptyEnv()
 
     for (const [key, value] of Object.entries(env)) {
       assert.equal(
-        value?.includes(sentinel) ?? false,
+        (value?.includes(sentinel) || value?.includes(teamSentinel)) ?? false,
         false,
         `機密出現在 pty 環境的 ${key} 裡`,
       )

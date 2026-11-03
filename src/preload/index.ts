@@ -43,6 +43,9 @@ type TerminalExitReason = Exclude<ExitReason, 'disposed'>
 import type { WatchBatch } from '../main/watch-service'
 import type { WorkspaceFolder } from '../main/workspace-store'
 import type { RemoteStateView } from '../main/remote-service'
+import type { TeamView } from '../main/team-projection'
+import type { InspectView } from '../main/ipc/team'
+import type { JoinResult } from '../main/team-service'
 import type { HostAction as RemoteAction } from '../main/remote-protocol'
 import type { RendererOutcome as RemoteOutcome } from '../main/remote-host'
 
@@ -764,6 +767,41 @@ const workspaceApi = {
    * The update check (`app-update`). No URL, version or path goes from here to the main process: "Download" opens
    * the link the main process built, and "Restart to update" acts on the update it holds.
    */
+  /**
+   * Being on a team (`team-membership`). The view is the main process's field-by-field projection: no device id, no
+   * secret. Joining is the only way the server address is written, bound to the user's click.
+   */
+  team: {
+    get: (): Promise<TeamView> => ipcRenderer.invoke('workspace:team:get'),
+    setEnabled: (enabled: boolean): Promise<TeamView> => ipcRenderer.invoke('workspace:team:setEnabled', enabled),
+    inspect: (link: string): Promise<InspectView> => ipcRenderer.invoke('workspace:team:inspect', link),
+    join: (input: { link: string; deviceName: string; handle?: string; displayName?: string }): Promise<JoinResult> =>
+      ipcRenderer.invoke('workspace:team:join', input),
+    rename: (name: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('workspace:team:rename', name),
+    leavePreview: (): Promise<{ deviceCount: number } | null> => ipcRenderer.invoke('workspace:team:leavePreview'),
+    leave: (): Promise<{ ok: boolean; memberRemoved?: boolean; error?: string }> => ipcRenderer.invoke('workspace:team:leave'),
+    removeLocally: (): Promise<TeamView> => ipcRenderer.invoke('workspace:team:removeLocally'),
+    reconnect: (): Promise<TeamView> => ipcRenderer.invoke('workspace:team:reconnect'),
+    onChanged: (listener: (view: TeamView) => void): (() => void) => {
+      const handler = (_event: IpcRendererEvent, view: TeamView): void => {
+        listener(view)
+      }
+      ipcRenderer.on('workspace:team:changed', handler)
+      return () => {
+        ipcRenderer.off('workspace:team:changed', handler)
+      }
+    },
+    /** A team notification was activated: show Settings on Team. */
+    onShowTeam: (listener: () => void): (() => void) => {
+      const handler = (): void => {
+        listener()
+      }
+      ipcRenderer.on('workspace:team:showTeam', handler)
+      return () => {
+        ipcRenderer.off('workspace:team:showTeam', handler)
+      }
+    },
+  },
   update: {
     /** `null` when this build does not check for updates (development mode). */
     get: (): Promise<UpdateView | null> => ipcRenderer.invoke('workspace:update:get'),

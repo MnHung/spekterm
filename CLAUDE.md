@@ -131,8 +131,9 @@ OpenSpec 結構的側欄，讓使用者不必另外開 IDE 就能一邊駕駛 ag
   stored as hashes. **No relay, no push service, no outbound connection**: the phone learns of attention
   events only over its own connection, and a short in-memory log replays what it missed. Three rules that fail
   silently if forgotten:
-  - **`src/main/remote-server.ts` is the only module that may create a server or import `https`/`ws`**
-    (`scripts/server-source.test.mjs`, file-scoped entries in `scripts/network-surface.test.mjs`). `probe:core`
+  - **`src/main/remote-server.ts` is the only module that may create a server or import `https`**, and
+    `team-connection.ts` the only other one that imports `ws` — as a client (`scripts/server-source.test.mjs`,
+    file-scoped entries in `scripts/network-surface.test.mjs`). `probe:core`
     runs on a throwaway profile because the real one may have remote access on.
   - **The renderer stays the authority on sessions**: a device's create, wake, rename, hibernate, close, keep and accept
     are requests to it (`workspace:remote:request`), carried out **quietly** — no selection change, no keyboard
@@ -171,6 +172,21 @@ OpenSpec 結構的側欄，讓使用者不必另外開 IDE 就能一邊駕駛 ag
     (`Session.prefill`) is the desktop's "not sent" label — a submitted handoff's prompt only after the fallback — with its
     item still in the inbox; `edited` counts keystrokes (`keystrokeSeq`), never times. **Any prefill record refuses a
     device reply** (`PREFILL_PENDING`), edited or not: the reply would be sent together with an unread third-party prompt.
+
+- **Teams** (`team-membership`) — **off by default**. Settings → Team joins a self-hosted spekterm-server (its own
+  repository, contract in its `docs/protocol.md`) from an invite link; a device credential kept in the secret store
+  (`team.deviceSecret`, readable by the user's processes like the Slack tokens — the user's decision) goes only to
+  that server, in `hello`. Three rules that fail silently if forgotten (`docs/lessons/team.md`):
+  - **Verify, then hand the socket to `ws`**: `team-connection.ts` opens TLS itself and builds the `ws` client over
+    the verified socket, so no application data precedes the pin check. It is the only team module that touches the
+    network and the only one that reveals the secret.
+  - **Every end spekterm decides is `terminate()`, and only the current generation's events act**: `ws`'s `close()`
+    waits 30 s, and a late close read as a drop would reconnect a third time and get the current connection closed
+    with 4006.
+  - **A membership without its secret is a stop, not a revocation** (`CREDENTIAL_UNAVAILABLE`): a `hello` without a
+    secret is answered `AUTH_FAILED`. Discarding writes `team.json` first, then removes the secret.
+  The server address is written only by `TeamStore.setMembership` ← `TeamService.joinTeam` ← the IPC join
+  handler (`scripts/secret-scope.test.mjs`).
 
 **以 MIT 開源**（`open-source-mit`：`LICENSE`、`CONTRIBUTING.md`、產物根目錄附本身與第三方的授權文字；
 公開前已改寫全部 git 歷史）。**Linux 打包已可用**（`npm run dist:linux` → AppImage，`npm run install:desktop` 裝進應用程式
@@ -232,6 +248,7 @@ them apart by event order (`before-quit` comes first only for a signal), see `sr
 | `site/`、`scripts/capture-screenshots.mjs`、`scripts/network-surface.test.mjs`, or anything the website states about the app (network, platforms, features) | **`site/README.md`** |
 | `build.mac` / `build.dmg`, `scripts/package-mac.mjs`, `scripts/after-pack.cjs`, `scripts/release-check.mjs`, `scripts/probe-package-mac.mjs`, `src/main/app-menu.ts`, `src/main/close-guard.ts`'s quit intent, or anything run on the build Mac | **`docs/lessons/macos.md`** |
 | `src/main/transcript-*`、`src/main/remote-sent-files.ts`、`src/main/remote-result-images.ts`、`src/main/agent-events.ts`、`src/main/agent-injection.ts`、`src/main/agent-origin.ts`、`src/main/agent-model-switch.ts`、`src/main/insights*`、**`src/main/report.ts` 與 `src/main/report-*`**、`scripts/probe-insights.mjs`、`scripts/probe-agent-view.mjs`，或任何會讀 `~/.claude/projects`、**注入 `--settings`**、**或委派 `claude` CLI** 的東西 | **`docs/lessons/transcript.md`** |
+| `src/main/team-*`, `src/main/ipc/team.ts`, `scripts/probe-team.mjs`, `scripts/lib/stub-team-server.mjs`, or anything that talks to a team server | **`docs/lessons/team.md`** |
 | `src/main/update-*`, `src/main/ipc/update.ts`, `scripts/release-github.mjs`, `scripts/probe-workspace-update.mjs`, the close guard's restart intent, or anything that replaces or relaunches the AppImage | **`docs/lessons/update.md`** |
 
 ## 開發指令
@@ -280,7 +297,7 @@ SPEKTERM_SCAN_PATH=../spek npm run dev
 | | 是什麼 | 什麼時候跑 |
 |---|---|---|
 | `npm test`（＝ `test:unit`） | node:test —— headless、秒級、可平行、無副作用 | **隨時**。改完就跑 |
-| `npm run test:e2e` | 全部 14 支探針，走 CDP 或真 Electron 主行程，驗**被出貨的那份程式碼** | **驗收時**。約二十分鐘 |
+| `npm run test:e2e` | 全部探針（`scripts/run-probes.mjs` 的清單），走 CDP 或真 Electron 主行程，驗**被出貨的那份程式碼** | **驗收時**。約二十分鐘 |
 | `npm run test:all` | 兩層都跑 | 封存前 |
 
 **`test:unit` 是一串寫死層數的 glob，而一支不在 glob 裡的測試從來不會被執行** —— 沒有錯誤、
@@ -355,6 +372,10 @@ npm run probe:slack     # slack-intake-source / secret-scope（替身是**真的
                         #   因為主行程的 `fetch` 走 undici 而非 Chromium 的網路堆疊。
                         #   **即時路徑「收得到事件」那一半沒有載體**（替身回一個連不上的 wss），
                         #   真實 Slack 由 dogfood 認定 —— 兩條缺口都寫在規格裡）
+npm run probe:team      # team-membership: Settings → Team against a stand-in team server
+                        #   (`lib/stub-team-server.mjs`, real TLS + ws, trusted through the invite's pin). The real
+                        #   spekterm-server is a dogfood check; `node scripts/team-control-groups.mjs` re-proves the
+                        #   key assertions turn red
 npm run probe:agent-view # agent-transcript-stream / agent-event-bridge / agent-conversation-view /
                         #   agent-input-bridge（對話 view、注入的 hook 真的被執行、送出抵達 pty、
                         #   **重建後直接進對話 view 時 pty 的欄數不是 80**）
@@ -373,8 +394,8 @@ PROBE_SKIP_BUILD=1 npm run probe:keyboard         # 只改探針腳本時跳過�
 PROBE_DISPLAY=physical npm run probe:terminal     # 逃生口：畫在實體螢幕上
 ```
 
-**`probe:package` 自成第三個成本層級 —— 它不在上面那十四支裡，也刻意不併進 `test:e2e`。**
-它會先跑一次**完整打包**再啟動**真正的 AppImage**（其餘十四支驗的都是 `electron .` 載入 `out/`，
+**`probe:package` 自成第三個成本層級 —— 它不在 `test:e2e` 的清單裡，而且刻意不併進去。**
+它會先跑一次**完整打包**再啟動**真正的 AppImage**（其餘探針驗的都是 `electron .` 載入 `out/`，
 那不是被出貨的東西）。層級是「**換版前跑一次**」。
 
 ```bash

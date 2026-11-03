@@ -382,9 +382,11 @@
       "terminal": "終端",
       "agents": "Agent 與 session",
       "integrations": "整合",
+      "team": "團隊",
       "remote": "遠端存取",
       "about": "關於",
-      "remoteFailed": "遠端存取無法啟動"
+      "remoteFailed": "遠端存取無法啟動",
+      "teamFailed": "團隊連線已停止"
     },
     "restoreDefaults": "回復預設",
     "restoreConfirm": "要把這個分類的設定回復成預設嗎？",
@@ -972,6 +974,104 @@
       "appimage-replaced": "AppImage 在 spekterm 啟動後被換過了",
       "copy-failed": "無法把新版本複製到 AppImage 旁邊",
       "replace-failed": "無法替換 AppImage"
+    }
+  },
+  "team": {
+    "label": "團隊",
+    "enable": "加入團隊",
+    "operatorStatement": "團隊的 server 由團隊自己架設。它的管理者讀得到經過它的所有內容，包括交接；沒有任何端對端加密。",
+    "status": {
+      "off": "已關閉。",
+      "unjoined": "已開啟，尚未加入團隊。",
+      "connecting": "連線中…",
+      "connected": "已連線。",
+      "reconnecting": "重新連線中 —— 下一次嘗試在 {{when}}。",
+      "stopped": "已停止。"
+    },
+    "retry": {
+      "NETWORK": "連不上 server。",
+      "TLS": "無法驗證 server 的憑證。",
+      "TIMEOUT": "server 沒有及時回應。",
+      "SERVER_CLOSED": "server 關閉了連線。",
+      "SERVER_ERROR": "server 回報了錯誤。"
+    },
+    "stop": {
+      "REPLACED": "另一個 spekterm 正在使用這台裝置的憑證，所以這邊停下來了。按「重新連線」會把它拿回來。",
+      "UNSUPPORTED_VERSION": "spekterm 和團隊 server 使用的協定版本不同。",
+      "UNSUPPORTED_VERSION_spekterm": "spekterm 比團隊 server 舊，請更新 spekterm。",
+      "UNSUPPORTED_VERSION_server": "團隊 server 比 spekterm 舊，請團隊的管理者升級它。",
+      "FAULT": "spekterm 和團隊 server 無法理解彼此。按「重新連線」再試一次。",
+      "PIN_MISMATCH": "server 的憑證在你加入之後變了。你需要團隊管理者發一份新的裝置邀請。",
+      "CREDENTIAL_UNAVAILABLE": "在這台電腦上找不到團隊憑證（裝置「{{device}}」）。「重新連線」會再讀一次；如果真的不見了，請從這台電腦移除團隊，並請管理者撤銷這台裝置、發一份裝置邀請。",
+      "REVOKED": "這台裝置已被移出團隊（裝置「{{device}}」）。要再加入，需要團隊管理者發新的邀請。"
+    },
+    "loadIssue": {
+      "damaged": "團隊設定檔無法讀取，已另存一旁。請用新的邀請重新加入。",
+      "unreadable": "團隊設定檔無法讀取。"
+    },
+    "reconnect": "重新連線",
+    "invite": {
+      "label": "邀請連結",
+      "hint": "貼上團隊管理者傳給你的連結。",
+      "continue": "繼續",
+      "invalid": "這不是有效的邀請連結。",
+      "kindMember": "以新成員身分加入團隊「{{team}}」。",
+      "kindDevice": "把這台電腦加到團隊「{{team}}」的 {{name}}（@{{handle}}）名下。",
+      "expires": "邀請於 {{when}} 到期。",
+      "handle": "Handle",
+      "handleRule": "1–32 個 a–z、0–9 與 -，以字母或數字開頭。之後不能更改。",
+      "displayName": "顯示名稱",
+      "deviceName": "這台裝置的名稱",
+      "join": "加入",
+      "cancel": "取消",
+      "joined": "已加入團隊「{{team}}」。"
+    },
+    "joinError": {
+      "INVALID_LINK": "這不是有效的邀請連結。",
+      "INVITE_UNKNOWN": "這份邀請不存在或已被取消。請團隊管理者發一份新的。",
+      "INVITE_EXPIRED": "這份邀請已過期。請團隊管理者發一份新的。",
+      "INVITE_USED": "這份邀請已被使用。請團隊管理者發一份新的。",
+      "HANDLE_TAKEN": "已有成員使用這個 handle。請換一個；邀請仍然有效。",
+      "BAD_PARAMS": "server 不接受這個欄位：{{field}}。",
+      "UNSUPPORTED_VERSION": "spekterm 和團隊 server 使用的協定版本不同。",
+      "INTERNAL": "server 回報了錯誤，請再試一次。",
+      "NETWORK": "連不上 server，請再試一次。",
+      "PIN_MISMATCH": "這份邀請和它指向的 server 不符。請團隊管理者發一份新的。",
+      "LOST_ANSWER": "server 回應之前連線就斷了。邀請可能已被使用：請團隊管理者檢查有沒有名為「{{device}}」的裝置，撤銷它，再發一份新的邀請。",
+      "NOT_STORED": "憑證無法儲存，加入沒有完成。請團隊管理者發一份新的邀請。",
+      "NOT_STORED_device": "憑證無法儲存，加入沒有完成。請團隊管理者撤銷名為「{{device}}」的裝置，再發一份新的邀請。"
+    },
+    "team": "團隊",
+    "member": "你",
+    "device": "這台裝置",
+    "server": "Server",
+    "pinned": "已釘選憑證",
+    "members": "成員",
+    "membersFetched": "取得於 {{when}}",
+    "you": "你",
+    "renameOffline": "要連線才能改裝置名稱。",
+    "renameNotOffered": "這台 server 不提供改名。",
+    "renameRefused": "server 不接受這個名稱。",
+    "leave": "離開團隊",
+    "leaveAskingCount": "正在確認你的裝置數…",
+    "leaveLast": "這是你最後一台裝置：離開會把你移出團隊「{{team}}」、釋出你的 handle，交給你的交接也會停止。",
+    "leaveOne": "只有這台裝置離開。你仍以其他 {{count}} 台裝置留在團隊「{{team}}」。",
+    "leaveUnknown": "無法確認你的裝置數。離開會移除這台裝置；如果這是你最後一台，也會把你移出團隊。",
+    "leaveConfirm": "離開",
+    "leaveFailed": "離開失敗，請再試一次。",
+    "leaveOffline": "要連線才能離開。",
+    "removeLocally": "從這台電腦移除",
+    "removeLocallyStatement": "在團隊管理者撤銷之前，server 仍會列出這台裝置。",
+    "removeLocallyConfirm": "移除",
+    "pasteNew": "貼上新的邀請",
+    "notify": {
+      "title": "團隊「{{team}}」",
+      "REPLACED": "另一個 spekterm 正在使用這台裝置的憑證，所以這邊停下來了。",
+      "UNSUPPORTED_VERSION": "spekterm 和團隊 server 使用的協定版本不同。",
+      "FAULT": "spekterm 和團隊 server 無法理解彼此。",
+      "PIN_MISMATCH": "server 的憑證變了。你需要一份新的裝置邀請。",
+      "CREDENTIAL_UNAVAILABLE": "在這台電腦上找不到團隊憑證。",
+      "REVOKED": "這台裝置已被移出團隊。"
     }
   }
 }

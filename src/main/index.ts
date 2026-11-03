@@ -99,6 +99,10 @@ import { applyUserEnvOnce } from './user-env'
 import { WorkspaceStore } from './workspace-store'
 import { type UpdateRuntime, startUpdates } from './update-service'
 import { openExternalUrl } from './navigation'
+import { registerTeamHandlers, sendShowTeam } from './ipc/team'
+import { createTeamNotifier } from './team-notify'
+import { TeamService } from './team-service'
+import { TeamStore } from './team-store'
 
 const currentDir = dirname(fileURLToPath(import.meta.url))
 
@@ -554,6 +558,27 @@ void app.whenReady().then(async () => {
     themeChanged: applyTheme,
     zoomChanged: applyZoom,
   })
+  // Being on a team (`team-membership`): off by default; connects only while on and joined. Its notifications have a
+  // backend of their own (a backend holds one activation handler), the probes' stub under the same gate.
+  const teamService = new TeamService({
+    store: new TeamStore(join(app.getPath('userData'), 'team.json')),
+    secrets: secretStore,
+    appVersion: app.getVersion(),
+    notifyStop: createTeamNotifier({
+      backend: usingThrowawayProfile()
+        ? createStubBackend({ root: join(app.getPath('userData'), 'team-notify-stub') })
+        : electronNotifyBackend(),
+      onActivate: () =>
+        void presence.ensure().then(() => {
+          const window = liveWindow()
+          if (window) sendShowTeam(window)
+        }),
+    }),
+  })
+  registerTeamHandlers(teamService)
+  teamService.start()
+  powerMonitor.on('resume', () => teamService.resume())
+  app.on('will-quit', () => teamService.dispose())
   registerSlackHandlers({
     settings: slackSettingsStore,
     secrets: secretStore,

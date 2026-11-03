@@ -67,6 +67,13 @@ The Slack connection: tokens, the look-back window, and the API endpoint. See
 [Inbox and Slack](/docs/using/inbox-and-slack/). The routing rules, which decide where a mention opens, stay
 in the inbox.
 
+## Team
+
+Being on a team: the switch, the invite link and joining, and once joined the team, your handle, this device's
+name (editable while connected), the server, the members, the connection's state, Reconnect, and Leave team. If
+the connection stopped for a reason you need to deal with, the section is marked in the list. See
+[Teams](/docs/using/teams/).
+
 ## Remote access
 
 The state of remote access (off; on, with how many devices are paired and connected; or why it is not

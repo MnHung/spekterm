@@ -84,8 +84,16 @@ const SECRET_FORBIDDEN = [
  * - `remote-store.ts` —— it reads the remote access listener's TLS private key (`remote.tlsKey`) to hand it
  *   to the TLS server in the same process. That key never leaves the main process (`remote-access`); it is
  *   not sent anywhere — the listener only presents the certificate.
+ * - `team-connection.ts` — it puts the team device secret into `hello` (`team-membership`), sent only to the server
+ *   address of the membership it belongs to, over a connection whose certificate was verified. The join answer's
+ *   secret is wrapped there and stored through `SecretStore.setSecret`, so no other team module reveals it.
  */
-const REVEAL_ALLOWLIST = [SECRET_MODULE, join('src', 'main', 'slack-api.ts'), join('src', 'main', 'remote-store.ts')]
+const REVEAL_ALLOWLIST = [
+  SECRET_MODULE,
+  join('src', 'main', 'slack-api.ts'),
+  join('src', 'main', 'remote-store.ts'),
+  join('src', 'main', 'team-connection.ts'),
+]
 
 /** `reveal()` 的方法名。 */
 const REVEAL = 'reveal'
@@ -107,6 +115,30 @@ const ENDPOINT_WRITERS = [
   join('src', 'main', 'ipc', 'slack.ts'),
   join('src', 'main', 'slack-settings-store.ts'),
 ]
+
+/**
+ * The team server's address is the device secret's destination (`team-membership`, `secret-scope`). It is written
+ * only by `TeamStore.setMembership`, called only from `team-service.ts`'s join path (`joinTeam`), which is called only
+ * from the IPC join handler — the user's click in Settings. Two pins, the same posture as Slack's endpoint writer.
+ */
+const TEAM_ADDRESS_WRITERS = [
+  { method: 'setMembership', allowed: [join('src', 'main', 'team-service.ts')] },
+  { method: 'joinTeam', allowed: [join('src', 'main', 'ipc', 'team.ts')] },
+]
+
+/** Calls of `<anything>.<method>(…)`. */
+export function findMethodCalls(source, method, fileName = 'sample.ts') {
+  const sourceFile = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true)
+  const found = []
+  const visit = (node) => {
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === method) {
+      found.push(lineOf(sourceFile, node))
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(sourceFile)
+  return found
+}
 
 /** 機密模組的 import 路徑長什麼樣（`./secret-store`、`../secret-store`…）。 */
 const SECRET_MODULE_SPECIFIER = /(^|\/)secret-store$/
@@ -397,4 +429,22 @@ test('對照組：機密的 import 與 reveal 各種形式被抓到，無關的�
 
   const nested = findRevealCalls('headers.Authorization = `Bearer ${store.get(name).reveal()}`')
   assert.equal(nested.length, 1, '巢狀的 reveal() 應被抓到')
+})
+
+test('⑤ the team server address is written only through the join path', () => {
+  const offenders = []
+  const mainRoot = join('src', 'main') + path_sep
+  for (const { method, allowed } of TEAM_ADDRESS_WRITERS) {
+    for (const { rel, source } of productSources()) {
+      if (!rel.startsWith(mainRoot) || allowed.includes(rel)) continue
+      for (const line of findMethodCalls(source, method, rel)) offenders.push(`${rel}:${line}: ${method}`)
+    }
+  }
+  assert.deepEqual(offenders, [], `the team server address is the credential's destination:\n${offenders.join('\n')}`)
+})
+
+test('control: a call of the team address writers is found in any module', () => {
+  assert.deepEqual(findMethodCalls('store.setMembership(fromDelivery)', 'setMembership'), [1])
+  assert.deepEqual(findMethodCalls('const x = 1\nservice.joinTeam(input)', 'joinTeam'), [2])
+  assert.deepEqual(findMethodCalls('names.join(", ")', 'joinTeam'), [])
 })

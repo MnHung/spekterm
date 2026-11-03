@@ -36,6 +36,8 @@ agent writes to disk.
 - **Remote access** (off by default) — a paired phone reaches spekterm directly, with no relay: sessions,
   conversations, the inbox, and a notice when an agent waits for you. The Android app is in development; the
   protocol is in [`docs/remote-protocol.md`](docs/remote-protocol.md).
+- **Teams** (off by default) — join a self-hosted [spekterm-server](https://github.com/spekhq/spekterm-server) your
+  team runs, with an invite link. The server's operator can read what passes through it.
 
 Everything is described in the [documentation](https://spekterm.com/docs/), including
 [keyboard shortcuts](https://spekterm.com/docs/reference/keyboard-shortcuts/),

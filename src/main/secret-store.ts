@@ -247,6 +247,14 @@ export class SecretStore {
     this.#commit(next)
   }
 
+  /**
+   * Stores a secret that arrived wrapped (the team's device secret, wrapped where the join answer is parsed): it is
+   * revealed here, where it is written, so its holder does not need to be on the `reveal()` allow-list.
+   */
+  setSecret(name: string, secret: Secret): void {
+    this.set(name, secret.reveal())
+  }
+
   /** 清除一份機密。 */
   clear(name: string): void {
     if (this.#secrets[name] === undefined) return

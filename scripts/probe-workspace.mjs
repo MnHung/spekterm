@@ -691,9 +691,9 @@ try {
     selected: tab.getAttribute('aria-selected') === 'true',
   }))`
   const tabs = await pollUntil(app.client, SECTION_TABS, (v) => v.length > 0, 4000).catch(() => [])
-  const expectedSections = ['general', 'terminal', 'agents', 'integrations', 'remote', 'about'].map((id) =>
+  const expectedSections = ['general', 'terminal', 'agents', 'integrations', 'team', 'remote', 'about'].map((id) =>
     copy(`settings.sections.${id}`))
-  check(results, 'Settings lists its six sections and shows one of them',
+  check(results, 'Settings lists its sections and shows one of them',
     JSON.stringify(tabs.map((tab) => tab.text)) === JSON.stringify(expectedSections) &&
       tabs.filter((tab) => tab.selected).length === 1,
     JSON.stringify(tabs))
@@ -706,7 +706,7 @@ try {
   })()`
   const sizes = {}
   const sectionFacts = {}
-  for (const id of ['general', 'terminal', 'agents', 'integrations', 'remote', 'about']) {
+  for (const id of ['general', 'terminal', 'agents', 'integrations', 'team', 'remote', 'about']) {
     await showSection(app.client, id)
     sizes[id] = await app.client.evaluate(CARD_SIZE)
     sectionFacts[id] = await app.client.evaluate(FONT_DIALOG)

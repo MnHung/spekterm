@@ -7,9 +7,10 @@ import { AgentsSection } from './sections/AgentsSection'
 import { GeneralSection } from './sections/GeneralSection'
 import { IntegrationsSection } from './sections/IntegrationsSection'
 import { RemoteSection } from './sections/RemoteSection'
+import { TeamSection, teamNeedsUser, useTeamState } from './sections/TeamSection'
 import { TerminalSection } from './sections/TerminalSection'
 
-export const SETTINGS_SECTIONS = ['general', 'terminal', 'agents', 'integrations', 'remote', 'about'] as const
+export const SETTINGS_SECTIONS = ['general', 'terminal', 'agents', 'integrations', 'team', 'remote', 'about'] as const
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number]
 
 const SECTION_LABEL = {
@@ -17,6 +18,7 @@ const SECTION_LABEL = {
   terminal: 'settings.sections.terminal',
   agents: 'settings.sections.agents',
   integrations: 'settings.sections.integrations',
+  team: 'settings.sections.team',
   remote: 'settings.sections.remote',
   about: 'settings.sections.about',
 } as const
@@ -50,6 +52,8 @@ export function SettingsDialog({
   // A listener that failed to start marks Remote access in the list: in a section of its own, a failure at
   // startup would otherwise go unseen until the user opens it (`remote-access`).
   const remoteFailed = remote?.enabled === true && remote.listen.status === 'error'
+  // A team connection stopped for a reason only the user can resolve marks Team the same way (`team-membership`).
+  const teamStopped = teamNeedsUser(useTeamState())
 
   const show = (next: SettingsSection, focus = false): void => {
     onSectionShown(next)
@@ -120,6 +124,14 @@ export function SettingsDialog({
                     className="h-2 w-2 rounded-full bg-danger"
                   />
                 ) : null}
+                {id === 'team' && teamStopped ? (
+                  <span
+                    role="img"
+                    aria-label={t('settings.sections.teamFailed')}
+                    title={t('settings.sections.teamFailed')}
+                    className="h-2 w-2 rounded-full bg-danger"
+                  />
+                ) : null}
               </button>
             )
           })}
@@ -135,6 +147,7 @@ export function SettingsDialog({
           {section === 'terminal' ? <TerminalSection /> : null}
           {section === 'agents' ? <AgentsSection /> : null}
           {section === 'integrations' ? <IntegrationsSection onOpenRoutingRules={onOpenRoutingRules} /> : null}
+          {section === 'team' ? <TeamSection /> : null}
           {section === 'remote' ? <RemoteSection /> : null}
           {section === 'about' ? <AboutSection /> : null}
         </div>
