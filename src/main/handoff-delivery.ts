@@ -27,9 +27,24 @@ export interface HandoffPayload {
   until?: string
 }
 
+/**
+ * A handoff to a teammate (`teammate-handoff`): `to` in place of `target`. Only these three fields are read; the
+ * text is as written — `TeammateOutbox.read` normalizes it.
+ */
+export interface TeammatePayload {
+  to: string
+  title: string
+  body: string
+}
+
 export type PayloadResult =
-  | { ok: true; value: HandoffPayload }
+  | { ok: true; value: HandoffPayload; teammate?: undefined }
+  | { ok: true; teammate: TeammatePayload; value?: undefined }
   | { ok: false; reason: 'MALFORMED' | 'FIELD_TYPE'; field?: string }
+  | { ok: false; reason: 'SCHEDULE_INVALID'; rule: string }
+
+/** The rule a teammate handoff with `at`, `repeat` or `until` breaks (`teammate-handoff`). */
+export const TEAMMATE_NOT_SCHEDULABLE = 'a teammate handoff ("to") is sent when the user confirms it and cannot be scheduled'
 
 /**
  * How far ahead a handoff may be scheduled (`scheduled-handoff`). A time further out is more likely a mistyped
@@ -247,6 +262,17 @@ export function parseHandoffPayload(contents: string): PayloadResult {
   const source = raw as Record<string, unknown>
   const target = source.target
   const body = source.body
+  // `to` is its own field (`teammate-handoff`, design D1): never a form of `target`, so a folder named like a handle
+  // cannot change what a delivery means. Its presence decides the shape rules below.
+  if (source.to !== undefined) {
+    if (target !== undefined) return { ok: false, reason: 'FIELD_TYPE', field: 'to / target' }
+    if (typeof source.to !== 'string' || source.to.trim() === '') return { ok: false, reason: 'FIELD_TYPE', field: 'to' }
+    if (source.at !== undefined || source.repeat !== undefined || source.until !== undefined) {
+      return { ok: false, reason: 'SCHEDULE_INVALID', rule: TEAMMATE_NOT_SCHEDULABLE }
+    }
+    if (typeof body !== 'string') return { ok: false, reason: 'FIELD_TYPE', field: 'body' }
+    return { ok: true, teammate: { to: source.to, title: typeof source.title === 'string' ? source.title : '', body } }
+  }
   if (typeof target !== 'string' || typeof body !== 'string') {
     return { ok: false, reason: 'FIELD_TYPE' }
   }

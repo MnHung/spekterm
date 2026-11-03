@@ -6,7 +6,7 @@ import { useTranslation } from 'react-i18next'
 
 import { formatDateTime, relativeTime } from '@shared/i18n/locale'
 import { isItemsTabItem, isProposal, isScheduled, isWaitingForUser } from '@shared/intake/scheduled'
-import type { ApproveResult, IntakeView, RecurrenceListing, RecurrenceView } from '../../../../main/ipc/intake'
+import type { ApproveResult, IntakeView, OutgoingView, RecurrenceListing, RecurrenceView } from '../../../../main/ipc/intake'
 import { useSessions } from '../terminal/sessions'
 import type { WorkspaceFolder } from '../types'
 import { useNow } from '../useNow'
@@ -57,7 +57,7 @@ function itemKey(item: IntakeView): string {
 }
 
 /** The overlay's tabs. `schedules` holds everything planned (`recurring-handoff`, design D6). */
-export type IntakeTab = 'inbox' | 'schedules' | 'rules'
+export type IntakeTab = 'inbox' | 'schedules' | 'outgoing' | 'rules'
 type Tab = IntakeTab
 
 export interface IntakeOverlayProps {
@@ -166,7 +166,9 @@ export function IntakeOverlay({
    * the user sees agree.
    */
   const items = snapshot.items.filter(isItemsTabItem)
-  const waitingCount = snapshot.items.filter(isWaitingForUser).length
+  // Teammate handoffs waiting for the user count as the badge counts them (`teammate-handoff`), from the same snapshot.
+  const outgoing = snapshot.outgoing
+  const waitingCount = snapshot.items.filter(isWaitingForUser).length + (outgoing?.waiting ?? 0)
   const proposals = snapshot.items.filter(isProposal)
   const scheduled = snapshot.items.filter(isScheduled).sort((a, b) => (a.scheduledAt ?? 0) - (b.scheduledAt ?? 0))
   const recurrences: RecurrenceListing = snapshot.recurrences ?? { available: true, recurrences: [] }
@@ -235,6 +237,25 @@ export function IntakeOverlay({
               <span className="ml-1.5 rounded-full bg-accent/20 px-1.5 text-2xs text-accent">{proposals.length}</span>
             ) : null}
           </button>
+          {/*
+            The Outgoing tab (`teammate-handoff`): shown while a teammate handoff is in it (or the list was damaged), so
+            a user who is on no team never sees an empty tab. Its count is the waiting ones, the badge's share.
+          */}
+          {outgoing && (outgoing.items.length > 0 || outgoing.damaged || tab === 'outgoing') ? (
+            <button
+              type="button"
+              role="tab"
+              aria-label={t('intake.outgoingTab')}
+              aria-selected={tab === 'outgoing'}
+              onClick={() => setTab('outgoing')}
+              className={tabClass(tab === 'outgoing')}
+            >
+              {t('intake.outgoingTab')}
+              {outgoing.waiting > 0 ? (
+                <span className="ml-1.5 rounded-full bg-accent/20 px-1.5 text-2xs text-accent">{outgoing.waiting}</span>
+              ) : null}
+            </button>
+          ) : null}
           <button
             type="button"
             role="tab"
@@ -344,6 +365,8 @@ export function IntakeOverlay({
 
         {tab === 'rules' ? (
           <RulesEditor />
+        ) : tab === 'outgoing' ? (
+          <OutgoingTab items={outgoing?.items ?? []} damaged={outgoing?.damaged === true} onChanged={reload} />
         ) : tab === 'schedules' ? (
           <SchedulesTab
             proposals={proposals}
@@ -847,6 +870,13 @@ function IntakeCard({
         其餘資訊擠成好幾行；而 Slack 的標題就是本文裡那一則的第一行（dogfood 回報兩件事）。
       */}
       <div className="flex items-baseline gap-2 whitespace-nowrap">
+        {/*
+          A teammate's handoff (`teammate-handoff`): labelled by the **adapter**, never by the origin kind — a file in
+          the shared drop point can declare `origin.kind: "teammate"` itself.
+        */}
+        {item.adapter === 'teammate' ? (
+          <span className="rounded bg-accent/10 px-1.5 text-2xs text-accent">{t('intake.teammate')}</span>
+        ) : null}
         <span className="text-2xs text-ink-dim">{item.actor}</span>
         <span className="text-2xs text-ink-faint">{item.originLabel}</span>
         <OccurredAt at={item.occurredAt} />
@@ -857,6 +887,9 @@ function IntakeCard({
         */}
         <code className="min-w-0 max-w-[14rem] truncate font-mono text-2xs text-ink-faint">{item.id}</code>
       </div>
+      {item.adapter === 'teammate' && item.possiblyElsewhere ? (
+        <p className="mt-1 text-2xs text-ink-dim">{t('intake.possiblyElsewhere')}</p>
+      ) : null}
       {/* An occurrence that was opened and waits for the user (`recurring-handoff`): it belongs to a recurrence. */}
       {item.recurrence ? <RepeatLine repeat={item.recurrence.repeat} until={item.recurrence.until} /> : null}
       {/* 標題也是第三方撰寫的 —— 與本文同樣只當文字呈現。 */}
@@ -957,5 +990,109 @@ function SlackLine({ onOpen }: { onOpen: () => void }): React.JSX.Element | null
         {t('slack.openSettings')}
       </button>
     </div>
+  )
+}
+
+/**
+ * The Outgoing tab (`teammate-handoff`, design D7): teammate handoffs an agent wrote, waiting for the user to send or
+ * discard them, then their sending. **The body shown is the stored value that is sent**, character for character,
+ * as plain text — the inbox's rendering: no markup, no remote resource, no link, never cut, scrollable.
+ */
+function OutgoingTab({
+  items,
+  damaged,
+  onChanged,
+}: {
+  items: readonly OutgoingView[]
+  damaged: boolean
+  onChanged: () => void
+}): React.JSX.Element {
+  const { t } = useTranslation()
+  return (
+    <div className="flex flex-col gap-3">
+      {damaged ? <p className="text-2xs text-ink-dim">{t('intake.outgoingDamaged')}</p> : null}
+      {items.length === 0 ? (
+        <p className="text-2xs text-ink-faint">{t('intake.outgoingEmpty')}</p>
+      ) : (
+        <>
+          <p className="text-2xs text-ink-faint">{t('intake.outgoingHint')}</p>
+          <ul className="flex flex-col gap-3">
+            {items.map((item) => (
+              <OutgoingCard key={item.id} item={item} onChanged={onChanged} />
+            ))}
+          </ul>
+        </>
+      )}
+    </div>
+  )
+}
+
+function OutgoingCard({ item, onChanged }: { item: OutgoingView; onChanged: () => void }): React.JSX.Element {
+  const { t } = useTranslation()
+  const source = item.source.title ? `${item.source.label} · ${item.source.title}` : item.source.label
+  const status =
+    item.state === 'refused' && item.refusal
+      ? t(`intake.outgoing.refused.${item.refusal}` as 'intake.outgoing.refused.BAD_PARAMS', { name: item.recipientName })
+      : item.state === 'sent' && item.noDevice
+        ? t('intake.outgoing.noDevice', { name: item.recipientName })
+        : item.phase === 'rate-limited' && item.retryAt !== undefined
+          ? t('intake.outgoing.rateLimited', { time: formatDateTime(new Date(item.retryAt)) })
+          : item.phase === 'retrying'
+            ? t('intake.outgoing.retrying')
+            : item.phase === 'waiting-connection'
+              ? t('intake.outgoing.waitingConnection')
+              : item.phase === 'sending'
+                ? t('intake.outgoing.sending')
+                : null
+  const button =
+    'cursor-pointer rounded px-2 py-1 text-2xs focus:outline-none focus-visible:ring-1 focus-visible:ring-accent'
+  return (
+    <li
+      aria-label={t('intake.outgoing.itemLabel', { name: item.recipientName, title: item.title })}
+      className="rounded border border-hairline bg-shell px-3 py-2"
+    >
+      <div className="flex items-baseline gap-2 whitespace-nowrap">
+        <span className="text-2xs text-ink">{t('intake.outgoing.to', { name: item.recipientName, handle: item.to })}</span>
+        <span className="min-w-0 truncate text-2xs text-ink-faint">{t('intake.outgoing.fromSession', { source })}</span>
+        <OccurredAt at={item.readAt} />
+      </div>
+      {item.title !== '' ? <p className="mt-1 break-words text-sm text-ink">{item.title}</p> : null}
+      <p className="mt-2 max-h-96 overflow-y-auto whitespace-pre-wrap break-words text-2xs text-ink-dim">{item.body}</p>
+      <p className="mt-1 text-2xs text-ink-faint">{t('intake.bodyLength', { count: item.body.length })}</p>
+      <div className="mt-2 flex items-center gap-2">
+        {status ? <span className="text-2xs text-ink-dim">{status}</span> : null}
+        <span className="flex-1" />
+        {item.canDiscard ? (
+          <button
+            type="button"
+            aria-label={t('intake.outgoing.discard')}
+            onClick={() => void window.workspace.intake.discardOutgoing(item.id).then(onChanged)}
+            className={`${button} text-ink-dim hover:bg-hairline/40`}
+          >
+            {t('intake.outgoing.discard')}
+          </button>
+        ) : null}
+        {item.canDismiss ? (
+          <button
+            type="button"
+            aria-label={t('intake.outgoing.dismiss')}
+            onClick={() => void window.workspace.intake.dismissOutgoing(item.id).then(onChanged)}
+            className={`${button} text-ink-dim hover:bg-hairline/40`}
+          >
+            {t('intake.outgoing.dismiss')}
+          </button>
+        ) : null}
+        {item.canSend ? (
+          <button
+            type="button"
+            aria-label={t('intake.outgoing.send')}
+            onClick={() => void window.workspace.intake.sendOutgoing(item.id).then(onChanged)}
+            className={`${button} bg-accent/10 text-accent`}
+          >
+            {t('intake.outgoing.send')}
+          </button>
+        ) : null}
+      </div>
+    </li>
   )
 }

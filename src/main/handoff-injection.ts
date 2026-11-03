@@ -7,6 +7,21 @@ import type { WorkspaceFolder } from './workspace-store'
 export type FolderList = readonly Pick<WorkspaceFolder, 'name' | 'path'>[]
 
 /**
+ * The teammates file's path while the user holds a team membership with the Team feature on, else `undefined`
+ * (`teammate-handoff`). **One provider for every intro write point** — spawn and `refreshIntros` — so the paragraph
+ * cannot be present at one and forgotten at another; `index.ts` sets it and calls `refreshIntros` when it changes.
+ */
+let teamIntroProvider: () => string | undefined = () => undefined
+
+export function configureTeamIntro(provider: () => string | undefined): void {
+  teamIntroProvider = provider
+}
+
+export function teamIntro(): string | undefined {
+  return teamIntroProvider()
+}
+
+/**
  * 交接的注入貢獻。回傳 `null` ＝ 不參與（落點建不起來）。 There is no switch: handoff is a core
  * capability.
  *
@@ -36,7 +51,7 @@ export function prepareHandoffInjection(
 
   const relations = relationsFile(sessionId)
   if (peer.world) writeRelationsFor(sessionId, peer.world)
-  writeIntroFile(introFile(sessionId), { folders, outbox, name: peer.name, relations, reportable: peer.reportable })
+  writeIntroFile(introFile(sessionId), { folders, outbox, name: peer.name, relations, reportable: peer.reportable, teammates: teamIntro() })
 
   return {
     settings: {},
@@ -75,6 +90,7 @@ export function refreshIntros(
       name: nameOf(sessionId),
       relations: relationsFile(sessionId),
       reportable: reportableOf(sessionId),
+      teammates: teamIntro(),
     })
   }
 }

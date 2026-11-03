@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import path from 'node:path'
 
 import {
   buildDelivery,
@@ -15,6 +16,7 @@ import {
 import { reportIdentity, type ReportDecision } from './handoff-completion'
 import { clearOutbox, outboxRoot, receiptsDir, sourceSessionOf } from './handoff-outbox'
 import { receiptFor, writeReceipt } from './handoff-receipt'
+import type { ReadInput } from './teammate-outbox'
 import { resolveTarget, type TargetCandidate } from './handoff-target'
 import type { DeliverOutcome, IntakeService } from './intake-service'
 import { sourceTitle, type HandoffSource as LineageSource } from './intake-schema'
@@ -98,6 +100,11 @@ export interface HandoffServiceDeps {
   sourceTesting?: Pick<IntakeSourceOptions, 'watch' | 'onRescan'>
   /** The clock a delivery is read against. Tests inject it (a real clock broke a test on a slow machine). */
   now?: () => number
+  /**
+   * Handoffs to a teammate (`teammate-handoff`): a delivery with `to` goes here, before scheduling and target
+   * resolution. Unprovided ⇒ refused as the Team feature being unavailable.
+   */
+  teammates?: { read: (input: ReadInput) => Promise<DeliverOutcome>; hasRoom: () => boolean }
 }
 
 /**
@@ -132,6 +139,8 @@ export class HandoffService {
        * 相同 —— 而使用者會以為工作已經交出去了。
        */
       notifyFailures: true,
+      // A teammate handoff held by `OUTGOING_FULL` is read again once one waiting for confirmation leaves.
+      outgoingHasRoom: () => this.#deps.teammates?.hasRoom() ?? true,
       // Every file read gets a receipt before it is removed (`handoff-receipt`), so the agent can check what
       // became of it instead of assuming.
       onOutcome: (file, outcome) => {
@@ -188,12 +197,28 @@ export class HandoffService {
       // **`MALFORMED` 不消費、也不通知** —— 可能只是寫到一半，而那種項目每次補寫都會再被讀到，
       // 逐次通知沒有上界（`agent-intake` 的例外條款明文排除它）。
       if (payload.reason === 'MALFORMED') return { ok: false, code: 'MALFORMED', consume: false, notify: false }
+      if (payload.reason === 'SCHEDULE_INVALID') return service.reject('SCHEDULE_INVALID', sessionId, payload.rule, { adapter: HANDOFF_ADAPTER })
       return service.reject('FIELD_TYPE', sessionId, payload.field ?? 'target / body', { adapter: HANDOFF_ADAPTER })
     }
 
     const source = this.#deps.sourceOf(sessionId)
     const originId = source ? (source.folderId ?? GLOBAL_SOURCE_ID) : ENDED_SOURCE_ID
     const originLabel = source?.label ?? ENDED_SOURCE_ID
+
+    // A teammate handoff is never resolved against the folders and opens nothing here (`teammate-handoff`, D1).
+    if (payload.teammate) {
+      const failure = { target: payload.teammate.to, origin: originLabel }
+      const teammates = this.#deps.teammates
+      if (!teammates) return { ...service.reject('TEAM_UNAVAILABLE', sessionId, undefined, { adapter: HANDOFF_ADAPTER, ...failure }), failure }
+      const outcome = await teammates.read({
+        sessionId,
+        receiptFile: path.basename(file),
+        source: { label: originLabel, ...(source?.title ? { title: sourceTitle(source.title) } : {}) },
+        payload: payload.teammate,
+        failure,
+      })
+      return outcome.ok ? outcome : { ...outcome, failure }
+    }
 
     /**
      * **診斷欄位由這裡交出去** —— 共用的攝入路徑算不出它們。

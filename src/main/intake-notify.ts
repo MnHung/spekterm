@@ -131,6 +131,19 @@ export type NotifyItem =
    * `COMPLETION_ADAPTER` ＋ session 識別碼表示，觸發時據此把使用者帶去那個 session 的交接單。
    */
   | { kind: 'completion'; sessionId: string; title: string; summary: string }
+  /**
+   * A teammate handoff started waiting for the user to send or discard it (`teammate-handoff`). Not an intake: its
+   * key uses `OUTGOING_ADAPTER` and the outgoing item's id. Only the recipient's display name is said, reduced.
+   */
+  | { kind: 'outgoing'; id: string; recipientName: string }
+
+/** The adapter an outgoing teammate handoff's key carries — **not any intake's adapter**; activation branches on it. */
+export const OUTGOING_ADAPTER = 'teammate-outgoing'
+
+/** A notification's keys are all outgoing teammate handoffs: its activation opens the Outgoing tab. */
+export function onlyOutgoing(keys: readonly IntakeKeyRef[]): boolean {
+  return keys.length > 0 && keys.every((key) => key.adapter === OUTGOING_ADAPTER)
+}
 
 /** 完成通知在主鍵上用的 adapter 名 —— **不是任何 intake 的 adapter**，觸發時據此分流。 */
 export const COMPLETION_ADAPTER = 'handoff-completion'
@@ -157,6 +170,22 @@ export function buildPayload(items: readonly NotifyItem[]): NotifyPayload {
     }
   }
   if (completions.length > 0) {
+    return { title: t('intake.notify.titleMerged', { total: items.length }), body: t('intake.notify.merged') }
+  }
+
+  // Teammate handoffs waiting for confirmation (`teammate-handoff`): fixed copy and the recipient's display name,
+  // reduced like any third-party field; never the body. Mixed with anything else: the coalesced one.
+  const outgoing = items.flatMap((item) => (item.kind === 'outgoing' ? [item] : []))
+  if (outgoing.length > 0 && outgoing.length === items.length) {
+    if (outgoing.length === 1) {
+      return {
+        title: t('intake.notify.outgoingTitle'),
+        body: t('intake.notify.outgoingSingle', { name: reduceForNotification(outgoing[0].recipientName) }),
+      }
+    }
+    return { title: t('intake.notify.outgoingTitle'), body: t('intake.notify.outgoingMerged', { count: outgoing.length }) }
+  }
+  if (outgoing.length > 0) {
     return { title: t('intake.notify.titleMerged', { total: items.length }), body: t('intake.notify.merged') }
   }
 
@@ -273,6 +302,11 @@ export class IntakeNotifier {
     this.#push({ kind: 'completion', sessionId, title, summary })
   }
 
+  /** A teammate handoff started waiting for confirmation (`teammate-handoff`). The same window and bounds. */
+  outgoing(id: string, recipientName: string): void {
+    this.#push({ kind: 'outgoing', id, recipientName })
+  }
+
   #push(item: NotifyItem): void {
     this.#batch.push(item)
     if (this.#cancel !== null) return
@@ -315,7 +349,9 @@ export class IntakeNotifier {
             ? [{ adapter: item.record.adapter, id: item.record.id }]
             : item.kind === 'completion'
               ? [{ adapter: COMPLETION_ADAPTER, id: item.sessionId }]
-              : [],
+              : item.kind === 'outgoing'
+                ? [{ adapter: OUTGOING_ADAPTER, id: item.id }]
+                : [],
         )
     this.#backend.present(buildPayload(batch), keys)
   }

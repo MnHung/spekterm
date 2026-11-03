@@ -85,11 +85,11 @@ describe('parseScheduledAt (scheduled-handoff, D2)', () => {
 describe('the payload and the identity', () => {
   it('reads at; a non-string is FIELD_TYPE', () => {
     const ok = parseHandoffPayload(JSON.stringify({ target: 'b', body: 'x', at: '2026-10-20T09:00Z' }))
-    assert.equal(ok.ok && ok.value.at, '2026-10-20T09:00Z')
+    assert.equal(ok.ok && !ok.teammate && ok.value.at, '2026-10-20T09:00Z')
     const bad = parseHandoffPayload(JSON.stringify({ target: 'b', body: 'x', at: 5 }))
     assert.deepEqual(bad, { ok: false, reason: 'FIELD_TYPE', field: 'at' })
     const none = parseHandoffPayload(JSON.stringify({ target: 'b', body: 'x' }))
-    assert.equal(none.ok && 'at' in none.value, false)
+    assert.equal(none.ok && !none.teammate && 'at' in none.value, false)
   })
 
   it('an unscheduled handoff keeps the id it had before scheduling existed', () => {

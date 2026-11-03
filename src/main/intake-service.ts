@@ -53,6 +53,8 @@ export interface DeliverOutcome {
   record?: IntakeRecord
   /** An accepted delivery that changed nothing: a completion report adopted before (`handoff-receipt`). */
   duplicate?: boolean
+  /** A teammate handoff now waiting for the user (`teammate-handoff`): its receipt carries `ref`. */
+  awaiting?: { ref: string }
   /**
    * 這次拒絕的診斷欄位 —— **由 adapter 填入**。
    *

@@ -58,13 +58,13 @@ import { configureAttachments } from './remote-attachments'
 import { configureAgentStatus } from './agent-status'
 import { contextRoot } from './intake-context'
 import { ensureDeliveryRoot } from './intake-archive'
-import { COMPLETION_ADAPTER, IntakeNotifier } from './intake-notify'
+import { COMPLETION_ADAPTER, IntakeNotifier, onlyOutgoing } from './intake-notify'
 import { electronNotifyBackend } from './intake-notify-electron'
 import { createStubBackend, stubNotifyRoot } from './intake-notify-stub'
 import { IntakeService } from './intake-service'
 import { IntakeSource, inboxRoot } from './intake-source'
-import { configureHandoff, liveSessions } from './handoff-outbox'
-import { refreshIntros } from './handoff-injection'
+import { configureHandoff, liveSessions, receiptsDir, teammatesFile } from './handoff-outbox'
+import { configureTeamIntro, refreshIntros, teamIntro } from './handoff-injection'
 import { refreshRelations } from './handoff-relations'
 import { anyWindowReceives, HandoffOpener, OPENER_INTERVAL_MS, whenAnnounced } from './handoff-opener'
 import { HandoffService, registerHandoffService } from './handoff-service'
@@ -102,6 +102,9 @@ import { openExternalUrl } from './navigation'
 import { registerTeamHandlers, sendShowTeam } from './ipc/team'
 import { createTeamNotifier } from './team-notify'
 import { TeamService } from './team-service'
+import { TeammateOutbox, type TeamPort } from './teammate-outbox'
+import { TEAMMATE_ADAPTER, TeammateInbox } from './teammate-inbox'
+import { writeTeammatesFile } from './teammates-file'
 import { TeamStore } from './team-store'
 
 const currentDir = dirname(fileURLToPath(import.meta.url))
@@ -613,7 +616,8 @@ void app.whenReady().then(async () => {
    */
   intakeService.onFailure((failure) => notifier.failed(failure))
 
-  let openInbox: ((tab?: 'inbox' | 'schedules') => void) | null = null
+  let openInbox: ((tab?: 'inbox' | 'schedules' | 'outgoing') => void) | null = null
+  let outgoingRef: TeammateOutbox | null = null
   let requestAutoAccept: ((adapter: string, id: string, folderId: string) => void) | null = null
   let focusSession: ((sessionId: string) => void) | null = null
   let receivers: () => number[] = () => []
@@ -650,6 +654,15 @@ void app.whenReady().then(async () => {
     onNewReceiver: () => opener?.tick(),
     runNow: (adapter, id) => opener?.runNow(adapter, id) ?? false,
     recurrences: recurrenceKeeper,
+    // Created with the handoff producers below; the handlers only reach it later.
+    outgoing: {
+      list: () => outgoingRef?.list() ?? [],
+      waitingCount: () => outgoingRef?.waitingCount() ?? 0,
+      loadIssue: () => outgoingRef?.loadIssue() ?? null,
+      send: (id) => outgoingRef?.send(id) ?? Promise.resolve(false),
+      discard: (id) => outgoingRef?.discard(id) ?? Promise.resolve(false),
+      dismiss: (id) => outgoingRef?.dismiss(id) ?? Promise.resolve(false),
+    },
   })
 
   /**
@@ -690,6 +703,8 @@ void app.whenReady().then(async () => {
     // 以它為閘會在「剛建好、還沒落盤」的窗口裡誤判成不存在，而症狀是通知偶爾改去打開收件匣
     // （實測三次有一次）。renderer 那側已經有一道「找不到就什麼都不做」，那才是對的位置。
     if (sessionId) focusSession?.(sessionId)
+    // Only teammate handoffs waiting for confirmation ⇒ the Outgoing tab (`teammate-handoff`).
+    else if (onlyOutgoing(keys)) openInbox?.('outgoing')
     // Only proposals ⇒ the Schedules tab, where they are approved (`recurring-handoff`).
     else openInbox?.(notificationTab(keys, (adapter, id) => intakeStore.get(adapter, id)))
   }
@@ -859,6 +874,73 @@ void app.whenReady().then(async () => {
    * 只能經參數供應。
    */
   configureHandoff(app.getPath('userData'))
+
+  /**
+   * Teammate handoffs (`teammate-handoff`): sending (`TeammateOutbox`), receiving (`TeammateInbox`) and the teammates
+   * file, all fed by the team service's extension points. The team as they see it is read from the team service
+   * each time, never kept.
+   */
+  const teamOn = (): boolean => {
+    const snapshot = teamService.snapshot()
+    return snapshot.enabled && snapshot.membership !== null
+  }
+  const teamPort: TeamPort = {
+    enabled: () => teamService.snapshot().enabled,
+    membership: () => teamService.membership(),
+    self: () => teamService.snapshot().membership?.member.handle ?? null,
+    members: () => teamService.snapshot().membership?.members?.list ?? [],
+    connected: () => teamService.snapshot().status === 'connected',
+    operations: () => teamService.operations(),
+    refreshMembers: (options) => teamService.refreshMembers(options),
+    request: (m, p) => teamService.request(m, p),
+  }
+  const teammateOutbox = new TeammateOutbox({
+    file: join(app.getPath('userData'), 'team-outgoing.json'),
+    team: teamPort,
+    receiptsDir,
+    reject: (code, label, detail, failure) => intakeService.reject(code, label, detail, { adapter: HANDOFF_ADAPTER, ...failure }),
+    // A refusal after reading (the membership changed): visible as a handoff failure is — a trace, and a
+    // notification when it is permanent (`SEND_UNCERTAIN`: it may have been delivered).
+    refusedLater: (code, item) => {
+      const failure = { target: `@${item.to}`, origin: item.source.label }
+      intakeService.reject(code, item.title || item.to, undefined, { adapter: HANDOFF_ADAPTER, ...failure })
+      if (code === 'SEND_UNCERTAIN') intakeService.reportFailure({ code, ...failure, at: Date.now() })
+    },
+    onChange: notifyIntakeChanged,
+    onArrival: (item) => notifier.outgoing(item.id, item.recipientName),
+  })
+  outgoingRef = teammateOutbox
+  const teammateInbox = new TeammateInbox({
+    file: join(app.getPath('userData'), 'team-incoming.json'),
+    team: {
+      membership: () => teamService.membership(),
+      teamName: () => teamService.snapshot().membership?.team.name ?? '',
+      operations: () => teamService.operations(),
+      connected: () => teamService.snapshot().status === 'connected',
+      request: (m, p) => teamService.request(m, p),
+    },
+    deliver: (contents, provenance) => intakeService.deliver(contents, TEAMMATE_ADAPTER, provenance),
+    hasRoom: () => intakeService.hasRoom(),
+    unreadable: (key) => void intakeService.reject('TEAMMATE_UNREADABLE', key, undefined, { adapter: TEAMMATE_ADAPTER }),
+  })
+  /** The teammates file: written while on a team with the feature on, removed otherwise. */
+  const writeTeammates = (): void => {
+    const snapshot = teamService.snapshot()
+    const membership = snapshot.membership
+    writeTeammatesFile(
+      teammatesFile(),
+      teamOn() && membership
+        ? {
+            you: membership.member.handle,
+            connected: snapshot.status === 'connected',
+            ...(membership.members ? { fetchedAt: membership.members.fetchedAt } : {}),
+            members: membership.members?.list ?? [],
+          }
+        : null,
+    )
+  }
+  // The introduction's teammate paragraph follows the same condition; every intro write point asks here.
+  configureTeamIntro(() => (teamOn() && teammatesFile() ? teammatesFile() : undefined))
   const nameOf = (sessionId: string): string | undefined =>
     sessionStore.view().find((entry) => entry.session.id === sessionId)?.session.peerName
   /**
@@ -960,6 +1042,7 @@ void app.whenReady().then(async () => {
     onDelivered: () => opener?.tick(),
     acceptReport: (sessionId, summary, identity) => completion.acceptReport(sessionId, summary, identity),
     control: (sourceId, kind, contents, identity, mtimeMs) => sessionControl.deliver(sourceId, kind, contents, identity, mtimeMs),
+    teammates: { read: (input) => teammateOutbox.read(input), hasRoom: () => teammateOutbox.hasRoom() },
   })
   /**
    * Every automatic handoff opening (`scheduled-handoff`, design D3). "A window can receive" is one window that
@@ -997,6 +1080,54 @@ void app.whenReady().then(async () => {
     refreshIntros(liveSessions(), store.list(), nameOf, (sessionId) =>
       sessionStore.view().some((entry) => entry.session.id === sessionId && entry.session.lineage !== undefined),
     )
+  })
+
+  /**
+   * The team's extension points (`teammate-handoff`). A membership or feature change rewrites the introductions
+   * (the teammate paragraph appears or goes), sweeps the outgoing and incoming stores, and rewrites the teammates
+   * file; the connection drives sending and acknowledging.
+   */
+  let lastTeamIntro = teamIntro()
+  teamService.onChange(() => {
+    writeTeammates()
+    teammateOutbox.membershipChanged()
+    teammateInbox.membershipChanged()
+    const intro = teamIntro()
+    if (intro !== lastTeamIntro) {
+      lastTeamIntro = intro
+      refreshIntros(liveSessions(), store.list(), nameOf, (sessionId) =>
+        sessionStore.view().some((entry) => entry.session.id === sessionId && entry.session.lineage !== undefined),
+      )
+    }
+    notifyIntakeChanged()
+  })
+  teamService.onMembers(() => writeTeammates())
+  teamService.onState((state) => {
+    writeTeammates()
+    if (state === 'connected') {
+      teammateOutbox.pump()
+      teammateInbox.connected()
+    } else {
+      teammateOutbox.disconnected()
+      teammateInbox.disconnected()
+    }
+  })
+  teamService.onCredentialDiscarded(() => {
+    teammateOutbox.credentialDiscarded()
+    teammateInbox.credentialDiscarded()
+  })
+  teamService.onEvent('handoff.incoming', (data) => teammateInbox.incoming(data))
+  teammateOutbox.start()
+  teammateInbox.start()
+  writeTeammates()
+  // The team service started before these listened: a connection already up is acted on now.
+  if (teamService.snapshot().status === 'connected') {
+    teammateOutbox.pump()
+    teammateInbox.connected()
+  }
+  app.on('will-quit', () => {
+    teammateOutbox.dispose()
+    teammateInbox.dispose()
   })
 
   /**

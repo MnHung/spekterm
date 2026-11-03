@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import test from 'node:test'
+import test, { describe } from 'node:test'
 
 import { INTRO_HARD_LIMIT, introText, writeIntroFile } from './handoff-intro'
 import { MAX_FIELD_LENGTH, MAX_FIRST_PARTY_BODY_LENGTH } from './intake-schema'
@@ -10,6 +10,7 @@ import { MAX_DELIVERY_BYTES } from './intake-source'
 import { MAX_REPORT_LENGTH, MAX_SCHEDULE_AHEAD_DAYS, parseScheduledAt } from './handoff-delivery'
 import { resolveTarget } from './handoff-target'
 import { MAX_REPEAT_SEARCH_YEARS } from './cron'
+import { teammatesContent, writeTeammatesFile } from './teammates-file'
 
 const folders = [
   { name: 'spekterm', path: '/home/u/git/spekterm' },
@@ -77,6 +78,9 @@ test('tells the agent where its receipts are and what they state (handoff-receip
   const text = introText({ folders, outbox: '/x/outbox/s1', receipts: '/x/receipts/s1' })
   assert.ok(text.includes('/x/receipts/s1'))
   for (const status of ['accepted', 'scheduled', 'duplicate', 'rejected', 'held']) assert.match(text, new RegExp(`^  ${status} +- `, 'm'), status)
+  // `held` is "not finished yet": a confirmed teammate handoff waiting to be sent is held, and its file is gone.
+  assert.match(text, /^ {2}held +- not finished yet; "reason" says what happens next\.$/m)
+  assert.doesNotMatch(text, /the file stays and is read again/)
   assert.match(text, /A file gone from your outbox means its receipt exists/)
   assert.match(text, /give each delivery a new file name/)
   assert.match(text, /"permanent": false means it can succeed once something changes/)
@@ -285,7 +289,7 @@ test('every constraint is stated (scheduled-handoff D10)', async (t) => {
  * replaces the whole introduction with a short preview; this keeps the margin visible to the next change that
  * adds a paragraph. Control group (tasks 7.4): fixed-length padding added to the text turns it red.
  */
-const BUDGET = 8_000
+const BUDGET = 8_500
 
 function realisticInput(count: number): Parameters<typeof introText>[0] {
   const dirs = ['/home/alex/git', '/home/alex/git/acme-workspace', '/home/alex/src/personal']
@@ -299,6 +303,8 @@ function realisticInput(count: number): Parameters<typeof introText>[0] {
     name: 'acme-workspace-0f4c',
     relations: `/home/alex/.config/Spekterm/handoff/relations/${id}.json`,
     reportable: true,
+    // On a team with the feature on (`teammate-handoff`): the longest variant.
+    teammates: '/home/alex/.config/Spekterm/handoff/teammates.json',
   }
 }
 
@@ -345,4 +351,37 @@ test('the stated year bound is the one the schedule search applies', () => {
 test('the zone is the desktop zone when none is passed', () => {
   const text = introText({ folders, outbox: '/data/handoff/s1' })
   assert.ok(text.includes(` in ${Intl.DateTimeFormat().resolvedOptions().timeZone},`))
+})
+
+describe('the teammate paragraph (teammate-handoff)', () => {
+  const teammates = '/data/handoff/teammates.json'
+  const on = introText({ folders, outbox: '/data/handoff/outbox/s1', teammates })
+  const off = introText({ folders, outbox: '/data/handoff/outbox/s1' })
+
+  // Each sentence its own assertion: deleting one turns exactly its test red.
+  const cases: [string, RegExp][] = [
+    ['a handoff can go to a person on the team', /hand work to a person on your team/],
+    ['"to" in place of "target"', /Use "to": "<handle>" instead of "target"/],
+    ['the user confirms on the desktop before anything is sent', /the user confirms it on the desktop before anything is sent/],
+    ['read the teammates file first, at its location', /Before writing one, read \/data\/handoff\/teammates\.json - it lists the teammates and states the rules\./],
+    ['the three teammate receipt statuses', /^ {2}awaiting-confirmation, sent, discarded - a teammate handoff/m],
+  ]
+  for (const [label, pattern] of cases) {
+    test(`on a team: ${label}`, () => assert.match(on, pattern))
+    test(`without a team or with the feature off: no ${label}`, () => assert.doesNotMatch(off, pattern))
+  }
+
+  test('the introduction does not grow with the team, and names no teammate', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'handoff-teammates-'))
+    const file = path.join(dir, 'teammates.json')
+    const member = (i: number): { id: string; handle: string; displayName: string } => ({ id: `m_${i}`, handle: `mate${i}`, displayName: `Display Name ${i}` })
+    writeTeammatesFile(file, { you: 'me', connected: true, members: Array.from({ length: 2 }, (_, i) => member(i)) })
+    const two = introText({ folders, outbox: '/data/handoff/outbox/s1', teammates: file })
+    writeTeammatesFile(file, { you: 'me', connected: true, members: Array.from({ length: 60 }, (_, i) => member(i)) })
+    const sixty = introText({ folders, outbox: '/data/handoff/outbox/s1', teammates: file })
+    assert.equal(two.length, sixty.length)
+    assert.doesNotMatch(sixty, /Display Name|mate1/)
+    // Precondition: the file itself did change.
+    assert.equal((teammatesContent({ you: 'me', connected: true, members: Array.from({ length: 60 }, (_, i) => member(i)) }).teammates as unknown[]).length, 60)
+  })
 })

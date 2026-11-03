@@ -323,6 +323,11 @@ const PROBE_EXPRESSION = `(async () => {
           // recurrence by its id. Neither takes a path.
           'approveRecurrence',
           'stopRecurrence',
+          // teammate-handoff: Send, Discard, Dismiss on an Outgoing item, by its opaque id. None takes a path, a
+          // recipient or a text: the stored item is what is sent.
+          'sendOutgoing',
+          'discardOutgoing',
+          'dismissOutgoing',
           'settle',
           'dismissNotices',
           'dismissNotice',

@@ -251,11 +251,15 @@ function isInstant(value: unknown): value is number {
  * type — the same reason `withSafeSource` gives. A record that loses one is an ordinary item.
  */
 function withSafeSchedule(content: IntakeContent): IntakeContent {
-  const { scheduledAt, targetText, repeat, repeatStart, repeatUntil, recurrenceId, ...rest } = content.verified
+  const { scheduledAt, targetText, repeat, repeatStart, repeatUntil, recurrenceId, handoffBodyLimit, possiblyElsewhere, ...rest } =
+    content.verified
   return {
     ...content,
     verified: {
       ...rest,
+      // `teammate-handoff`: two marks, kept only when `true` — any other value on disk means nothing.
+      ...(handoffBodyLimit === true ? { handoffBodyLimit } : {}),
+      ...(possiblyElsewhere === true ? { possiblyElsewhere } : {}),
       ...(isInstant(scheduledAt) ? { scheduledAt } : {}),
       ...(typeof targetText === 'string' ? { targetText } : {}),
       // `recurring-handoff`: read by the keeper, the opener and every view, so kept only with their types.

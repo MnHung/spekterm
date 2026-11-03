@@ -34,8 +34,9 @@ When you turn on **Settings → Team** and join a team with an invite link, spek
 server — **only to the address in the invite you pasted**, over TLS (to exactly the certificate the invite names,
 when it names one). It keeps one connection open while the feature is on, and reconnects when it drops; turning
 the feature off closes it. Through it pass your device's credential (when it connects), your handle, display name
-and device name, and the team's member list. The server is run by your team, not by the project, and it keeps
-those. **Its operator can read everything that passes through it**: nothing is end-to-end encrypted. See
+and device name, the team's member list, and **handoffs to and from your teammates**. The server is run by your
+team, not by the project, and it keeps those — a handoff's title and body until it is delivered or expires, its
+sender, recipient, times and status after that. **Its operator can read everything that passes through it**: nothing is end-to-end encrypted. See
 [Teams](/docs/using/teams/).
 
 ## Remote access (off unless you turn it on)

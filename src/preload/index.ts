@@ -673,6 +673,12 @@ const workspaceApi = {
     dismissNotices: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('workspace:intake:dismissNotices'),
     dismissNotice: (key: string, code: string): Promise<{ ok: boolean }> =>
       ipcRenderer.invoke('workspace:intake:dismissNotice', key, code),
+    /** Send a teammate handoff waiting in the Outgoing tab (`teammate-handoff`). */
+    sendOutgoing: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke('workspace:intake:outgoing:send', id),
+    /** Discard one: nothing is sent. Refused once its request may have reached the server. */
+    discardOutgoing: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke('workspace:intake:outgoing:discard', id),
+    /** Dismiss a refused one, or a sent one waiting for the recipient's device. */
+    dismissOutgoing: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke('workspace:intake:outgoing:dismiss', id),
     rules: (): Promise<IntakeRulesSnapshot> => ipcRenderer.invoke('workspace:intake:rules'),
     setRules: (config: IntakeRulesSnapshot): Promise<{ ok: boolean }> =>
       ipcRenderer.invoke('workspace:intake:setRules', config),
@@ -684,8 +690,9 @@ const workspaceApi = {
     /** 使用者打開了收件匣 —— 通知上界的重置點。無回應通道。 */
     opened: (): void => ipcRenderer.send('workspace:intake:opened'),
     /** Open the inbox, on the given tab when it is closed (`recurring-handoff`: only proposals ⇒ Schedules). */
-    onOpenInbox: (listener: (tab: 'inbox' | 'schedules') => void): (() => void) => {
-      const handler = (_event: IpcRendererEvent, tab: unknown): void => listener(tab === 'schedules' ? 'schedules' : 'inbox')
+    onOpenInbox: (listener: (tab: 'inbox' | 'schedules' | 'outgoing') => void): (() => void) => {
+      const handler = (_event: IpcRendererEvent, tab: unknown): void =>
+        listener(tab === 'schedules' || tab === 'outgoing' ? tab : 'inbox')
       ipcRenderer.on('workspace:intake:openInbox', handler)
       return () => ipcRenderer.removeListener('workspace:intake:openInbox', handler)
     },

@@ -54,6 +54,12 @@ export interface IntakeView {
    * (a proposal only): up to three times from its start, not past its end, as of when the list was built.
    */
   recurrence?: { role: RecurrenceRole; repeat: string; until?: number; next?: number[] }
+  /**
+   * A teammate's handoff that may also have reached the member's other device (`teammate-handoff`, protocol §11
+   * rule 6). **Desktop only**: `remote-host.ts` drops it from a device's `inbox.list`, whose fields the protocol
+   * document lists.
+   */
+  possiblyElsewhere?: true
 }
 
 /** How many upcoming times a proposal shows. */
@@ -105,6 +111,7 @@ export function project(
     bodyLength: body.length,
     ...(record.state === 'pending' && scheduledAt !== undefined && record.firedAt === undefined ? { scheduledAt } : {}),
     ...(recurrence ? { recurrence } : {}),
+    ...(content.verified.possiblyElsewhere === true ? { possiblyElsewhere: true as const } : {}),
   }
   if (record.state !== 'pending') return withBody
 

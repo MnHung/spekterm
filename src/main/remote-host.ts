@@ -266,7 +266,8 @@ export function createRemoteHost(deps: HostDeps): RemoteHost {
 
     inboxList() {
       const known = new Set(deps.folders.list().map((folder) => folder.id))
-      return { items: listView(deps.intake.store.list(), deps.routing.get(), known) }
+      // `possiblyElsewhere` is the desktop's mark (`teammate-handoff`), not a field of the protocol's Item.
+      return { items: listView(deps.intake.store.list(), deps.routing.get(), known).map(({ possiblyElsewhere: _mark, ...item }) => item) }
     },
 
     handoffList: () => lifecycleViewOf(deps.sessions),

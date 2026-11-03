@@ -30,11 +30,25 @@ another: the invite is still good.
 If the invite carries a certificate fingerprint (a server with its own self-signed certificate), spekterm trusts
 exactly that certificate. Otherwise it checks the server's certificate the usual way.
 
+## Receiving a teammate's handoff
+
+When a teammate sends you a handoff, it arrives in your [inbox](/docs/using/inbox-and-slack/) marked **Teammate**,
+with their display name and your team's name — taken from the server, which knows who sent it, never from the
+text. If spekterm is closed, it arrives at the next start. With several devices, it reaches one of them.
+
+It is handled like any inbox item someone else wrote: you read the whole body first, choose the folder, and accept;
+the new session's first prompt is filled in and **not sent** until you send it. Its body may be up to 20,000
+characters — the same limit as a handoff between your own repositories, longer than other inbox items.
+
+If this device is removed from the team while a handoff was arriving, spekterm still shows it, with a line saying
+it may also have reached your other device.
+
 ## What the server sees
 
 The server is run by your team, and **its operator can read everything that passes through it**, including
-handoffs: nothing is end-to-end encrypted. It keeps your handle, display name, your devices' names, and the
-team's member list. See [Data and network](/docs/reference/data-and-network/).
+handoffs: nothing is end-to-end encrypted. It keeps your handle, display name, your devices' names, the
+team's member list, and each handoff's title and body until it is delivered or expires (after that, only who sent it
+to whom, and when). See [Data and network](/docs/reference/data-and-network/).
 
 Your device's credential is given once when you join and is kept in spekterm's secret file on your computer, next to
 the Slack credentials. spekterm never puts it in a terminal, an agent's environment, or any file it writes for an

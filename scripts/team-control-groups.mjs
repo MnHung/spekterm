@@ -77,6 +77,71 @@ export const MUTATIONS = [
     expectRed: 'a membership without its secret stops, keeping the membership',
     why: 'A membership without its secret taken for a revocation: the user is told they left a team they are still on.',
   },
+  // ---- teammate-handoff ----
+  {
+    name: 'acknowledge-before-storing',
+    file: 'src/main/teammate-inbox.ts',
+    from: `    this.#save([...this.#entries, entry])
+    if (this.#deps.team.operations().includes('handoff.received')) {
+      this.#acknowledge(offer.id)
+      return
+    }`,
+    to: `    if (this.#deps.team.operations().includes('handoff.received')) {
+      this.#acknowledge(offer.id)
+      this.#save([...this.#entries, entry])
+      return
+    }
+    this.#save([...this.#entries, entry])`,
+    command: 'test',
+    testFile: 'src/main/teammate-inbox.test.ts',
+    expectRed: 'stored before acknowledged, and not in the inbox until {}',
+    why: 'Acknowledged first: a crash between the two loses a handoff the server counts as delivered here.',
+  },
+  {
+    name: 'sent-before-confirming',
+    file: 'src/main/teammate-outbox.ts',
+    from: `        state: 'awaiting',
+      }
+      this.#write([...this.#items, item])`,
+    to: `        state: 'confirmed',
+      }
+      this.#write([...this.#items, item])
+      setImmediate(() => this.pump())`,
+    section: 'runTeammateSend',
+    expectRed: 'nothing is sent before the user presses Send',
+    why: 'A teammate handoff sent without the user pressing Send: the one rule the Outgoing tab exists for.',
+  },
+  {
+    name: 'new-client-id-on-resend',
+    file: 'src/main/teammate-outbox.ts',
+    from: `          clientId: ready.clientId,`,
+    to: `          clientId: this.#newId(),`,
+    section: 'runTeammateSend',
+    expectRed: 'a lost answer is resent with the same clientId',
+    why: 'A resend under a new clientId after a lost answer: the server stores the handoff twice.',
+  },
+  {
+    name: 'prompt-from-limit-flag',
+    file: 'src/main/intake-context.ts',
+    from: `  return verified.firstPartyBody === true
+}`,
+    to: `  return verified.firstPartyBody === true || verified.handoffBodyLimit === true
+}`,
+    section: 'runTeammateAccept',
+    expectRed: 'accepting a teammate’s handoff fills the third-party prompt',
+    why: 'The prompt tied to the limit flag: a teammate’s text would be treated as the user’s own task, and sent.',
+  },
+  {
+    name: 'label-from-origin-kind',
+    file: 'src/renderer/src/shell/intake/IntakeOverlay.tsx',
+    from: `        {item.adapter === 'teammate' ? (
+          <span className="rounded bg-accent/10 px-1.5 text-2xs text-accent">{t('intake.teammate')}</span>`,
+    to: `        {item.originKind === 'teammate' ? (
+          <span className="rounded bg-accent/10 px-1.5 text-2xs text-accent">{t('intake.teammate')}</span>`,
+    section: 'runTeammateReceive',
+    expectRed: 'a shared drop point delivery cannot pose as a teammate',
+    why: 'The teammate label decided by a field any shared drop point file can write.',
+  },
 ]
 
 function run(names) {

@@ -15,7 +15,17 @@ import { isProposalRecord } from './recurrence-kind'
  * only here.
  */
 
-export type ReceiptStatus = 'accepted' | 'scheduled' | 'proposed' | 'duplicate' | 'rejected' | 'held'
+export type ReceiptStatus =
+  | 'accepted'
+  | 'scheduled'
+  | 'proposed'
+  | 'duplicate'
+  | 'rejected'
+  | 'held'
+  // A teammate handoff (`teammate-handoff`): waiting for the user, stored by the team server, or discarded.
+  | 'awaiting-confirmation'
+  | 'sent'
+  | 'discarded'
 
 export interface Receipt {
   /** The delivery's file name. */
@@ -27,8 +37,17 @@ export interface Receipt {
   reason?: string
   /** `rejected` only: whether the same content will be refused again, by `isPermanentRejection`. */
   permanent?: boolean
-  /** `scheduled` only: when it opens, ISO 8601 UTC. */
+  /** `scheduled`, and `held` `RATE_LIMITED`: when it opens or is tried again, ISO 8601 UTC. */
   at?: string
+  /**
+   * A teammate handoff's own reference (`teammate-handoff`, design D6): a later rewrite replaces only a receipt
+   * carrying it, never another delivery's that reused the file name.
+   */
+  ref?: string
+  /** `sent`: the recipient's handle, as the members list spells it. */
+  to?: string
+  /** `sent`: the team server's id for the handoff. */
+  handoffId?: string
 }
 
 /** How many receipts a session keeps: an agent that writes many files cannot grow the directory without bound. */
@@ -42,6 +61,8 @@ export function receiptFor(file: string, outcome: SourceOutcome, now: number): R
   if ('failed' in outcome) return { ...base, status: 'held', code: 'READ_FAILED', reason: receiptReason('READ_FAILED') }
   if (outcome.ok) {
     if (outcome.duplicate) return { ...base, status: 'duplicate' }
+    // A teammate handoff waits for the user (`teammate-handoff`); later steps rewrite this receipt by its `ref`.
+    if (outcome.awaiting) return { ...base, status: 'awaiting-confirmation', ref: outcome.awaiting.ref }
     // A repeating handoff waits for the user's approval (`recurring-handoff`); the agent is not told later whether
     // it was given.
     if (isProposalRecord(outcome.record)) return { ...base, status: 'proposed' }
@@ -107,4 +128,26 @@ function trim(dir: string): void {
   if (files.length <= MAX_RECEIPTS) return
   files.sort((a, b) => b.mtimeMs - a.mtimeMs)
   for (const { file } of files.slice(MAX_RECEIPTS)) fs.rmSync(file, { force: true })
+}
+
+/**
+ * Rewrites a teammate handoff's receipt as its sending proceeds (`teammate-handoff`, design D6). **It never creates
+ * the directory**: one that is gone belongs to an ended session, and is not brought back. It writes only over a
+ * receipt carrying the same `ref` — a file the agent reused for another delivery keeps that delivery's receipt, and
+ * a receipt that is gone (trimmed, or deleted by the agent) is not written again. A `held` receipt with the same
+ * code and time is left as it is. Returns whether it wrote.
+ */
+export function rewriteReceipt(dir: string, receipt: Receipt): boolean {
+  const stats = fs.lstatSync(dir, { throwIfNoEntry: false })
+  if (!stats?.isDirectory()) return false
+  const target = path.join(dir, receipt.file)
+  const previous = readReceipt(target)
+  if (!previous || previous.ref === undefined || previous.ref !== receipt.ref) return false
+  if (previous.status === receipt.status && previous.code === receipt.code && previous.at === receipt.at && receipt.status === 'held') {
+    return false
+  }
+  const tmp = path.join(dir, `.${receipt.file}.${process.pid}.tmp`)
+  fs.writeFileSync(tmp, `${JSON.stringify(receipt, null, 2)}\n`, 'utf8')
+  fs.renameSync(tmp, target)
+  return true
 }

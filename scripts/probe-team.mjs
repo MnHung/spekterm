@@ -9,10 +9,11 @@
  * unpinned path (system trust store) is covered by unit tests. **Not covered, and stated**: the real spekterm-server
  * (dogfood, task 7.4), and the desktop notification actually appearing (the stub backend records it).
  */
+import { randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { check, connectToApp, pollFor } from './lib/cdp.mjs'
 import { copy, label } from './lib/copy.mjs'
 import { electronExtraArgs } from './lib/display.mjs'
@@ -22,6 +23,7 @@ import { runSections } from './lib/sections.mjs'
 import { seedLanguage } from './lib/probe-language.mjs'
 import { SETTINGS_DIALOG, clickSelector, openSettings } from './lib/settings.mjs'
 import { STUB_DEVICE_SECRET, startStubTeamServer } from './lib/stub-team-server.mjs'
+import { makeStubAgent } from './lib/stub-agent.mjs'
 
 const PORT = PROBE_PORTS.team.main
 const RESTART_PORT = PROBE_PORTS.team.restart
@@ -36,11 +38,11 @@ function mkTemp(prefix) {
   return dir
 }
 
-async function launch(profile, port = PORT) {
+async function launch(profile, port = PORT, env = {}) {
   seedLanguage(profile)
   const child = spawn('electron', [`--remote-debugging-port=${port}`, `--user-data-dir=${profile}`, ...electronExtraArgs(), '.'], {
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, SHELL: '/bin/sh' },
+    env: { ...process.env, SHELL: '/bin/sh', ...env },
   })
   let output = ''
   child.stderr?.on('data', (chunk) => (output += chunk))
@@ -63,10 +65,10 @@ async function launch(profile, port = PORT) {
 }
 
 /** Each section owns its app and its stub, so a failure never leaves the next one on a busy port. */
-async function withRig(context, body, { profile = mkTemp('spekterm-team-profile-'), stub: existing } = {}) {
+async function withRig(context, body, { profile = mkTemp('spekterm-team-profile-'), stub: existing, env } = {}) {
   const stub = existing ?? (await startStubTeamServer({ port: STUB_PORT }))
   context.stub = stub
-  const app = await launch(profile)
+  const app = await launch(profile, PORT, env)
   context.app = app
   try {
     await body(app, stub, profile)
@@ -390,6 +392,365 @@ async function runMissingSecret(_mode, context) {
   )
 }
 
+
+// ---- Teammate handoffs (`teammate-handoff`) ----
+
+/** A delivery written the way an agent writes one: a temporary name, then a rename into its outbox. */
+function writeDelivery(profile, sessionId, name, payload) {
+  const dir = join(profile, 'handoff', 'outbox', sessionId)
+  mkdirSync(dir, { recursive: true })
+  const target = join(dir, name)
+  writeFileSync(join(dir, `.${name}.tmp`), JSON.stringify(payload))
+  renameSync(join(dir, `.${name}.tmp`), target)
+  return target
+}
+
+const receiptOf = (profile, sessionId, name) => {
+  const file = join(profile, 'handoff', 'receipts', sessionId, name)
+  try {
+    return JSON.parse(readFileSync(file, 'utf8'))
+  } catch {
+    return null
+  }
+}
+
+const awaitReceipt = (profile, sessionId, name, settled, what) =>
+  pollFor({ read: async () => receiptOf(profile, sessionId, name), settled: (r) => r !== null && settled(r), timeoutMs: 45_000, label: what })
+
+const inboxSnapshot = (app) =>
+  app.client.evaluate(`window.workspace.intake.list().then((v) => JSON.stringify(v))`, { awaitPromise: true }).then((json) => JSON.parse(String(json)))
+
+/** The activity bar's inbox badge, read from its own subtree. */
+const BADGE_TEXT = `(() => {
+  const button = document.querySelector('${label('activityBar.handoffs')}')
+  if (!button) return null
+  const badge = button.querySelector('[role="status"]')
+  return badge ? badge.textContent : ''
+})()`
+
+const intakeNotifications = (profile) => {
+  const file = join(profile, 'notify-stub', 'notifications.jsonl')
+  return existsSync(file) ? readFileSync(file, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line)) : []
+}
+
+function fireIntakeNotification(profile, nth) {
+  const root = join(profile, 'notify-stub')
+  mkdirSync(root, { recursive: true })
+  writeFileSync(join(root, 'trigger'), String(nth))
+}
+
+const OUTGOING_ROW = (name, title) => label('intake.outgoing.itemLabel', { name, title })
+const rowText = (app, name, title) => app.client.evaluate(`document.querySelector(${JSON.stringify(OUTGOING_ROW(name, title))})?.textContent ?? ''`)
+/** The texts of the row's paragraphs: the body is one of them, as the user sees it. */
+const rowParagraphs = (app, name, title) =>
+  app.client.evaluate(`[...(document.querySelector(${JSON.stringify(OUTGOING_ROW(name, title))})?.querySelectorAll('p') ?? [])].map((p) => p.textContent)`)
+
+async function clickInRow(app, name, title, key) {
+  return pollFor({
+    read: () =>
+      app.client.evaluate(`(() => {
+        const button = document.querySelector(${JSON.stringify(OUTGOING_ROW(name, title))})?.querySelector('${label(key)}')
+        if (!button) return false
+        button.click()
+        return true
+      })()`),
+    settled: Boolean,
+    timeoutMs: 15_000,
+    label: `${copy(key)} on “${title}”`,
+  })
+}
+
+const OPEN_INBOX = `(() => {
+  const dialog = document.querySelector('[role="dialog"]${label('intake.label')}')
+  if (dialog) return true
+  document.querySelector('${label('activityBar.handoffs')}')?.click()
+  return !!document.querySelector('[role="dialog"]${label('intake.label')}')
+})()`
+
+const selectedTab = (app) =>
+  app.client.evaluate(`document.querySelector('[role="tablist"]${label('intake.label')} [role="tab"][aria-selected="true"]')?.getAttribute('aria-label') ?? ''`)
+
+async function openOutgoing(app) {
+  await pollFor({ read: () => app.client.evaluate(OPEN_INBOX), settled: Boolean, timeoutMs: 15_000, label: 'inbox open' })
+  await pollFor({
+    read: () => app.client.evaluate(`(() => { const t = document.querySelector('[role="tab"]${label('intake.outgoingTab')}'); t?.click(); return !!t })()`),
+    settled: Boolean,
+    timeoutMs: 15_000,
+    label: 'Outgoing tab',
+  })
+}
+
+const BODY = 'Please review db/0042 before Friday.\u0007\u202e\n' + 'Context line. '.repeat(120)
+const SHOWN_BODY = BODY.split('\u0007').join('').split('\u202e').join('')
+
+async function runTeammateSend(_mode, context) {
+  await withRig(context, async (app, stub, profile) => {
+    await joinMember(app, stub)
+    await awaitStatus(app, 'connected', 'connected')
+    const sid = randomUUID()
+    writeDelivery(profile, sid, 'a.json', { to: 'Alex', title: 'review the migration', body: BODY })
+    const awaiting = await awaitReceipt(profile, sid, 'a.json', (r) => r.status !== 'held', 'the receipt after reading')
+    check(results, 'a valid teammate handoff gets an awaiting-confirmation receipt', awaiting.status === 'awaiting-confirmation' && typeof awaiting.ref === 'string', JSON.stringify(awaiting))
+    const badge = await pollFor({ read: () => app.client.evaluate(BADGE_TEXT), settled: (text) => text === '1', timeoutMs: 15_000, label: 'the badge counts it' })
+    check(results, 'a teammate handoff waiting for confirmation counts in the badge', badge === '1', String(badge))
+    check(results, 'nothing is sent before the user presses Send', stub.count('handoff.send') === 0, `sends ${stub.count('handoff.send')}`)
+    const snapshot = await inboxSnapshot(app)
+    check(results, 'a teammate handoff opens no session and is no inbox item', snapshot.items.length === 0, JSON.stringify(snapshot.items).slice(0, 120))
+
+    const sent = await pollFor({ read: async () => intakeNotifications(profile), settled: (list) => list.length > 0, timeoutMs: 20_000, label: 'notified' })
+    const note = JSON.stringify(sent[0])
+    check(results, 'the notification names the recipient and not the body', note.includes('Alex') && !note.includes('db/0042'), note.slice(0, 200))
+    fireIntakeNotification(profile, 1)
+    const tab = await pollFor({ read: () => selectedTab(app), settled: (value) => value === copy('intake.outgoingTab'), timeoutMs: 15_000, label: 'opened on Outgoing' })
+    check(results, 'activating the notification opens the inbox on the Outgoing tab', tab === copy('intake.outgoingTab'), tab)
+    const text = await pollFor({ read: () => rowText(app, 'Alex', 'review the migration'), settled: (t) => t.includes('Context line.'), timeoutMs: 15_000, label: 'the row' })
+    check(results, 'the Outgoing row shows the recipient, the title and the whole body with its length', text.includes('@alex') && text.includes(SHOWN_BODY.slice(-40)) && text.includes(copy('intake.bodyLength', { count: SHOWN_BODY.length })), text.slice(0, 160))
+
+    await clickInRow(app, 'Alex', 'review the migration', 'intake.outgoing.send')
+    await pollFor({ read: async () => stub.count('handoff.send'), settled: (n) => n === 1, timeoutMs: 15_000, label: 'sent' })
+    const request = stub.sends[0]
+    // Cross-process: the request the server received against a paragraph of the row as the renderer drew it.
+    const paragraphs = await rowParagraphs(app, 'Alex', 'review the migration')
+    check(results, 'the body sent equals, character for character, the body the Outgoing tab showed', paragraphs.includes(request.payload?.body) && request.payload.body === SHOWN_BODY, `${request.payload?.body?.length} vs ${SHOWN_BODY.length}`)
+    check(results, 'the request carries the member handle and enc none', request.to === 'alex' && request.payload?.enc === 'none', JSON.stringify({ to: request.to, enc: request.payload?.enc }))
+    const done = await awaitReceipt(profile, sid, 'a.json', (r) => r.status === 'sent', 'sent receipt')
+    check(results, 'the receipt states sent, and does not say the teammate received it', done.status === 'sent' && done.to === 'alex' && !/received|accepted/.test(done.reason ?? ''), JSON.stringify(done))
+    const after = await pollFor({ read: () => app.client.evaluate(BADGE_TEXT), settled: (t) => t === '', timeoutMs: 15_000, label: 'badge cleared' })
+    check(results, 'after Send the badge no longer counts it', after === '', String(after))
+
+    // A lost answer: the connection drops before the answer, and the same clientId is sent again.
+    let dropped = false
+    stub.state.respond = (m, _p, socket) => {
+      if (m !== 'handoff.send' || dropped) return undefined
+      dropped = true
+      setTimeout(() => socket.terminate(), 20)
+      return 'silent'
+    }
+    writeDelivery(profile, sid, 'b.json', { to: 'alex', title: 'second', body: 'the second one' })
+    await openOutgoing(app)
+    await clickInRow(app, 'Alex', 'second', 'intake.outgoing.send')
+    const resent = await pollFor({ read: async () => stub.sends.filter((p) => p.payload?.title === 'second'), settled: (list) => list.length >= 2, timeoutMs: 45_000, label: 'resent after reconnecting' })
+    check(
+      results,
+      'a lost answer is resent with the same clientId',
+      resent.length >= 2 && resent[0].clientId === resent[1].clientId,
+      `${resent.map((p) => p.clientId).join(' / ')} | hello ${stub.count('hello')} tcp ${stub.connections.tcp} | receipt ${JSON.stringify(receiptOf(profile, sid, 'b.json'))} | ${(await teamView(app)).status}`,
+    )
+    const second = await awaitReceipt(profile, sid, 'b.json', (r) => r.status === 'sent', 'second sent')
+    check(results, 'the resent handoff ends sent', second.status === 'sent', JSON.stringify(second))
+  })
+}
+
+async function runTeammateRateLimitAndRefusal(_mode, context) {
+  await withRig(context, async (app, stub, profile) => {
+    await joinMember(app, stub)
+    await awaitStatus(app, 'connected', 'connected')
+    const sid = randomUUID()
+    stub.state.respond = (m) => (m === 'handoff.send' ? { ok: false, e: { code: 'RATE_LIMITED', message: 'limit', detail: { retryAt: Date.now() + 60 * 60_000 } } } : undefined)
+    writeDelivery(profile, sid, 'r.json', { to: 'alex', title: 'limited', body: 'b' })
+    await awaitReceipt(profile, sid, 'r.json', (r) => r.status === 'awaiting-confirmation', 'awaiting')
+    await openOutgoing(app)
+    await clickInRow(app, 'Alex', 'limited', 'intake.outgoing.send')
+    const held = await awaitReceipt(profile, sid, 'r.json', (r) => r.code === 'RATE_LIMITED', 'rate limited')
+    check(results, 'a rate-limited handoff is held with the time it is tried again', held.status === 'held' && typeof held.at === 'string', JSON.stringify(held))
+    const prefix = copy('intake.outgoing.rateLimited', { time: '' }).trim()
+    const text = await pollFor({ read: () => rowText(app, 'Alex', 'limited'), settled: (t) => t.includes(prefix), timeoutMs: 15_000, label: 'rate limit shown' })
+    check(results, 'the Outgoing tab shows it waiting until that time', text.includes(prefix), text.slice(0, 200))
+    await clickInRow(app, 'Alex', 'limited', 'intake.outgoing.discard')
+    const discarded = await awaitReceipt(profile, sid, 'r.json', (r) => r.status === 'discarded', 'discarded')
+    check(results, 'a rate-limited handoff can still be discarded', discarded.status === 'discarded', JSON.stringify(discarded))
+    const sends = stub.count('handoff.send')
+    await new Promise((resolve) => setTimeout(resolve, 2000))
+    check(results, 'a discarded handoff is not sent again', stub.count('handoff.send') === sends, `${sends} → ${stub.count('handoff.send')}`)
+
+    stub.state.respond = (m) => (m === 'handoff.send' ? { ok: false, e: { code: 'RECIPIENT_UNKNOWN', message: 'gone' } } : undefined)
+    writeDelivery(profile, sid, 'u.json', { to: 'alex', title: 'refused one', body: 'b' })
+    await awaitReceipt(profile, sid, 'u.json', (r) => r.status === 'awaiting-confirmation', 'awaiting')
+    await clickInRow(app, 'Alex', 'refused one', 'intake.outgoing.send')
+    const refused = await awaitReceipt(profile, sid, 'u.json', (r) => r.status === 'rejected', 'refused')
+    check(results, 'a server refusal reaches the receipt with its code', refused.code === 'RECIPIENT_UNKNOWN' && refused.permanent === true, JSON.stringify(refused))
+    const reason = copy('intake.outgoing.refused.RECIPIENT_UNKNOWN', { name: 'Alex' })
+    const row = await pollFor({ read: () => rowText(app, 'Alex', 'refused one'), settled: (t) => t.includes(reason), timeoutMs: 15_000, label: 'refusal shown' })
+    check(results, 'a refused send stays in Outgoing with its reason', row.includes(reason), row.slice(0, 200))
+
+    // Discard before sending: nothing reaches the server.
+    stub.state.respond = undefined
+    const before = stub.count('handoff.send')
+    writeDelivery(profile, sid, 'd.json', { to: 'alex', title: 'thrown away', body: 'b' })
+    await awaitReceipt(profile, sid, 'd.json', (r) => r.status === 'awaiting-confirmation', 'awaiting')
+    await clickInRow(app, 'Alex', 'thrown away', 'intake.outgoing.discard')
+    const gone = await awaitReceipt(profile, sid, 'd.json', (r) => r.status === 'discarded', 'discarded')
+    await new Promise((resolve) => setTimeout(resolve, 1000))
+    check(results, 'Discard sends nothing and the receipt says discarded', gone.status === 'discarded' && stub.count('handoff.send') === before, `sends ${before} → ${stub.count('handoff.send')}`)
+  })
+}
+
+async function runTeammateRefusedBeforeAsking(_mode, context) {
+  await withRig(context, async (app, stub, profile) => {
+    const sid = randomUUID()
+    writeDelivery(profile, sid, 'none.json', { to: 'alex', title: 't', body: 'b' })
+    const noTeam = await awaitReceipt(profile, sid, 'none.json', (r) => r.status === 'rejected', 'no team')
+    check(results, 'without a team a teammate handoff is refused, not permanent', noTeam.code === 'TEAM_UNAVAILABLE' && noTeam.permanent === false, JSON.stringify(noTeam))
+
+    await joinMember(app, stub)
+    await awaitStatus(app, 'connected', 'connected')
+    const connectedAt = Date.now()
+    writeDelivery(profile, sid, 'who.json', { to: 'nobody', title: 't', body: 'b' })
+    const unknown = await awaitReceipt(profile, sid, 'who.json', (r) => r.status === 'rejected', 'unknown handle')
+    check(results, 'a handle that is not a teammate’s is refused without asking', unknown.code === 'TEAMMATE_NOT_FOUND' && unknown.permanent === true, JSON.stringify(unknown))
+    const snapshot = await inboxSnapshot(app)
+    check(results, 'nothing appears for confirmation, and the user sees the failure', (snapshot.outgoing?.items ?? []).length === 0 && snapshot.notices.some((n) => n.code === 'TEAMMATE_NOT_FOUND'), JSON.stringify(snapshot.notices).slice(0, 200))
+
+    // The refetch is throttled to once a minute (the connect fetched the list): a member who joined is found by the
+    // first read after that minute, not by every read.
+    await new Promise((resolve) => setTimeout(resolve, Math.max(0, connectedAt + 61_000 - Date.now())))
+    stub.state.members = [...stub.state.members, { id: 'm_kim', handle: 'kim', displayName: 'Kim' }]
+    writeDelivery(profile, sid, 'kim.json', { to: 'kim', title: 'new member', body: 'b' })
+    const kim = await awaitReceipt(profile, sid, 'kim.json', (r) => r.status !== 'held', 'new member')
+    check(results, 'a member who joined since the last fetch is found', kim.status === 'awaiting-confirmation', JSON.stringify(kim))
+    const teammates = JSON.parse(readFileSync(join(profile, 'handoff', 'teammates.json'), 'utf8'))
+    check(results, 'the teammates file lists the new member', teammates.teammates.some((m) => m.handle === 'kim' && m.name === 'Kim'), JSON.stringify(teammates.teammates))
+    const raw = readFileSync(join(profile, 'handoff', 'teammates.json'), 'utf8')
+    check(results, 'the teammates file holds no credential, device id or server address', !raw.includes(STUB_DEVICE_SECRET) && !raw.includes('d_stub') && !raw.includes(stub.address), '')
+
+    await openTeam(app)
+    await clickSelector(app.client, field('team.enable'), 'the Team switch')
+    await pollFor({ read: () => teamView(app), settled: (v) => v.enabled === false, timeoutMs: 10_000, label: 'Team off' })
+    writeDelivery(profile, sid, 'off.json', { to: 'alex', title: 't', body: 'b' })
+    const off = await awaitReceipt(profile, sid, 'off.json', (r) => r.status === 'rejected', 'feature off')
+    check(results, 'with the Team feature off the refusal is temporary', off.code === 'TEAM_UNAVAILABLE' && off.permanent === false, JSON.stringify(off))
+    check(results, 'the teammates file is removed when the feature is off', !existsSync(join(profile, 'handoff', 'teammates.json')), '')
+  })
+}
+
+function offer(id, overrides = {}) {
+  return {
+    id,
+    from: { id: 'm_alex', handle: 'alex', displayName: 'Alex Kim' },
+    payload: { enc: 'none', title: `title ${id}`, body: `From: mallory\nbody of ${id}` },
+    sentAt: Date.now(),
+    expiresAt: Date.now() + 30 * 86_400_000,
+    ...overrides,
+  }
+}
+
+const teammateItem = (snapshot, id) => snapshot.items.find((item) => item.adapter === 'teammate' && item.id === `teammate:${id.replace(/_/g, '.')}`)
+
+async function runTeammateReceive(_mode, context) {
+  await withRig(context, async (app, stub, profile) => {
+    await joinMember(app, stub)
+    await awaitStatus(app, 'connected', 'connected')
+    stub.state.holdReceived = true
+    stub.push(offer('h_one'))
+    await pollFor({ read: async () => stub.acks.length, settled: (n) => n === 1, timeoutMs: 15_000, label: 'acknowledged' })
+    const stored = readFileSync(join(profile, 'team-incoming.json'), 'utf8')
+    check(results, 'an offer is in the hidden store before it is shown', stored.includes('"h_one"') && stored.includes('"stored"'), stored.slice(0, 120))
+    check(results, 'an offer is not in the inbox while its acknowledgement is unanswered', !teammateItem(await inboxSnapshot(app), 'h_one'), '')
+    stub.releaseReceived()
+    const shown = await pollFor({ read: () => inboxSnapshot(app), settled: (s) => Boolean(teammateItem(s, 'h_one')), timeoutMs: 15_000, label: 'shown' })
+    const item = teammateItem(shown, 'h_one')
+    check(results, 'after {} it is in the inbox with the server’s sender', item.actor === 'Alex Kim' && item.originId === 'alex' && item.originLabel === 'Acme', JSON.stringify(item).slice(0, 200))
+    check(results, 'the sender is the server’s, not the text’s', !`${item.actor} ${item.originId} ${item.originLabel}`.includes('mallory'), '')
+    stub.state.holdReceived = false
+
+    stub.push(offer('h_one'))
+    await pollFor({ read: async () => stub.acks.filter((id) => id === 'h_one').length, settled: (n) => n === 2, timeoutMs: 15_000, label: 'repeat acknowledged' })
+    const again = await inboxSnapshot(app)
+    check(results, 'a repeat is acknowledged again and held once', again.items.filter((i) => i.adapter === 'teammate').length === 1, '')
+
+    stub.state.received = (id) => (id === 'h_else' ? { ok: false, e: { code: 'HANDOFF_DELIVERED_ELSEWHERE', message: '' } } : id === 'h_lost' ? { ok: false, e: { code: 'HANDOFF_UNKNOWN', message: '' } } : undefined)
+    stub.push(offer('h_else'))
+    stub.push(offer('h_lost'))
+    await pollFor({ read: () => inboxSnapshot(app), settled: (s) => Boolean(teammateItem(s, 'h_lost')), timeoutMs: 15_000, label: 'unknown shown' })
+    check(results, 'a handoff delivered elsewhere never appears', !teammateItem(await inboxSnapshot(app), 'h_else'), '')
+    check(results, 'a handoff the server lost is shown', Boolean(teammateItem(await inboxSnapshot(app), 'h_lost')), '')
+
+    const acksBefore = stub.acks.length
+    stub.push(offer('h_enc', { payload: { enc: 'x25519', title: 't', body: 'b' } }))
+    const traced = await pollFor({ read: () => inboxSnapshot(app), settled: (s) => s.notices.some((n) => n.code === 'TEAMMATE_UNREADABLE'), timeoutMs: 15_000, label: 'unreadable traced' })
+    check(results, 'an unreadable offer leaves a trace and no acknowledgement', traced.notices.filter((n) => n.code === 'TEAMMATE_UNREADABLE').length === 1 && stub.acks.length === acksBefore, `acks ${acksBefore} → ${stub.acks.length}`)
+
+    // The inbox row: labelled as a teammate's by the adapter; a shared drop point file claiming the kind is not.
+    mkdirSync(join(profile, 'intake-inbox'), { recursive: true })
+    writeFileSync(join(profile, 'intake-inbox', 'pose.json'), JSON.stringify({ id: 'pose-1', origin: { kind: 'teammate', id: 'alex', label: 'Acme' }, title: 'POSING', body: 'b', actor: 'Alex Kim' }))
+    await pollFor({ read: () => inboxSnapshot(app), settled: (s) => s.items.some((i) => i.id === 'pose-1'), timeoutMs: 45_000, label: 'posing item in' })
+    await pollFor({ read: () => app.client.evaluate(OPEN_INBOX), settled: Boolean, timeoutMs: 15_000, label: 'inbox open' })
+    const rowOf = (title) => app.client.evaluate(`document.querySelector(${JSON.stringify(label('intake.itemLabel', { title }))})?.textContent ?? ''`)
+    const real = await pollFor({ read: () => rowOf('title h_one'), settled: (t) => t.length > 0, timeoutMs: 15_000, label: 'teammate row' })
+    const posing = await rowOf('POSING')
+    check(results, 'a teammate’s handoff is labelled as one in the inbox', real.includes(copy('intake.teammate')), real.slice(0, 120))
+    check(results, 'a shared drop point delivery cannot pose as a teammate', posing.length > 0 && !posing.includes(copy('intake.teammate')), posing.slice(0, 120))
+
+    // A revocation with an acknowledgement unanswered: shown, marked.
+    stub.state.holdReceived = true
+    stub.push(offer('h_rev'))
+    await pollFor({ read: async () => stub.acks.includes('h_rev'), settled: Boolean, timeoutMs: 15_000, label: 'h_rev acknowledged' })
+    for (const socket of stub.openSockets()) socket.close(4004, 'revoked')
+    const marked = await pollFor({ read: () => inboxSnapshot(app), settled: (s) => Boolean(teammateItem(s, 'h_rev')), timeoutMs: 20_000, label: 'revoked shown' })
+    check(results, 'a revoked device shows what it never had confirmed, marked', teammateItem(marked, 'h_rev')?.possiblyElsewhere === true, JSON.stringify(teammateItem(marked, 'h_rev') ?? null).slice(0, 160))
+    const revRow = await pollFor({ read: () => rowOf('title h_rev'), settled: (t) => t.includes(copy('intake.possiblyElsewhere')), timeoutMs: 15_000, label: 'mark shown' })
+    check(results, 'the mark is shown on the row', revRow.includes(copy('intake.possiblyElsewhere')), revRow.slice(0, 160))
+  })
+}
+
+async function runTeammateAccept(_mode, context) {
+  const profile = mkTemp('spekterm-team-accept-')
+  const repo = mkTemp('spekterm-team-repo-')
+  writeFileSync(join(profile, 'workspace.json'), JSON.stringify({ version: 1, folders: [{ id: 'f1', path: repo, name: basename(repo), addedAt: '2026-11-03T00:00:00.000Z' }] }))
+  writeFileSync(join(profile, 'intake-routing.json'), JSON.stringify({ version: 1, rules: [], fallbackFolderId: null }))
+  const configDir = mkTemp('spekterm-team-config-')
+  const stubAgent = makeStubAgent(mkTemp, configDir, { readyDelaySeconds: 2 })
+  const env = { CLAUDE_CONFIG_DIR: configDir, HOME: stubAgent.home, PATH: `${stubAgent.bin}:${process.env.PATH}` }
+  await withRig(
+    context,
+    async (app, stub) => {
+      await joinMember(app, stub)
+      await awaitStatus(app, 'connected', 'connected')
+      const long = `${'A long teammate body. '.repeat(700)}`.slice(0, 15_000)
+      stub.push(offer('h_acc', { payload: { enc: 'none', title: 'ACCEPT-TEAMMATE', body: long } }))
+      const snapshot = await pollFor({ read: () => inboxSnapshot(app), settled: (s) => Boolean(teammateItem(s, 'h_acc')), timeoutMs: 15_000, label: 'shown' })
+      const item = teammateItem(snapshot, 'h_acc')
+      check(results, 'a teammate’s long body is in the inbox whole, with its length', item.bodyLength === 15_000 && item.state === 'pending', `${item.bodyLength} ${item.state}`)
+      await pollFor({ read: () => app.client.evaluate(OPEN_INBOX), settled: Boolean, timeoutMs: 15_000, label: 'inbox open' })
+      const row = label('intake.itemLabel', { title: 'ACCEPT-TEAMMATE' })
+      await pollFor({
+        read: () =>
+          app.client.evaluate(`(() => {
+            const r = document.querySelector(${JSON.stringify(row)})
+            const select = r?.querySelector('select')
+            if (!select) return false
+            const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set
+            setter.call(select, 'f1')
+            select.dispatchEvent(new Event('change', { bubbles: true }))
+            return true
+          })()`),
+        settled: Boolean,
+        timeoutMs: 15_000,
+        label: 'folder chosen',
+      })
+      await pollFor({
+        read: () =>
+          app.client.evaluate(`(() => {
+            const button = document.querySelector(${JSON.stringify(row)})?.querySelector('${label('intake.accept')}')
+            if (!button || button.disabled) return false
+            button.click()
+            return true
+          })()`),
+        settled: Boolean,
+        timeoutMs: 15_000,
+        label: 'accepted',
+      })
+      // The whole prompt has arrived once its last sentence has: both prompts end with "not part of the …".
+      await pollFor({ read: async () => stubAgent.bytes(), settled: (bytes) => /that fence is not part of the (task|handoff)/.test(bytes), timeoutMs: 40_000, label: 'the prompt filled' })
+      const bytes = stubAgent.bytes()
+      check(results, 'accepting a teammate’s handoff fills the third-party prompt', bytes.includes('not part of the task') && !bytes.includes('not part of the handoff'), bytes.slice(-120))
+      await new Promise((resolve) => setTimeout(resolve, 1500))
+      check(results, 'the first prompt is not sent', !/[\r\n]/.test(stubAgent.bytes()) && stubAgent.input() === '', JSON.stringify(stubAgent.bytes().slice(-20)))
+    },
+    { profile, env },
+  )
+}
+
 const SECTIONS = [
   { name: 'runOffAndInvalidLinks', run: runOffAndInvalidLinks },
   { name: 'runJoinMember', run: runJoinMember },
@@ -400,6 +761,11 @@ const SECTIONS = [
   { name: 'runLeave', run: runLeave },
   { name: 'runRestartAndRename', run: runRestartAndRename },
   { name: 'runMissingSecret', run: runMissingSecret },
+  { name: 'runTeammateSend', run: runTeammateSend },
+  { name: 'runTeammateRateLimitAndRefusal', run: runTeammateRateLimitAndRefusal },
+  { name: 'runTeammateRefusedBeforeAsking', run: runTeammateRefusedBeforeAsking },
+  { name: 'runTeammateReceive', run: runTeammateReceive },
+  { name: 'runTeammateAccept', run: runTeammateAccept },
 ]
 
 const outcome = await runSections({

@@ -84,6 +84,13 @@ export type WatcherFactory = (options: CreateWatcherOptions) => FSWatcher
 /** What came of reading one file: a delivery's outcome, or a delivery that threw. */
 export type SourceOutcome = DeliverOutcome | { failed: true }
 
+/** What a remembered file is held back by, so the re-read knows when room makes it worth reading again. */
+type HeldBy = 'CAPACITY' | 'OUTGOING_FULL' | null
+
+function heldBy(code: string | undefined): HeldBy {
+  return code === 'CAPACITY' || code === 'OUTGOING_FULL' ? code : null
+}
+
 export function inboxRoot(userDataPath: string): string {
   return path.join(userDataPath, 'intake-inbox')
 }
@@ -179,6 +186,11 @@ export interface IntakeSourceOptions {
    * Must be finite and within `(0, 60 000]` — Node runs `0` and `Infinity` every millisecond.
    */
   rescanIntervalMs?: number
+  /**
+   * Whether the outgoing store of teammate handoffs has room again (`teammate-handoff`): a file held with
+   * `OUTGOING_FULL` is read again by the periodic re-read once it has, as `CAPACITY` is with `hasRoom()`.
+   */
+  outgoingHasRoom?: () => boolean
 }
 
 export class IntakeSource {
@@ -194,6 +206,7 @@ export class IntakeSource {
   readonly #onRescan?: (phase: 'start' | 'end') => void
   readonly #onOutcome?: (file: string, outcome: SourceOutcome) => Promise<void> | void
   readonly #rescanIntervalMs: number
+  readonly #outgoingHasRoom?: () => boolean
   /**
    * Files being handled right now, and the handling. `scan()` awaits an entry instead of skipping
    * it: `endSession` scans and then deletes the outbox, and a file the re-read is in the middle of
@@ -204,7 +217,7 @@ export class IntakeSource {
    * Files still on disk whose re-read would repeat something, with the state they were handled at.
    * Only the periodic re-read consults it — see the header, "The third entry point".
    */
-  #handled = new Map<string, FileState & { capacity: boolean }>()
+  #handled = new Map<string, FileState & { held: HeldBy }>()
   #timer: NodeJS.Timeout | null = null
   #rescanning = false
 
@@ -220,6 +233,7 @@ export class IntakeSource {
     onRescan,
     onOutcome,
     rescanIntervalMs = RESCAN_INTERVAL_MS,
+    outgoingHasRoom,
   }: IntakeSourceOptions) {
     if (!Number.isFinite(rescanIntervalMs) || rescanIntervalMs <= 0 || rescanIntervalMs > MAX_RESCAN_INTERVAL_MS) {
       throw new RangeError(`rescan interval must be within (0, ${MAX_RESCAN_INTERVAL_MS}] ms: ${rescanIntervalMs}`)
@@ -235,6 +249,7 @@ export class IntakeSource {
     this.#onRescan = onRescan
     this.#onOutcome = onOutcome
     this.#rescanIntervalMs = rescanIntervalMs
+    this.#outgoingHasRoom = outgoingHasRoom
   }
 
   /** Tell `onOutcome`, never throwing: a failed receipt is logged and the file is still processed. */
@@ -347,7 +362,8 @@ export class IntakeSource {
   async #unchangedSinceHandled(file: string): Promise<boolean> {
     const recorded = this.#handled.get(file)
     if (!recorded) return false
-    if (recorded.capacity && this.#service.hasRoom()) return false
+    if (recorded.held === 'CAPACITY' && this.#service.hasRoom()) return false
+    if (recorded.held === 'OUTGOING_FULL' && this.#outgoingHasRoom?.()) return false
     let stats: fs.Stats
     try {
       stats = await fs.promises.stat(file)
@@ -394,8 +410,8 @@ export class IntakeSource {
   }
 
   /** Record a file whose re-read would repeat something, at the state it was handled. */
-  #remember(file: string, state: FileState, capacity: boolean): void {
-    this.#handled.set(file, { ...state, capacity })
+  #remember(file: string, state: FileState, held: HeldBy): void {
+    this.#handled.set(file, { ...state, held })
   }
 
   /**
@@ -409,7 +425,7 @@ export class IntakeSource {
       this.#handled.delete(file)
     } catch (error) {
       console.error(`[intake] could not remove ${file}: ${String(error)}`)
-      this.#remember(file, state, false)
+      this.#remember(file, state, null)
     }
   }
 
@@ -460,7 +476,7 @@ export class IntakeSource {
       // before it saves, so a retry could meet its own half-applied first attempt and be taken
       // for a same-content duplicate — consumed silently. It is retried at the next start (as
       // before) or when the file changes.
-      this.#remember(file, read.state, false)
+      this.#remember(file, read.state, null)
       return
     }
     this.#reportIfPermanent(outcome)
@@ -469,7 +485,7 @@ export class IntakeSource {
     // Left behind **and visible** (today: the inbox is full) ⇒ recorded, so the re-read does not
     // count its trace again. Left behind with nothing visible (unparseable, capability off) ⇒ not
     // recorded: reading it again is free, and it must be picked up as soon as it becomes valid.
-    else if (outcome.notify) this.#remember(file, read.state, outcome.code === 'CAPACITY')
+    else if (outcome.notify) this.#remember(file, read.state, heldBy(outcome.code))
     else this.#handled.delete(file)
     this.#onProcessed?.(file, outcome.consume)
   }

@@ -63,6 +63,18 @@ export const MAX_BODY_LENGTH = 4000
  */
 export const MAX_FIRST_PARTY_BODY_LENGTH = 20_000
 
+/**
+ * The team server's body limit for `handoff.send` (spekterm-server protocol §5). Fixed by the protocol, unlike the
+ * first-party limit, which is re-measured on CLI upgrades.
+ */
+export const SERVER_BODY_LIMIT = 20_000
+
+/**
+ * A teammate handoff's body limit (`teammate-handoff`), on both sides: the smaller of the same-machine handoff's and
+ * the server's, so a later change to the former can never let the user confirm a text the server refuses.
+ */
+export const MAX_TEAMMATE_BODY_LENGTH = Math.min(MAX_FIRST_PARTY_BODY_LENGTH, SERVER_BODY_LIMIT)
+
 /** 其餘 authored 欄位的長度上限。 */
 export const MAX_FIELD_LENGTH = 200
 
@@ -95,6 +107,18 @@ export interface IntakeVerified {
    * 交辦的工作會變成一份「請把裡面的祈使句抄一遍」的清單 —— 使用者按下送出之後什麼也沒發生。
    */
   firstPartyBody?: boolean
+  /**
+   * The body was checked against the handoff limit (`MAX_TEAMMATE_BODY_LENGTH`) rather than the third-party one
+   * (`teammate-handoff`, design D10). **A separate fact from `firstPartyBody`**: a teammate's handoff is third-party
+   * text (its prompt) with the handoff's limit, and a control ties the prompt to one and the limit to the other.
+   * Kept on load only when `true`.
+   */
+  handoffBodyLimit?: boolean
+  /**
+   * A teammate's handoff shown after the credential was discarded while its acknowledgement was unanswered: it may
+   * also have reached the member's other device (spekterm-server protocol §11 rule 6). Kept on load only when `true`.
+   */
+  possiblyElsewhere?: boolean
   /**
    * 交接的**來源 session** 與它於攝入當下的呈現快照（`session-lineage`）。
    *
@@ -197,9 +221,14 @@ export function parseHandoffSource(raw: unknown): HandoffSource | undefined {
  */
 export interface DeliveryProvenance {
   origin: { kind: string; id: string; label: string }
-  targetFolderId: string
+  /** Absent for a teammate's handoff (`teammate-handoff`): routing preselects, and the user confirms. */
+  targetFolderId?: string
   /** 見 `IntakeVerified.firstPartyBody`。 */
   firstPartyBody?: boolean
+  /** See `IntakeVerified.handoffBodyLimit`. */
+  handoffBodyLimit?: boolean
+  /** See `IntakeVerified.possiblyElsewhere`. */
+  possiblyElsewhere?: boolean
   /** 見 `IntakeVerified.source`。 */
   source?: HandoffSource
   /** See `IntakeVerified.scheduledAt`. */
@@ -273,6 +302,18 @@ export type IntakeRejection =
   | 'SCHEDULE_INVALID'
   /** A handoff's `repeat` or `until` breaks the repeating rules (`recurring-handoff`); the detail names the rule. */
   | 'REPEAT_INVALID'
+  /** A teammate handoff while the user is on no team, or the Team feature is off (`teammate-handoff`). Temporary. */
+  | 'TEAM_UNAVAILABLE'
+  /** A teammate handoff's `to` names no member of the team. */
+  | 'TEAMMATE_NOT_FOUND'
+  /** A teammate handoff's `to` is the user's own handle. */
+  | 'TEAMMATE_IS_SELF'
+  /** Too many teammate handoffs wait for confirmation: held, the file stays. Temporary, never consumed. */
+  | 'OUTGOING_FULL'
+  /** A confirmed teammate handoff whose send may have reached the server, when its membership was discarded. */
+  | 'SEND_UNCERTAIN'
+  /** A teammate's handoff this version cannot read (its id, its encoding, or its sender's handle). Temporary. */
+  | 'TEAMMATE_UNREADABLE'
   | 'MALFORMED'
   | 'MISSING_ID'
   | 'INVALID_ID'
@@ -427,7 +468,10 @@ export function parseIntake(
   // 非第三方的投遞不經那道閘（見兩個常數各自的註解）。
   //
   // **分流的是「套哪一個」，不是「怎麼量」** —— 尺度仍是正規化之後的 UTF-16 code unit。
-  const bodyLimit = provenance?.firstPartyBody ? MAX_FIRST_PARTY_BODY_LENGTH : MAX_BODY_LENGTH
+  //
+  // A teammate's handoff is third-party text with the handoff's limit (`teammate-handoff`): the limit follows either
+  // fact, the prompt only `firstPartyBody`.
+  const bodyLimit = provenance?.firstPartyBody || provenance?.handoffBodyLimit ? MAX_FIRST_PARTY_BODY_LENGTH : MAX_BODY_LENGTH
   if (authored.body.length > bodyLimit) {
     return { ok: false, code: 'TOO_LONG', detail: 'body' }
   }
@@ -449,6 +493,8 @@ export function parseIntake(
         // **只從 `provenance` 取** —— payload 裡的同名欄位從未被讀到。
         ...(provenance ? { targetFolderId: provenance.targetFolderId } : {}),
         ...(provenance?.firstPartyBody ? { firstPartyBody: true } : {}),
+        ...(provenance?.handoffBodyLimit ? { handoffBodyLimit: true } : {}),
+        ...(provenance?.possiblyElsewhere ? { possiblyElsewhere: true } : {}),
         ...(provenance?.source ? { source: provenance.source } : {}),
         ...(provenance?.scheduledAt !== undefined ? { scheduledAt: provenance.scheduledAt } : {}),
         ...(provenance?.targetText !== undefined ? { targetText: provenance.targetText } : {}),

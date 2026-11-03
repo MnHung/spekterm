@@ -26,7 +26,11 @@ import type { IntakeSnapshot } from '../../../../main/ipc/intake'
 
 export interface IntakeState {
   snapshot: IntakeSnapshot
-  /** 待處理的則數。**routing 解析不出來的仍計入**（它仍然是一件待處理的事）。A scheduled handoff is not counted until it opens. */
+  /**
+   * 待處理的則數。**routing 解析不出來的仍計入**（它仍然是一件待處理的事）。A scheduled handoff is not counted until it
+   * opens. **Teammate handoffs waiting for the user to send or discard them count too** (`teammate-handoff`), from the
+   * same snapshot as the Outgoing tab.
+   */
   pendingCount: number
   /** 顯式重新拉取。主行程那幾條路徑都有推送，但保留它是第二條防線。 */
   refresh: () => void
@@ -63,7 +67,7 @@ export function IntakeProvider({ children }: { children: React.ReactNode }): Rea
   const value = useMemo<IntakeState>(
     () => ({
       snapshot,
-      pendingCount: snapshot.items.filter(isWaitingForUser).length,
+      pendingCount: snapshot.items.filter(isWaitingForUser).length + (snapshot.outgoing?.waiting ?? 0),
       refresh,
     }),
     [snapshot, refresh],

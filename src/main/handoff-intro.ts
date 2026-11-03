@@ -71,6 +71,12 @@ export interface IntroInput {
    * introduction is written. Tests pass it.
    */
   timeZone?: string
+  /**
+   * The teammates file (`teammate-handoff`), **only while the user holds a team membership with the Team feature on**:
+   * then the introduction carries the teammate paragraph, which points here. Absent: no paragraph. Every write point
+   * takes it from `teamIntro()` (`handoff-injection.ts`), so none can forget it.
+   */
+  teammates?: string
 }
 
 /**
@@ -105,7 +111,7 @@ export function introText(input: IntroInput): string {
   return text
 }
 
-function composeIntro({ folders, outbox, receipts, name, relations, reportable, timeZone }: IntroInput, shown: number): string {
+function composeIntro({ folders, outbox, receipts, name, relations, reportable, timeZone, teammates }: IntroInput, shown: number): string {
   /**
    * **數字由實際生效的常數推導，不寫死。**
    *
@@ -149,6 +155,7 @@ function composeIntro({ folders, outbox, receipts, name, relations, reportable, 
     ...repoLines(folders, shown),
     '',
     'When a handoff is accepted, spekterm opens a new agent session in the target repo with the body prepared, and sends its first prompt as soon as that agent is ready. It starts working without waiting for the user.',
+    ...teammateLines(teammates),
     '',
     'For every file you write into your outbox, spekterm writes a receipt with the same name into:',
     `  ${receiptsPath}`,
@@ -158,7 +165,10 @@ function composeIntro({ folders, outbox, receipts, name, relations, reportable, 
     "  proposed  - a repeating handoff awaiting the user's approval; you are not told whether it is given.",
     '  duplicate - the same content was received before; nothing new happened.',
     '  rejected  - refused; "code" and "reason" say why. "permanent": false means it can succeed once something changes.',
-    '  held      - not processed yet; the file stays and is read again ("reason" says when).',
+    '  held      - not finished yet; "reason" says what happens next.',
+    ...(teammates
+      ? ['  awaiting-confirmation, sent, discarded - a teammate handoff: waiting for the user, stored by the team server, or discarded.']
+      : []),
     'A rejected handoff is also shown to the user in their inbox. An accepted handoff is checked again when it opens; a failure then reaches the user, not the receipt.',
     'Until you have read the receipt, say that you wrote the handoff, not that it was delivered.',
     ...peerLines(name, relations),
@@ -188,6 +198,20 @@ function repoLines(folders: IntroInput['folders'], shown: number): string[] {
   const left = folders.length - shown
   if (left > 0) lines.push(`  (${left} more not listed, to keep this introduction whole)`)
   return lines
+}
+
+/**
+ * The teammate paragraph (`teammate-handoff`, design D8): only what makes the agent go to the teammates file, which
+ * states every rule and lists the teammates. **No teammate is named here** — the list grows with the team, and
+ * display names are text each teammate chose.
+ */
+function teammateLines(teammates: string | undefined): string[] {
+  if (!teammates) return []
+  return [
+    '',
+    'Teammates: you can also hand work to a person on your team. Use "to": "<handle>" instead of "target"; the user confirms it on the desktop before anything is sent.',
+    `Before writing one, read ${teammates} - it lists the teammates and states the rules.`,
+  ]
 }
 
 /**

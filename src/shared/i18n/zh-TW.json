@@ -707,6 +707,33 @@
     "opensInFolder": "開在 {{name}}",
     "runNow": "立即執行",
     "cancelScheduled": "取消",
+    "outgoingTab": "待送出",
+    "outgoingEmpty": "沒有等著送給隊友的交接。",
+    "outgoingHint": "你按下送出之前，什麼都不會送給隊友。",
+    "outgoingDamaged": "待送出的清單讀不出來，已另存一旁。原本在裡面等待、或送出後沒有收到回應的交接已經遺失。",
+    "outgoing": {
+      "itemLabel": "交給 {{name}} 的交接：{{title}}",
+      "to": "給 {{name}}（@{{handle}}）",
+      "fromSession": "來自 {{source}}",
+      "send": "送出",
+      "discard": "捨棄",
+      "dismiss": "移除",
+      "sending": "送出中…",
+      "waitingConnection": "已確認 —— 連上團隊伺服器時送出",
+      "rateLimited": "已達團隊伺服器每小時的上限 —— 將於 {{time}} 再送一次",
+      "retrying": "團隊伺服器沒有回應 —— 稍後再試",
+      "noDevice": "已送出 —— 等 {{name}} 加入裝置後才會收到",
+      "refused": {
+        "RECIPIENT_UNKNOWN": "被拒絕：{{name}} 已經不在團隊裡",
+        "RECIPIENT_IS_SELF": "被拒絕：交接要給別人",
+        "BAD_PARAMS": "被團隊伺服器拒絕",
+        "HANDOFF_ID_REUSED": "被團隊伺服器以識別碼重複為由拒絕",
+        "TEAM_UNAVAILABLE": "沒有送出：你已經不在那個團隊裡",
+        "SEND_UNCERTAIN": "在你離開團隊之前可能已經送出"
+      }
+    },
+    "teammate": "隊友",
+    "possiblyElsewhere": "這則可能也送到了你的另一台裝置。",
     "schedulesTab": "排程",
     "schedulesEmpty": "目前沒有排程。",
     "proposalsLabel": "待核准",
@@ -759,7 +786,13 @@
       "CONTROL_NO_WINDOW": "沒有開著的視窗可以對 session 執行",
       "CONTROL_UNAVAILABLE": "無法等到那個 session 的這一輪結束 —— agent 的事件回報已關閉",
       "SCHEDULE_INVALID": "指定的時間不合規則",
-      "REPEAT_INVALID": "指定的重複排程不合規則"
+      "REPEAT_INVALID": "指定的重複排程不合規則",
+      "TEAM_UNAVAILABLE": "要交給隊友，但你不在團隊裡或團隊功能已關閉",
+      "TEAMMATE_NOT_FOUND": "指名的隊友不在你的團隊裡",
+      "TEAMMATE_IS_SELF": "指名的隊友是你自己",
+      "OUTGOING_FULL": "等你確認的隊友交接太多了",
+      "SEND_UNCERTAIN": "在你離開團隊之前可能已經送給隊友了",
+      "TEAMMATE_UNREADABLE": "收到一則這個版本的 spekterm 讀不了的隊友交接"
     },
     "rules": {
       "label": "Routing 規則",
@@ -786,6 +819,9 @@
       "link": "[連結]",
       "failure": "一則交接沒有送達：{{reason}}",
       "commandTitle": "Session 指令",
+      "outgoingTitle": "要交給隊友的交接",
+      "outgoingSingle": "一個 agent 想把交接送給 {{name}}。打開它來送出或捨棄。",
+      "outgoingMerged_other": "{{count}} 則要交給隊友的交接在等你。",
       "commandFailure": "一個 session 指令沒有執行：{{reason}}"
     },
     "badge": "{{total}} 則待處理",

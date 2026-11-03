@@ -709,6 +709,13 @@ session 脈絡裡送出的，彙整成一份跨數十天、跨數十個專案的
 > `recurring-handoff` a handoff may **repeat** on a cron schedule, with an optional start and end: it is a proposal
 > the user approves on the desktop, each time opens a new session, and times missed while closed run once.
 >
+> **Handoffs to a person** (`teammate-handoff`, spekterm-server's milestone M1): on a team (`team-membership`) an
+> agent writes `"to": "<handle>"` instead of a target. Nothing is sent until the user presses Send in the inbox's
+> Outgoing tab, which shows the full text that is sent; sending is retried with one `clientId`, and the agent's
+> receipt follows it (awaiting-confirmation → sent / discarded / rejected). The teammate's spekterm stores the offer
+> hidden, acknowledges it, and only then shows it in the inbox as third-party text with the handoff's 20,000 limit.
+> Not done here: the sender's Sent list, the completion report back and decline (server M2).
+>
 > **Slack 是第一個外部 producer**（`slack-mention-intake`）：有人在 Slack 提及使用者本人時，
 > 那件事成為收件匣的一則待處理項目，帶著該提及所在討論串的內容（**上界固定於被提及的那一則**）。
 >

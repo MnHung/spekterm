@@ -84,8 +84,8 @@ describe('the payload and the identity', () => {
   it('reads repeat and until; a non-string is FIELD_TYPE', () => {
     const ok = parseHandoffPayload(JSON.stringify({ target: 'a', body: 'b', repeat: '0 9 * * *', until: '2027-01-01T00:00:00Z' }))
     assert.ok(ok.ok)
-    assert.equal(ok.ok && ok.value.repeat, '0 9 * * *')
-    assert.equal(ok.ok && ok.value.until, '2027-01-01T00:00:00Z')
+    assert.equal(ok.ok && !ok.teammate && ok.value.repeat, '0 9 * * *')
+    assert.equal(ok.ok && !ok.teammate && ok.value.until, '2027-01-01T00:00:00Z')
     assert.deepEqual(parseHandoffPayload(JSON.stringify({ target: 'a', body: 'b', repeat: 5 })), { ok: false, reason: 'FIELD_TYPE', field: 'repeat' })
     assert.deepEqual(parseHandoffPayload(JSON.stringify({ target: 'a', body: 'b', until: 5 })), { ok: false, reason: 'FIELD_TYPE', field: 'until' })
   })

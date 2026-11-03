@@ -3,7 +3,7 @@ import type { ApproveResult, RecurrenceKeeper, RecurrenceListing } from '../recu
 
 import { bodyOf } from '../intake-schema'
 import { contextScheduleFor } from '../context-schedule'
-import { buildContext, buildPrompt, createNonce, writeContext } from '../intake-context'
+import { buildContext, buildPrompt, createNonce, isFirstPartyBody, writeContext } from '../intake-context'
 import { decideAccept, type IntakeAcceptResult } from '../intake-accept'
 import { handoffTickets, ticketFor } from '../handoff-ticket'
 import { cancelPrefill, prefillModeFor, schedulePrefill, watchSubmission } from '../intake-prefill'
@@ -16,6 +16,7 @@ import {
 import { listView, type IntakeView } from '../intake-projection'
 import { OVERFLOW_KEY } from '../intake-service'
 import type { IntakeService } from '../intake-service'
+import type { OutgoingView } from '../teammate-outbox'
 import type { FolderLookup } from '../workspace-store'
 import { existingTerminalService } from './terminal'
 import { dismissIntake, notifyIntakeChanged, onIntakeChanged } from '../intake-changes'
@@ -40,6 +41,7 @@ import { dismissIntake, notifyIntakeChanged, onIntakeChanged } from '../intake-c
  */
 
 export type { IntakeView } from '../intake-projection'
+export type { OutgoingView } from '../teammate-outbox'
 export type { IntakeAcceptResult } from '../intake-accept'
 export type { ApproveResult, RecurrenceListing, RecurrenceView } from '../recurrence-keeper'
 
@@ -56,6 +58,10 @@ export const INTAKE_CHANNELS = {
    */
   settle: 'workspace:intake:settle',
   rules: 'workspace:intake:rules',
+  /** Teammate handoffs waiting in the Outgoing tab (`teammate-handoff`): Send, Discard, Dismiss. */
+  outgoingSend: 'workspace:intake:outgoing:send',
+  outgoingDiscard: 'workspace:intake:outgoing:discard',
+  outgoingDismiss: 'workspace:intake:outgoing:dismiss',
   setRules: 'workspace:intake:setRules',
   /** 主行程 → renderer：收件匣有變動。 */
   changed: 'workspace:intake:changed',
@@ -133,6 +139,12 @@ export interface IntakeSnapshot {
    */
   recurrences?: RecurrenceListing
   /**
+   * The Outgoing tab (`teammate-handoff`): teammate handoffs of the current membership, narrowed (no `clientId`, no
+   * membership stamp), and how many wait for the user — **from the same call as the pending items**, so the badge
+   * and the tab cannot disagree. Absent when teams are not wired.
+   */
+  outgoing?: { items: OutgoingView[]; waiting: number; damaged?: boolean }
+  /**
    * 拒絕的痕跡 —— **逐則**，不是一個總數。
    *
    * 一個計數器回答不了「哪一則」「為什麼」「我要怎麼辦」中的任何一個，
@@ -178,7 +190,7 @@ export interface IntakeHandlerDeps {
    * **以回呼交出而不是導出一個函式**：送出的對象是這一層持有的 `senders`，而那個集合的
    * 生命週期綁在這次註冊上。
    */
-  registerOpenInbox?: (open: (tab?: 'inbox' | 'schedules') => void) => void
+  registerOpenInbox?: (open: (tab?: 'inbox' | 'schedules' | 'outgoing') => void) => void
   /** 把「請 renderer 在某個 folder 自動建立 session」交出去，供交接的 producer 呼叫。 */
   registerAutoAccept?: (request: (adapter: string, id: string, folderId: string) => void) => void
   /** 把「把焦點移到某個 session」交出去，供通知被觸發時呼叫。 */
@@ -194,6 +206,15 @@ export interface IntakeHandlerDeps {
   runNow?: (adapter: string, id: string) => boolean
   /** The recurrence keeper (`recurring-handoff`). Unprovided ⇒ approval and stop are refused, nothing is listed. */
   recurrences?: Pick<RecurrenceKeeper, 'listing' | 'approve' | 'stop' | 'ensureNext'>
+  /** The outgoing teammate handoffs (`TeammateOutbox`). Unprovided ⇒ no Outgoing tab, and its handlers refuse. */
+  outgoing?: {
+    list(): OutgoingView[]
+    waitingCount(): number
+    loadIssue(): 'damaged' | null
+    send(id: string): Promise<boolean>
+    discard(id: string): Promise<boolean>
+    dismiss(id: string): Promise<boolean>
+  }
 }
 
 export function registerIntakeHandlers(deps: IntakeHandlerDeps): void {
@@ -222,12 +243,34 @@ export function registerIntakeHandlers(deps: IntakeHandlerDeps): void {
     return {
       items: listView(service.store.list(), config, ids),
       ...(deps.recurrences ? { recurrences: deps.recurrences.listing() } : {}),
+      ...(deps.outgoing
+        ? {
+            outgoing: {
+              items: deps.outgoing.list(),
+              waiting: deps.outgoing.waitingCount(),
+              ...(deps.outgoing.loadIssue() ? { damaged: true } : {}),
+            },
+          }
+        : {}),
       notices: service.notices().map((notice) => ({
         ...notice,
         ...(notice.key === OVERFLOW_KEY ? { overflow: true } : {}),
       })),
     }
   })
+
+  // The user's decisions on a teammate handoff (`teammate-handoff`). The id is an opaque string; the outbox finds
+  // it among the current membership's items or refuses.
+  for (const [channel, act] of [
+    [INTAKE_CHANNELS.outgoingSend, 'send'],
+    [INTAKE_CHANNELS.outgoingDiscard, 'discard'],
+    [INTAKE_CHANNELS.outgoingDismiss, 'dismiss'],
+  ] as const) {
+    ipcMain.handle(channel, async (_event, id: unknown) => {
+      if (typeof id !== 'string' || !deps.outgoing) return { ok: false }
+      return { ok: await deps.outgoing[act](id) }
+    })
+  }
 
   // 無回應通道 —— 沒有負載，因此不需要型別 guard（`clipboard:writeText` 那條的成因是它收字串）。
   ipcMain.on(INTAKE_CHANNELS.opened, () => {
@@ -238,7 +281,7 @@ export function registerIntakeHandlers(deps: IntakeHandlerDeps): void {
    * 把收件匣打開。**重用既有的 `senders` 集合與其銷毀剪除** —— 另外持有一份參考的話，
    * renderer 重新載入之後那份就指向一個已銷毀的 `WebContents`。
    */
-  const openInbox = (tab: 'inbox' | 'schedules' = 'inbox'): void => {
+  const openInbox = (tab: 'inbox' | 'schedules' | 'outgoing' = 'inbox'): void => {
     for (const sender of senders) {
       if (sender.isDestroyed()) senders.delete(sender)
       else sender.send(INTAKE_CHANNELS.openInbox, tab)
@@ -400,7 +443,7 @@ export function registerIntakeHandlers(deps: IntakeHandlerDeps): void {
         record.id,
         buildContext(bodyOf(intake), nonce, contextScheduleFor(record.content.verified, record.firedAt, Date.now())),
       )
-      const firstPartyBody = record.content.verified.firstPartyBody === true
+      const firstPartyBody = isFirstPartyBody(record.content.verified)
       const prompt = buildPrompt(target, nonce, firstPartyBody)
       // **沿用既有 session 由主行程判定**（record 上已經記著的那一個），不採信 renderer 的說法。
       const mode = prefillModeFor({ firstPartyBody, reusedSession: record.sessionId === sessionId })

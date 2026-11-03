@@ -10,6 +10,11 @@
  * Recorded for the probe: every TCP connection, the bytes each TLS session received (so "no application data
  * before the certificate check" is observable), and every request frame. `state.respond(m, p, socket)` overrides
  * an answer: return an answer object, `'silent'` to answer nothing, or `undefined` for the default.
+ *
+ * Teammate handoffs (`teammate-handoff`): `handoff.send` is answered as protocol §5 says (a resend with the same
+ * `clientId` answers the stored handoff with `duplicate: true`); `handoff.received` is answered `{}` unless
+ * `state.holdReceived` keeps it pending until `releaseReceived(answer)`; `push(data)` sends a `handoff.incoming`
+ * event to every open connection. `sends` and `acks` record what the app sent.
  */
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -51,9 +56,15 @@ function defaultState() {
       { id: 'm_sam', handle: 'sam', displayName: 'Sam' },
       { id: 'm_alex', handle: 'alex', displayName: 'Alex' },
     ],
-    operations: ['device.rename', 'device.leave', 'team.members'],
+    operations: ['device.rename', 'device.leave', 'team.members', 'handoff.send', 'handoff.received'],
     deviceName: 'laptop',
     respond: undefined,
+    /** `handoff.received` is held, unanswered, until `releaseReceived`. */
+    holdReceived: false,
+    /** The answer to `handoff.received` for an id, when not held: `undefined` ⇒ `{}`. */
+    received: undefined,
+    /** Devices the recipient of a send has (0: the handoff waits until they add one). */
+    recipientDevices: 1,
   }
 }
 
@@ -64,6 +75,10 @@ export async function startStubTeamServer({ port }) {
   const tlsBytes = []
   const frames = []
   const sockets = []
+  const sends = []
+  const acks = []
+  const held = []
+  const stored = new Map()
 
   const server = https.createServer({ key: cert.keyPem, cert: cert.certPem })
   server.on('connection', () => (connections.tcp += 1))
@@ -108,6 +123,20 @@ export async function startStubTeamServer({ port }) {
       case 'device.leave':
         setTimeout(() => socket.close(4004, 'left'), 20)
         return { ok: true, r: { memberRemoved: state.deviceCount <= 1 } }
+      case 'handoff.send': {
+        const to = String(p.to ?? '').toLowerCase()
+        const recipient = state.members.find((x) => x.handle === to)
+        if (!recipient) return { ok: false, e: { code: 'RECIPIENT_UNKNOWN', message: to } }
+        if (recipient.id === state.member.id) return { ok: false, e: { code: 'RECIPIENT_IS_SELF', message: to } }
+        const previous = stored.get(p.clientId)
+        const handoff = previous ?? { id: `h_stub${stored.size + 1}`, status: 'pending', sentAt: Date.now(), expiresAt: Date.now() + 30 * 86_400_000 }
+        stored.set(p.clientId, handoff)
+        return { ok: true, r: { handoff, recipient: { ...recipient, deviceCount: state.recipientDevices }, duplicate: Boolean(previous) } }
+      }
+      case 'handoff.received': {
+        if (state.holdReceived) return 'held'
+        return state.received?.(String(p.id)) ?? { ok: true, r: {} }
+      }
       case 'team.members':
         return { ok: true, r: { members: state.members.map((x) => ({ ...x, deviceCount: x.id === state.member.id ? state.deviceCount : 1 })) } }
       default:
@@ -125,8 +154,15 @@ export async function startStubTeamServer({ port }) {
         return
       }
       frames.push({ m: frame.m, p: frame.p ?? {} })
+      // Recorded before any scripted answer: a dropped answer is still a request the server received.
+      if (frame.m === 'handoff.send') sends.push(frame.p ?? {})
+      if (frame.m === 'handoff.received') acks.push(String(frame.p?.id))
       const reply = answer(frame.m, frame.p ?? {}, socket)
       if (reply === 'silent') return
+      if (reply === 'held') {
+        held.push({ socket, id: frame.id })
+        return
+      }
       socket.send(JSON.stringify({ t: 'res', id: frame.id, ...reply }))
     })
   })
@@ -147,6 +183,18 @@ export async function startStubTeamServer({ port }) {
     /** The connections the app holds now. */
     openSockets: () => sockets.filter((socket) => socket.readyState === 1),
     count: (m) => frames.filter((frame) => frame.m === m).length,
+    sends,
+    acks,
+    /** Answers every held `handoff.received` (on connections still open) with `answer`. */
+    releaseReceived(answer = { ok: true, r: {} }) {
+      for (const { socket, id } of held.splice(0)) {
+        if (socket.readyState === 1) socket.send(JSON.stringify({ t: 'res', id, ...answer }))
+      }
+    },
+    /** Sends a `handoff.incoming` event to every open connection. */
+    push(data) {
+      for (const socket of sockets) if (socket.readyState === 1) socket.send(JSON.stringify({ t: 'evt', k: 'handoff.incoming', d: data }))
+    },
     async close() {
       for (const socket of wss.clients) socket.terminate()
       wss.close()

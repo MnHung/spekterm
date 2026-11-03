@@ -611,8 +611,15 @@ folder name counts as one character per UTF-16 unit, not per byte.
 The binary also carries an 8,000-character / 200-line cut for `additionalContext`; neither applied in these runs
 (9,000 characters and 300 lines both arrived whole).
 
-What the product does about it (`handoff-intro.ts`): a budget test holds a 30-folder introduction at 8,000 characters
-(6,985 when this was written; the test prints the margin), and a run-time hard limit of 9,000 cuts the repo list — never
+**Re-measured with Claude Code 2.1.317 (2026-11-03, `teammate-handoff` task 3.1), `-p` mode, Haiku, the same hook
+shape, a marker at the very end:** 200, 8,000, 8,500, 9,000 and 10,000 characters arrived whole; 10,001 was replaced
+by `Output too large` and a saved-file path; 301 lines (6,612 characters) and 411 lines (9,032 characters) arrived
+whole. The threshold is unchanged and the latent 8,000 / 200-line cut still does not apply, so the budget could rise
+to 8,500 (interactive mode was not re-run this time; in 2.1.303 it matched `-p` at every size).
+
+What the product does about it (`handoff-intro.ts`): a budget test holds a 30-folder introduction at 8,500 characters
+(8,000 until `teammate-handoff`: the longest variant then measured 7,882, and the teammate paragraph and the longer
+receipt list did not fit in the remaining 118; the test prints the margin), and a run-time hard limit of 9,000 cuts the repo list — never
 the rules — for a workspace too large for the budget, saying how many repos were left out.
 
 How it was found: the change's first draft wrote "the CLI may cut it — not measured", while `docs/PRD.md` §13 had

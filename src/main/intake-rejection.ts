@@ -61,6 +61,9 @@ export function isPermanentRejection({ code, notify }: RejectionOutcome): boolea
     case 'CONTROL_FAILED': // The session is gone, or the interface failed on it.
     case 'SCHEDULE_INVALID': // The same `at`, resent, breaks the same rule.
     case 'REPEAT_INVALID': // The same `repeat` or `until`, resent, breaks the same rule.
+    case 'TEAMMATE_NOT_FOUND': // As `TARGET_NOT_FOUND`: the same handle names the same nobody.
+    case 'TEAMMATE_IS_SELF':
+    case 'SEND_UNCERTAIN': // It may have been delivered: writing it again would send it twice without asking.
       return true
 
     // ── 暫時：狀態或設定改變後可能成功 ──────────────────────────────────────
@@ -71,11 +74,17 @@ export function isPermanentRejection({ code, notify }: RejectionOutcome): boolea
     // always consumes), so "temporary" decides only the notification: a stale close cannot fire later
     // (`agent-session-control` D6).
     // `CONTROL_UNAVAILABLE` —— agent events off: a setting, as `PREFILL_UNAVAILABLE`.
+    // `TEAM_UNAVAILABLE` —— joining a team or turning the feature on lets it succeed (`teammate-handoff`).
+    // `OUTGOING_FULL` —— held, never consumed: it is read again once a waiting teammate handoff leaves.
+    // `TEAMMATE_UNREADABLE` —— a newer spekterm may read it; the server offers it to another device meanwhile.
     case 'MALFORMED':
     case 'CAPACITY':
     case 'PREFILL_UNAVAILABLE':
     case 'CONTROL_NO_WINDOW':
     case 'CONTROL_UNAVAILABLE':
+    case 'TEAM_UNAVAILABLE':
+    case 'OUTGOING_FULL':
+    case 'TEAMMATE_UNREADABLE':
       return false
 
     // ── 一個代碼、兩種行為 ──────────────────────────────────────────────────

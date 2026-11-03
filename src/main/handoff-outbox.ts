@@ -63,6 +63,14 @@ export function receiptsDir(sessionId: string): string {
   return handoffRootPath ? path.join(handoffRootPath, 'receipts', sessionId) : ''
 }
 
+/**
+ * The teammates file (`teammate-handoff`): the rules of a teammate handoff and the team's members, read by an agent
+ * before it writes one. One for every session, outside the outbox as the relations file is.
+ */
+export function teammatesFile(): string {
+  return handoffRootPath ? path.join(handoffRootPath, 'teammates.json') : ''
+}
+
 /** 某個 session 的自我介紹檔。**在 outbox 之外** —— 放進去會被當成一份投遞。 */
 export function introFile(sessionId: string): string {
   return handoffRootPath ? path.join(handoffRootPath, 'intro', `${sessionId}.json`) : ''

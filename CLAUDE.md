@@ -187,6 +187,14 @@ OpenSpec 結構的側欄，讓使用者不必另外開 IDE 就能一邊駕駛 ag
     secret is answered `AUTH_FAILED`. Discarding writes `team.json` first, then removes the secret.
   The server address is written only by `TeamStore.setMembership` ← `TeamService.joinTeam` ← the IPC join
   handler (`scripts/secret-scope.test.mjs`).
+  **Teammate handoffs** (`teammate-handoff`): an agent's `"to": "<handle>"` waits in the inbox's **Outgoing** tab
+  until the user presses Send (`teammate-outbox.ts`; one serial queue, `attempted` on disk before the request, each
+  item stamped with the membership it was read under); a teammate's offer is stored hidden, acknowledged, and only
+  then delivered into the inbox as adapter `teammate` (`teammate-inbox.ts`). The agent learns the rules from the
+  teammates file the introduction points to, never from the introduction itself (`teammates-file.ts`). **The prompt
+  follows `firstPartyBody`, the limit follows `firstPartyBody || handoffBodyLimit`** — two facts of one item, so a
+  teammate's text is third-party with the handoff's limit (`isFirstPartyBody`). The teammate label follows the
+  adapter, never `originKind`, which a shared drop point file can write.
 
 **以 MIT 開源**（`open-source-mit`：`LICENSE`、`CONTRIBUTING.md`、產物根目錄附本身與第三方的授權文字；
 公開前已改寫全部 git 歷史）。**Linux 打包已可用**（`npm run dist:linux` → AppImage，`npm run install:desktop` 裝進應用程式
@@ -202,8 +210,9 @@ a detached shell that waits for the old pid. A release must go through `npm run 
 only with its `latest-linux.yml`, as a draft until both are up). See `docs/lessons/update.md`.
 **交接已交付**（agent → 另一個 repo，以及母、子、兄弟之間經 Claude Code 本機訊息功能的往來）；
 **以工具而非寫檔投遞**（MCP）仍未做；**the agent learns each file's outcome from a receipt** spekterm writes
-beside its outbox (`handoff-receipt`: accepted / scheduled / proposed / duplicate / rejected / held, written before
-the file is removed). **A handoff may name a later time** (`scheduled-handoff`, `"at"`): it waits in the inbox and
+beside its outbox (`handoff-receipt`: accepted / scheduled / proposed / duplicate / rejected / held, and for a
+teammate handoff awaiting-confirmation / sent / discarded, rewritten by its `ref` as the sending proceeds; written
+before the file is removed). **A handoff may name a later time** (`scheduled-handoff`, `"at"`): it waits in the inbox and
 opens when due, or at the next start. **A handoff may repeat** (`recurring-handoff`, `"repeat"`, a strict 5-field
 cron subset in the desktop's zone, with `at` as its start and `until` as its end): it is a **proposal** that opens
 nothing until the user approves it on the desktop; then `RecurrenceKeeper` is the **one owner** of its upcoming
@@ -248,7 +257,7 @@ them apart by event order (`before-quit` comes first only for a signal), see `sr
 | `site/`、`scripts/capture-screenshots.mjs`、`scripts/network-surface.test.mjs`, or anything the website states about the app (network, platforms, features) | **`site/README.md`** |
 | `build.mac` / `build.dmg`, `scripts/package-mac.mjs`, `scripts/after-pack.cjs`, `scripts/release-check.mjs`, `scripts/probe-package-mac.mjs`, `src/main/app-menu.ts`, `src/main/close-guard.ts`'s quit intent, or anything run on the build Mac | **`docs/lessons/macos.md`** |
 | `src/main/transcript-*`、`src/main/remote-sent-files.ts`、`src/main/remote-result-images.ts`、`src/main/agent-events.ts`、`src/main/agent-injection.ts`、`src/main/agent-origin.ts`、`src/main/agent-model-switch.ts`、`src/main/insights*`、**`src/main/report.ts` 與 `src/main/report-*`**、`scripts/probe-insights.mjs`、`scripts/probe-agent-view.mjs`，或任何會讀 `~/.claude/projects`、**注入 `--settings`**、**或委派 `claude` CLI** 的東西 | **`docs/lessons/transcript.md`** |
-| `src/main/team-*`, `src/main/ipc/team.ts`, `scripts/probe-team.mjs`, `scripts/lib/stub-team-server.mjs`, or anything that talks to a team server | **`docs/lessons/team.md`** |
+| `src/main/team-*`, `src/main/teammate-*`, `src/main/teammates-file.ts`, `src/main/ipc/team.ts`, `scripts/probe-team.mjs`, `scripts/lib/stub-team-server.mjs`, or anything that talks to a team server | **`docs/lessons/team.md`** (and `docs/lessons/handoff.md` for the outbox and receipts) |
 | `src/main/update-*`, `src/main/ipc/update.ts`, `scripts/release-github.mjs`, `scripts/probe-workspace-update.mjs`, the close guard's restart intent, or anything that replaces or relaunches the AppImage | **`docs/lessons/update.md`** |
 
 ## 開發指令

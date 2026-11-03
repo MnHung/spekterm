@@ -28,6 +28,8 @@ import ts from 'typescript'
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
 const TARGET = 'src/main/handoff-intro.ts'
+/** The teammates file states a teammate handoff's rules (`teammate-handoff`): the same rule holds there. */
+const TEAMMATES = 'src/main/teammates-file.ts'
 
 /**
  * 這些常數的值**不得以數字字面值出現在自我介紹裡**。
@@ -42,6 +44,14 @@ const GUARDED = [
   { name: 'MAX_REPORT_LENGTH', file: 'src/main/handoff-delivery.ts' },
   // The scheduling bound (scheduled-handoff) — every introduction states it, and the example time avoids its digits.
   { name: 'MAX_SCHEDULE_AHEAD_DAYS', file: 'src/main/handoff-delivery.ts' },
+]
+
+/** What the teammates file states. `MAX_TEAMMATE_BODY_LENGTH` is a `Math.min` of these two. */
+const GUARDED_TEAMMATES = [
+  { name: 'MAX_FIELD_LENGTH', file: 'src/main/intake-schema.ts' },
+  { name: 'MAX_FIRST_PARTY_BODY_LENGTH', file: 'src/main/intake-schema.ts' },
+  { name: 'SERVER_BODY_LIMIT', file: 'src/main/intake-schema.ts' },
+  { name: 'MAX_OUTGOING_WAITING', file: 'src/main/teammate-outbox.ts' },
 ]
 
 function constantValue(file, name) {
@@ -88,7 +98,7 @@ function mentions(texts, value) {
 }
 
 test('被守護的常數都找得到 —— 清單本身沒有與產品分岔', () => {
-  for (const { name, file } of GUARDED) {
+  for (const { name, file } of [...GUARDED, ...GUARDED_TEAMMATES]) {
     assert.notEqual(constantValue(file, name), null, `${file} 裡找不到 ${name}`)
   }
 })
@@ -121,4 +131,12 @@ test('對照組：寫死為數字字面值時守衛也要變紅', () => {
 test('對照組：註解裡寫到那個數字不算違規', () => {
   const texts = writtenNumbers('// 上限是 20000 字元，由常數推導。\nexport const x = 1', 'commented.ts')
   assert.equal(mentions(texts, 20_000), false, '註解不在語法樹的字串節點裡')
+})
+
+test('the teammates file does not write those limits as literals either (teammate-handoff)', () => {
+  const texts = writtenNumbers(readFileSync(join(repoRoot, TEAMMATES), 'utf8'), TEAMMATES)
+  for (const { name, file } of GUARDED_TEAMMATES) {
+    const value = constantValue(file, name)
+    assert.equal(mentions(texts, value), false, `${TEAMMATES} writes ${name}'s value (${value}) as a literal; derive it from the constant.`)
+  }
 })

@@ -6,6 +6,8 @@ import {
   COMPLETION_ADAPTER,
   FIELD_MAX,
   IntakeNotifier,
+  onlyOutgoing,
+  OUTGOING_ADAPTER,
   reduceForNotification,
   type NotifyBackend,
   type NotifyClock,
@@ -390,5 +392,38 @@ describe('完成通知（handoff-completion）', () => {
     notifier.completed('sess-1', 'T', 'S')
     clock.advance(1000)
     assert.equal(backend.sent.length, 1)
+  })
+})
+
+describe('teammate handoffs waiting for confirmation (teammate-handoff)', () => {
+  it('only outgoing arrivals: their own keys, the recipient by display name, never the body', () => {
+    const clock = fakeClock()
+    const backend = recorder()
+    const notifier = new IntakeNotifier({ backend, clock })
+    notifier.outgoing('o1', 'Sam <b>Lee</b> https://evil.example/x')
+    clock.advance(10_000)
+    assert.equal(backend.sent.length, 1)
+    assert.deepEqual(backend.keys[0], [{ adapter: OUTGOING_ADAPTER, id: 'o1' }])
+    assert.equal(onlyOutgoing(backend.keys[0]), true)
+    assert.match(backend.sent[0].body, /Sam bLee\/b/)
+    assert.doesNotMatch(backend.sent[0].body, /evil\.example|</)
+  })
+
+  it('a mixed batch opens the inbox: the coalesced one, not only outgoing', () => {
+    const items: NotifyItem[] = [
+      { kind: 'outgoing', id: 'o1', recipientName: 'Sam' },
+      { kind: 'completion', sessionId: 's', title: 't', summary: 'done' },
+    ]
+    const payload = buildPayload(items)
+    assert.match(payload.title, /2/)
+    assert.equal(onlyOutgoing([{ adapter: OUTGOING_ADAPTER, id: 'o1' }, { adapter: 'handoff', id: 'x' }]), false)
+  })
+
+  it('several outgoing arrivals: one notification with their count', () => {
+    const payload = buildPayload([
+      { kind: 'outgoing', id: 'o1', recipientName: 'Sam' },
+      { kind: 'outgoing', id: 'o2', recipientName: 'Alex' },
+    ])
+    assert.match(payload.body, /2 handoffs to teammates/)
   })
 })

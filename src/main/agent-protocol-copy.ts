@@ -184,5 +184,68 @@ export function receiptReason(code: IntakeRejection | 'READ_FAILED'): string {
       return '"at" breaks the scheduling rules: an ISO 8601 time with an offset, within the bound in your introduction.'
     case 'REPEAT_INVALID':
       return '"repeat" or "until" breaks the repeating rules: five cron fields "minute hour day month weekday" with a single minute, and "until" later than now and the start, with a time between; see your introduction.'
+    case 'TEAM_UNAVAILABLE':
+      return 'The user is not on a team, or the Team feature is off, so nothing was sent and nothing waits. It can succeed once the user is on a team with the feature on; write it again then.'
+    case 'TEAMMATE_NOT_FOUND':
+      return '"to" names no member of the team. Use a handle from the teammates file.'
+    case 'TEAMMATE_IS_SELF':
+      return '"to" is the user\'s own handle; a teammate handoff goes to someone else.'
+    case 'OUTGOING_FULL':
+      return 'Too many teammate handoffs already wait for the user to confirm. The file stays and is read again within a minute of one of them being sent or discarded.'
+    case 'SEND_UNCERTAIN':
+      return 'The user left the team or this device was removed while this handoff was being sent; it may have been delivered. Do not write it again without asking the user.'
+    case 'TEAMMATE_UNREADABLE':
+      return 'A teammate\'s handoff arrived that this version of spekterm cannot read.'
+  }
+}
+
+/**
+ * The codes of a teammate handoff's later receipts (`teammate-handoff`, design D6): `held` while a confirmed handoff
+ * waits to be sent, the team server's refusals on `rejected`, and `sent` to a member with no device yet. **Not
+ * `IntakeRejection`s**: they come after the file was read, from the user's decision and the server's answer.
+ */
+export type TeammateReceiptCode =
+  | 'NOT_CONNECTED'
+  | 'RATE_LIMITED'
+  | 'RETRYING'
+  | 'NO_DEVICE'
+  | 'RECIPIENT_UNKNOWN'
+  | 'RECIPIENT_IS_SELF'
+  | 'BAD_PARAMS'
+  | 'HANDOFF_ID_REUSED'
+
+/** The server refusals a confirmed teammate handoff can end with. All permanent: nothing was stored. */
+export type TeammateRefusalCode = Extract<TeammateReceiptCode, 'RECIPIENT_UNKNOWN' | 'RECIPIENT_IS_SELF' | 'BAD_PARAMS' | 'HANDOFF_ID_REUSED'>
+
+/** Exhaustive, as `receiptReason`: a new code fails to compile until it has a reason. */
+export function teammateReceiptReason(code: TeammateReceiptCode): string {
+  switch (code) {
+    case 'NOT_CONNECTED':
+      return 'The user confirmed it; it is sent when spekterm is connected to the team server.'
+    case 'RATE_LIMITED':
+      return 'The team server limits how many handoffs a member sends in an hour. It is sent again at the stated time, without asking the user again.'
+    case 'RETRYING':
+      return 'The team server failed or did not answer. It is sent again after a short wait, without asking the user again.'
+    case 'NO_DEVICE':
+      return 'The teammate has no device yet; the team server keeps it until they add one.'
+    case 'RECIPIENT_UNKNOWN':
+      return 'The team server knows no member with that handle; the teammate may have left the team.'
+    case 'RECIPIENT_IS_SELF':
+      return 'The team server refused it: a handoff goes to someone else.'
+    case 'BAD_PARAMS':
+      return 'The team server refused its fields.'
+    case 'HANDOFF_ID_REUSED':
+      return 'The team server refused it as a reused identity. Nothing was stored.'
+  }
+}
+
+/** Whether a server refusal will happen again for the same content: always, nothing was stored. */
+export function isPermanentTeammateRefusal(code: TeammateRefusalCode): boolean {
+  switch (code) {
+    case 'RECIPIENT_UNKNOWN':
+    case 'RECIPIENT_IS_SELF':
+    case 'BAD_PARAMS':
+    case 'HANDOFF_ID_REUSED':
+      return true
   }
 }

@@ -71,3 +71,17 @@ Three of the first five mutations stayed green, each for a reason that would hav
   mutation is the failure the rule exists for — the missing secret taken for a revocation.
 - **`npm test`'s output overflows `execFileSync`'s default 1 MiB buffer**, and the truncated output has no `not ok`
   line. A unit-test control runs its one file.
+
+## 8. Teammate handoffs (`teammate-handoff`): what failed silently while building it
+
+- **A stand-in's scripted answer can skip its own recording.** The stub recorded `handoff.send` inside the default
+  answer, so a request answered `'silent'` (a lost answer) was never recorded: the probe saw one send instead of
+  two and blamed the product. Requests are recorded when the frame arrives, before any scripted answer.
+- **The members refetch is throttled to once a minute, and the connect itself fetches.** "A member who joined since
+  the last fetch is found" holds for the first read after that minute, not for a read seconds after connecting;
+  the probe waits out the minute rather than asserting the impossible.
+- **A request timeout ends the connection** (`team-connection.ts`): a send that timed out is a lost answer, not an
+  `INTERNAL` — it is resent with the same `clientId` on the next `connected`.
+- **The teammate label and the prompt are each decided by one fact, and each has a control group** that turns its
+  probe assertion red when it reads the other (`label-from-origin-kind`, `prompt-from-limit-flag` in
+  `scripts/team-control-groups.mjs`).

@@ -5,6 +5,7 @@ import path from 'node:path'
 import { openNoFollow, resolveNewWithin } from './fs-boundary'
 import { intakeFileStem, isValidIntakeId } from './intake-id'
 import { contextHeader, firstPartyPrompt, recurrenceLines, scheduleLine, thirdPartyPrompt } from './agent-protocol-copy'
+import type { IntakeVerified } from './intake-schema'
 
 /**
  * 交給 agent 的那份檔案，與填進輸入處的那一行 prompt。
@@ -150,6 +151,15 @@ export async function writeContext(root: string, id: string, document: ContextDo
  *
  * **不宣稱它阻止了任何事。** 它不約束模型的行為，也不及於使用者送出之後的回合。
  */
+/**
+ * Which first prompt an accepted item gets: the first-party one only for `firstPartyBody`. **Never the body limit's
+ * flag** (`handoffBodyLimit`): a teammate's handoff has the handoff's limit and is third-party text, so its prompt
+ * stays the third-party one and is filled, not sent (`teammate-handoff`, design D10). The accept path asks here.
+ */
+export function isFirstPartyBody(verified: Pick<IntakeVerified, 'firstPartyBody' | 'handoffBodyLimit'>): boolean {
+  return verified.firstPartyBody === true
+}
+
 export function buildPrompt(contextPath: string, nonce: string, firstPartyBody = false): string {
   // **本文非第三方撰寫時，上面那整套不適用。**
   //

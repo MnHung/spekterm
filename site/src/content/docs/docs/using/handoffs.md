@@ -149,6 +149,31 @@ The agent's receipt for a command (see below) says whether the command was accep
 it was carried out. For a session it handed off, the agent can see the outcome in its list of relatives:
 gone, not running, or renamed.
 
+## Handing work to a teammate
+
+When you are on a [team](/docs/using/teams/) with the feature on, an agent can also hand work to a **person**:
+it writes `"to": "<handle>"` in place of the repository. Agents are told this, and told to read a small file
+spekterm keeps with your teammates' handles and display names and the rules, before writing one.
+
+**Nothing leaves your computer until you send it.** A handoff to a teammate waits in the inbox's **Outgoing**
+tab, counted in the inbox badge, with a desktop notification. The tab shows who it is for, which session wrote
+it, the title and the **whole body** as plain text with its length — exactly the text that will be sent. Choose
+**Send** or **Discard**. There is no setting that sends without asking.
+
+- spekterm checks the handoff before asking you: a handle that is not on your team, your own handle, a title over
+  200 or a body over 20,000 characters is refused at once (and shown in the inbox), as is any handoff while you are
+  on no team or the feature is off. A handoff to a teammate cannot be scheduled.
+- At most 20 wait for you; an agent that writes more is held back until you send or discard one.
+- After **Send**, spekterm sends it as soon as it is connected to the team server, and again with the same identity
+  if the answer was lost, so the teammate gets it once. If the server's hourly limit is reached, the tab shows
+  when it is sent again. A refusal (for example, the teammate left the team) stays in the tab with its reason
+  until you dismiss it.
+- **Sent** means the team server stored it for your teammate. Their spekterm shows it in its inbox, at once if it
+  is open and at its next start if not. If your teammate has no device yet, the tab says it waits until they add
+  one.
+- A handoff belongs to the team you were on when the agent wrote it. If you leave that team, it is not sent to
+  another; one whose sending may already have reached the server is refused rather than sent twice.
+
 ## When a handoff fails
 
 A handoff that cannot be delivered is not lost silently. That happens when the agent names a repository that
@@ -166,7 +191,9 @@ For every file an agent writes to spekterm (a handoff, a completion report, or a
 - **proposed**: a repeating handoff waiting for your approval;
 - **duplicate**;
 - **rejected**, with the reason and whether trying again can help;
-- **held**: not processed yet; spekterm reads the file again later.
+- **held**: not finished yet; the reason says what happens next;
+- for a handoff to a teammate: **awaiting confirmation** while it waits for you, then **sent**, **discarded**, or
+  **rejected** with the team server's reason.
 
 The agent is not told later whether you approved a proposal.
 
@@ -182,4 +209,5 @@ opens. If its folder was removed by then, the failure is shown to you, not to th
 - **Not a security boundary.** An agent with a shell can write a handoff whenever it decides to, just as it
   can run any command. Handoffs only ever open sessions in folders that are already in your workspace.
 - **Not limited in number.** An agent can hand off as often as it chooses.
-- **Not for other people.** A handoff opens a session on your own machine, in your own workspace.
+- **Not for other people, unless you send it.** A handoff to a repository opens a session on your own machine,
+  in your own workspace. A handoff to a teammate goes only when you press **Send**.
