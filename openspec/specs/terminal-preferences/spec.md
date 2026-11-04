@@ -137,6 +137,7 @@ The interface SHALL be organized in sections, listed beside the content, with on
 - **Agents & sessions**: agent status reporting, automatic hibernation, and the agent session view (see
   `agent-conversation-view`).
 - **Integrations**: the Slack connection (see `slack-intake-source`).
+- **Team**: being on a spekterm-server team (see `team-membership`).
 - **Remote access**: see "Settings holds the remote access controls".
 - **About**: the build identity and, in a packaged build (or one a probe gave an update feed), the update
   status, its controls and the automatic update check setting (see `app-update`).
@@ -146,7 +147,8 @@ visible control that closes it in addition to Esc. Opening it from the activity 
 shown last in this run of the application, or General the first time.
 
 Opening the inbox or the conversation metrics, by any route (the activity bar, a notification, a control in
-Settings), SHALL close Settings first. Opening Settings from the inbox, or from an update notification, SHALL close the inbox first. Two modal
+Settings), SHALL close Settings first. Opening Settings from the inbox, from an update notification, or from a team notification (`team-membership`),
+SHALL close the inbox first. Two modal
 layers then never compete for focus or for Esc.
 
 Scenarios in this and other capabilities that say the user "opens Settings" and sees something mean that
@@ -193,7 +195,7 @@ preview was separated from the font fields it previews by three unrelated settin
 #### Scenario: Settings lists its sections
 
 - **WHEN** the user opens Settings
-- **THEN** it lists General, Terminal, Agents & sessions, Integrations, Remote access and About, and shows one of them
+- **THEN** it lists General, Terminal, Agents & sessions, Integrations, Team, Remote access and About, and shows one of them
 
 #### Scenario: The preview follows the font fields
 
@@ -490,11 +492,13 @@ Settings SHALL NOT have a Save or a Cancel control. A change SHALL apply as foll
     taken as an empty field, which means the default.
   - A choice SHALL NOT apply a typed value that has not applied: choosing a font family keeps the stored size
     and line height.
-- **Two exceptions, stated next to the fields they concern**, apply only through their own control or Enter,
+- **Three exceptions, stated next to the fields they concern**, apply only through their own control or Enter,
   never when focus leaves the field:
   - a Slack token, so that a partly pasted secret is never stored (see `slack-intake-source`);
   - the remote access port, because a port change restarts the listener and drops connected devices (see
-    `remote-access`).
+    `remote-access`);
+  - a team invite link, which connects to the server it names and, on joining, redeems a single-use invite (see
+    `team-membership`): it is inspected and joined only through their own controls.
 
 A change to the preferences or to the Slack settings, including a token, that fails to apply SHALL be shown next
 to its field, in the user's language, and the field SHALL show the stored value again. Settings SHALL stay open.
@@ -557,6 +561,11 @@ was never shown.
 - **WHEN** a change fails to apply because the preferences cannot be written, and the user then changes another setting that can be written
 - **THEN** Settings stayed open with a message next to the first field, which showed the stored value
 - **AND** the first change is not in the stored preferences or in those the application reports
+
+#### Scenario: A pasted invite link does nothing until the user asks
+
+- **WHEN** the user pastes an invite link into the Team section and moves focus to another field
+- **THEN** no connection to the team server has been made
 
 ### Requirement: Each section restores its own defaults after a confirmation
 

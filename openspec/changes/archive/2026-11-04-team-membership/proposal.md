@@ -52,7 +52,9 @@ person across machines; a free, self-hosted server between different people is n
   address is written only by the user's join.
 - `project-website`: "The documentation states the app's network behavior" names the team server connection: off
   by default, only to the address from the invite the user pasted, what it carries, and that the operator can read
-  what passes through it.
+  what passes through it. **Its delta was removed before archiving**: `teammate-handoff` was archived first, and its
+  delta (this text plus the handoffs the server keeps) is already in the main spec; applying this one would have
+  dropped the handoffs clause.
 - `terminal-preferences`: "偏好設定介面" lists a Team section (between Integrations and Remote access);
   "A change in Settings applies when it is made" gains a third exception, the invite link, which applies only
   through its own controls.

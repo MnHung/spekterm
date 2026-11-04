@@ -126,7 +126,7 @@
 - [x] 7.1 Register `team-membership` in `scripts/scenario-coverage.test.mjs`'s `COVERED_CHANGES` and fill one row per
   scenario with its carrier, `greenIfAbsent` and `mutation`, each carrier looked up, not recalled
 - [x] 7.2 `npm run typecheck`, `npm run lint`, `npm test` green
-- [ ] 7.3 `npm run probe:team` complete and green; `npm run test:e2e` before archiving
-- [ ] 7.4 Dogfood against a local spekterm-server 0.2.1 (with `protocol-clarifications`) with a self-signed certificate (`docs/self-hosting.md` §2b):
+- [x] 7.3 `npm run probe:team` complete and green; `npm run test:e2e` before archiving
+- [x] 7.4 Dogfood against a local spekterm-server 0.2.1 (with `protocol-clarifications`) with a self-signed certificate (`docs/self-hosting.md` §2b):
   member invite, device invite on a second profile, rename, admin revoke while connected and while closed, leave from
   one of two devices and from the last; note anything the stub does differently in `docs/lessons/team.md`

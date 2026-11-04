@@ -85,3 +85,14 @@ Three of the first five mutations stayed green, each for a reason that would hav
 - **The teammate label and the prompt are each decided by one fact, and each has a control group** that turns its
   probe assertion red when it reads the other (`label-from-origin-kind`, `prompt-from-limit-flag` in
   `scripts/team-control-groups.mjs`).
+
+## 8. Against the real server (spekterm-server 0.3.1, 2026-11-04)
+
+Every step of the dogfood list behaved as the stub had: a member invite and a device invite through Settings (the
+device invite asked only for the device name), a rename that survived a restart, a leave from one of two devices
+(the member stayed, no notification), a revocation while spekterm was closed (one notification, the secret gone, no
+further connection), and a leave from the last device (the member removed, no notification).
+
+One trap on the server's side when it runs outside Docker: **the admin command needs `TLS_CERT` in its environment
+too**, or the invites it prints carry no `fp`, and spekterm then verifies the self-signed certificate against the
+system's trust store and cannot connect. In the documented Docker setup the container's environment provides it.

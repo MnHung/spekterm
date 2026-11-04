@@ -98,7 +98,7 @@ OpenSpec 結構的側欄，讓使用者不必另外開 IDE 就能一邊駕駛 ag
   and answers it (`remote-close-offer`): any new way to answer it must reach `SessionControl`, not only the card. "In a turn" is **not** the wait state's `ready` (see
   `docs/lessons/handoff.md`, "Session commands").
 - **Settings** (`settings-sections`) — one dialog with sections (General, Terminal, Agents & sessions,
-  Integrations, Remote access, About) and **one save model: a change applies when it is made** (a choice at
+  Integrations, Team, Remote access, About) and **one save model: a change applies when it is made** (a choice at
   once, a typed value on Enter or blur, Esc restores). The only exceptions are a Slack token and the remote port,
   which wait for their own button or Enter. Slack's connection and the remote access controls live there; the
   routing rules stay in the inbox. Two rules that fail silently if forgotten:
