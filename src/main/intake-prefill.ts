@@ -50,7 +50,7 @@ import { keystrokeSeq, lastKeystrokeAt } from './pty-input'
  * ## `unknown` 不算
  *
  * 此前的判定是「不再是 ready」，那把落回未知的事件（不認得種類的 `Notification`、
- * `SessionEnd`、不認得的事件）一併當成送出。那在過去只撤掉一個暫時的標示；自
+ * 不認得的事件；`SessionEnd` at the time too, which since leaves the state as it was）一併當成送出。那在過去只撤掉一個暫時的標示；自
  * `intake-inbox-usability` 起它會**落盤**「已了結」—— 一次誤判就把交接的本文從它唯一的呈現位置
  * 永久移除，而且沒有復原的入口。**一個無法分辨的狀態不能推定為送出。**
  *

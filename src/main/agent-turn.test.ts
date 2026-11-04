@@ -192,6 +192,67 @@ describe('only the agent\'s own turn boundaries end a turn', () => {
   })
 })
 
+describe("the agent's report of a conversation end leaves the wait state as it was", () => {
+  // CLI 2.1.317+ sends it in a live process with nothing after it (`docs/lessons/transcript.md`). Each of the first
+  // three turns red when `SessionEnd` maps to unknown again.
+  const END = ev('SessionEnd', { reason: 'other' })
+
+  it('a resting agent stays ready and out of a turn', () => {
+    const s = session()
+    s.at(1_000, ev('SessionStart', { source: 'startup' }))
+    s.at(2_000, ev('UserPromptSubmit'))
+    s.at(3_000, ev('Stop', { background_tasks: [] }))
+    s.drain()
+    s.at(4_000, END)
+    s.drain()
+    assert.equal(waitStateOf(s.id), 'ready')
+    assert.equal(inTurnOf(s.id, T0 + 1_900), false)
+  })
+
+  it('a busy agent stays busy and in its turn', () => {
+    const s = session()
+    s.at(1_000, ev('UserPromptSubmit'))
+    s.at(2_000, ev('PreToolUse', { tool_name: 'Bash', tool_use_id: 't1' }))
+    s.drain()
+    s.at(3_000, END)
+    s.drain()
+    assert.equal(waitStateOf(s.id), 'busy')
+    assert.equal(inTurnOf(s.id, null), true)
+  })
+
+  it("a choice known only from the agent's notice stays awaiting a choice", () => {
+    const s = session()
+    s.at(1_000, ev('UserPromptSubmit'))
+    s.at(2_000, ev('Notification', { notification_type: 'permission_prompt' }))
+    s.drain()
+    assert.deepEqual(openRequestsOf(s.id), [], 'no tracked request: the state rests on the base alone')
+    s.at(3_000, END)
+    s.drain()
+    assert.equal(waitStateOf(s.id), 'awaiting-choice')
+  })
+
+  it('a tracked request stays open, the same one (green under the old mapping too)', () => {
+    const s = session()
+    s.at(1_000, ev('PreToolUse', { tool_name: 'AskUserQuestion', tool_use_id: 't1' }))
+    s.at(1_200, ev('PermissionRequest', { tool_name: 'AskUserQuestion' }))
+    s.drain()
+    const before = openRequestsOf(s.id).map((request) => request.id)
+    s.at(2_000, END)
+    s.drain()
+    assert.equal(waitStateOf(s.id), 'awaiting-choice')
+    assert.deepEqual(openRequestsOf(s.id).map((request) => request.id), before)
+  })
+
+  it("the process's end still makes it unknown (green under the old mapping too)", () => {
+    const s = session()
+    s.at(1_000, ev('Stop', { background_tasks: [] }))
+    s.at(2_000, END)
+    s.drain()
+    forgetRequests(s.id)
+    assert.equal(waitStateOf(s.id), 'unknown')
+  })
+})
+
 describe('the background tasks follow the session, not the drain (remote-background-tasks D3)', () => {
   const SHELL = { id: 'b1', type: 'shell', status: 'running', description: 'Run the dev server', command: 'npm run dev' }
 

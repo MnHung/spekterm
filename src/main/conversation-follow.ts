@@ -91,7 +91,7 @@ export function startFollow(sessionId: string, source: AgentSource | null, sink:
  * 切換對話」那條路：那些操作發生在 pty 之內，pty 沒死，我們收不到任何自己發出的訊號
  * （實測 `/clear` 會換一份紀錄）。
  *
- * **而 `SessionEnd` 事件 SHALL NOT 觸發拆除** —— `drainEvents` 只把它翻成「狀態未知」，
+ * **而 `SessionEnd` 事件 SHALL NOT 觸發拆除** —— it leaves the wait state as it was (`agent-events.ts`, `apply`);
  * 跟進器照常活著，等 `SessionStart` 帶來新位置。
  */
 function onWait(

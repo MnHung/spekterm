@@ -463,10 +463,6 @@ export function nextWaitState(event: AgentEvent): WaitState {
       return event.agentId === null ? 'ready' : 'unknown'
     case 'SessionStart':
       return 'ready'
-    case 'SessionEnd':
-      // **這不代表 session 結束**（實測：使用者清空對話時它就會發，而 pty 還活著）。
-      // 它的意思是「這一段對話結束了，接下來可能換一份紀錄」—— 狀態因此不確定。
-      return 'unknown'
     default:
       // 不認得的事件形狀。**不沿用 `current`** —— 沿用會讓一個新的等待方式被當成上一個狀態，
       // 而上一個狀態很可能是允許送出的。
@@ -741,6 +737,15 @@ function apply(held: HeldWait, event: AgentEvent, at: number, newId: () => strin
       return
     case 'PreCompact':
       held.manualCompact = event.trigger === 'manual'
+      return
+    case 'SessionEnd':
+      // **Not the end of the session, and nothing about the turn: the state stays as it was** (like `SubagentStop`
+      // and `PreCompact`, a known event that leaves the base alone — `nextWaitState`'s "never keep the current
+      // state" is about events whose meaning is unknown). `/clear` sends it followed by a `SessionStart`, which
+      // decides; CLI 2.1.317+ also sends it (`reason: "other"`) in a process that keeps running, with nothing after
+      // it — at rest, mid-turn, and with a prompt open (measured, `docs/lessons/transcript.md`). Read as unknown,
+      // that left a resting session on "running" until its next event. A real exit resets the state through the
+      // pty's end (`forgetRequests`), not through this report. Its `transcript_path` still relocates the follow.
       return
     default:
       held.base = nextWaitState(event)

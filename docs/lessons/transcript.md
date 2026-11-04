@@ -355,6 +355,29 @@ CLAUDE_CODE_EXECPATH  CLAUDE_PID  CLAUDE_EFFORT  CLAUDE_CODE_NO_FLICKER
 **它的正確語意是「這一段對話結束了，接下來可能換一份紀錄」，因此接到「重新定位」。**
 拆除只由 pty 的結束觸發。
 
+**Nor does it say anything about the turn — it leaves the wait state as it was** (CLI 2.1.317 / 2.1.318,
+2026-11-04). The agent also sends it (`reason: "other"`) in a process that keeps running, with **no `SessionStart`
+after it**. Six live sessions received one within one second (11:15:18.73–19.64): idle ones, one in the middle of a
+turn (a subagent's `PreToolUse` 1.9 s before, its `PostToolUse` 2.4 s after; the turn went on), and one with an
+`AskUserQuestion` prompt open (requested 6 minutes before, answered 3.5 minutes after). The user did nothing that
+touches every session. While it read as unknown, a resting session sat on "running" until its next event — usually
+the user's next prompt — and a `Stop` drained in the same batch lost its turn end for good (the seen mark returns
+early on a state that is not ready). What raises it in a live process was not found.
+
+- The reasons (2.1.318): `clear` and `resume` come from the conversation switch and a `SessionStart` follows;
+  `prompt_input_exit` precedes the exit; `other` is the CLI's shutdown default, so it also precedes a real exit
+  (recorded once: the process was gone afterwards); `logout` was not measured. A real exit resets the state through
+  the pty's end (`forgetRequests`), so no reason needs its own rule.
+- **The same CLI also sends an in-process `SessionStart` with `source: "resume"`** to an idle session — more than once
+  per process — carrying `seconds_since_last_response`, `context_tokens`, `prompt_cache_likely_expired` and
+  `estimated_cache_write_usd`; once a `SessionEnd` `other` followed 0.5 s later. It is read as any start (ready, the
+  turn ends, requests cleared). All three recorded were idle sessions: whether it can arrive mid-turn or over an open
+  prompt is not known, and if it can, it would clear an open request.
+- **How it was seen:** the drain removes event files within 400 ms, and the transcript records neither event, so a
+  recorder copied every file as it appeared:
+  `inotifywait -m -r -e moved_to --format '%w%f' <userData>/agent-events` (the hook writes a `.tmp` and renames it).
+  Re-measure this way on a CLI upgrade.
+
 > **一般形式：一個由可消費串流推導出來的狀態，其生命週期必須綁在被描述的對象上，
 > 不能綁在觀察者上。** 等待狀態一度放在「訂閱物件」裡，於是使用者切走再切回時它重設為未知，
 > **而重建它所需的事件早已被前一次訂閱讀走並刪掉**（讀完即刪正是去重的機制）——
@@ -476,6 +499,8 @@ classification and strips notices by text; the two are deliberately separate.
 | `!echo hi` | `Stop` only |
 | `/cost` | none |
 | `/clear` | `SessionEnd`, `SessionStart` |
+| nothing (CLI 2.1.317+, live process, any state) | `SessionEnd` `reason: "other"`, nothing after it |
+| nothing (CLI 2.1.317+, idle 1–12 h, three recordings) | `SessionStart` `source: "resume"` with `seconds_since_last_response` |
 | message typed while a tool runs | `UserPromptSubmit` at once, mid-turn |
 | message typed during a text-only answer | `UserPromptSubmit` at once; `Stop`, then a second turn and `Stop` (1.8 s later) |
 | tool needing permission | `PreToolUse`, `PermissionRequest` (+0.2 s), `Notification`/`permission_prompt` (+6.0 s, all five prompts) **with no `tool_name`** |

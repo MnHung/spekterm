@@ -5,7 +5,7 @@ import path from 'node:path'
 import { after, describe, it } from 'node:test'
 
 import { configureAgentEvents, prepareEventInjection } from './agent-events'
-import { clearWait, observeWaits, pokeWait, refreshWait, subscribeWait } from './agent-wait'
+import { clearWait, observeWaits, pokeWait, refreshWait, subscribeWait, waitStateOf } from './agent-wait'
 import { noteWrite } from './pty-input'
 import { SeenMarks } from './wait-seen'
 
@@ -159,6 +159,22 @@ describe('SeenMarks on the real drain path', () => {
     h.fire({ hook_event_name: 'SessionStart', source: 'resume' })
     h.drain()
     assert.equal(h.seen(), true)
+    h.done()
+  })
+
+  it('a turn end read together with a conversation end, while not looked at, is unseen', () => {
+    // CLI 2.1.317+ sends `SessionEnd` in a live process (`docs/lessons/transcript.md`). Read as unknown, this batch
+    // returned early on its state and the turn end was lost for good: the session read idle, never waiting.
+    const h = harness()
+    h.fire({ hook_event_name: 'SessionStart', source: 'startup' })
+    h.drain()
+    h.fire({ hook_event_name: 'UserPromptSubmit', prompt: 'hi' })
+    h.drain()
+    h.fire({ hook_event_name: 'Stop' })
+    h.fire({ hook_event_name: 'SessionEnd', reason: 'other' })
+    h.drain()
+    assert.equal(waitStateOf(h.sessionId), 'ready')
+    assert.equal(h.seen(), false)
     h.done()
   })
 

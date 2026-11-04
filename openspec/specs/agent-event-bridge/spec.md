@@ -161,6 +161,52 @@ session 建立時，其落點的殘留 SHALL 被清除 —— 上一輪的殘留
 - **THEN** 其事件落點未被清除
 - **AND** 其後產生的事件仍被讀到
 
+### Requirement: The agent's report of a conversation end leaves the wait state as it was
+
+When the agent reports that a conversation ended, the session's wait state SHALL stay what it was before the report:
+ready stays ready, busy stays busy, and awaiting a choice stays awaiting a choice, whether the choice is a tracked
+permission request or known only from the agent's notice. The report SHALL NOT make the state unknown, SHALL NOT make
+it ready, and SHALL NOT end a turn, whatever reason the report gives.
+
+The report is not a sign that the session ended: the agent sends it when the user clears or switches the
+conversation, followed by a start, and also while its process keeps running with nothing after it — at rest, in the
+middle of a turn, and with a prompt open (measured with Claude Code 2.1.317 and 2.1.318). A start that follows SHALL
+make the state ready and end the turn. When the session's process really ends, the state SHALL become unknown through
+that end, not through the report.
+
+#### Scenario: A conversation end with nothing after it leaves a resting agent at rest
+
+- **WHEN** an agent session's wait state is ready, and the agent then reports a conversation end and nothing else
+- **THEN** the wait state is still ready
+- **AND** the session reads idle, not running
+
+#### Scenario: A conversation end during a turn leaves the agent busy
+
+- **WHEN** an agent session is busy in a turn and the agent reports a conversation end
+- **THEN** the wait state is still busy and the turn is still in progress
+
+#### Scenario: A choice known only from the agent's notice survives a conversation end
+
+- **WHEN** an agent session waits on a choice that the agent reported only through its permission notice, with no
+  tracked request, and the agent then reports a conversation end
+- **THEN** the wait state is still awaiting a choice
+
+#### Scenario: A turn end read together with a conversation end still asks for the user
+
+- **WHEN** nobody is looking at an agent session, and the agent's report of its turn end and a report of a
+  conversation end are read together
+- **THEN** the wait state is ready and the session reads as waiting for the user
+
+#### Scenario: A cleared conversation is still decided by the start that follows
+
+- **WHEN** the agent reports a conversation end and then a conversation start, as when the user clears the conversation
+- **THEN** the wait state is ready and the transcript follow moves to the location the start reports
+
+#### Scenario: The process's end still makes the state unknown
+
+- **WHEN** the agent reports a conversation end and then the session's process ends
+- **THEN** the wait state is unknown
+
 ### Requirement: Submitting a prompt and a failed tool make the agent busy; a failed turn makes it ready
 
 The injected event reporting SHALL also cover three more moments:

@@ -2113,6 +2113,31 @@ async function runAttention(_mode, _config, context) {
     JSON.stringify(baseline.empty),
   )
 
+  // The agent reports a conversation end with nothing after it (CLI 2.1.317+ does, in a live process): B stays idle.
+  // The barrier is positive — the command writes its drop point's path after firing, and the read waits until the
+  // drop point has been read empty — so "still idle" cannot pass on an event that was never read.
+  const endMarker = join(mkTemp('spekterm-agentview-endW-'), 'drop-point')
+  stub.command(b, `firej SessionEnd '{"hook_event_name":"SessionEnd","reason":"other"}'\nprintf %s "$SPEKTERM_EVENT_DIR" > '${endMarker}'`)
+  await pollFor({
+    read: () => {
+      if (!existsSync(endMarker)) return null
+      const dir = readFileSync(endMarker, 'utf8')
+      return existsSync(dir) ? readdirSync(dir).filter((name) => name.endsWith('.json')).length : null
+    },
+    settled: (pending) => pending === 0,
+    timeoutMs: 15_000,
+    label: "B's conversation end was read",
+  })
+  // One more drain tick, then the tab.
+  await new Promise((resolve) => setTimeout(resolve, 1_000))
+  const ended = await state()
+  check(
+    results,
+    'a conversation end the agent reports with nothing after it leaves an idle session idle, not running',
+    ended.tabs[1]?.includes(IDLE) && !ANY_ATTENTION.some((w) => w !== IDLE && ended.tabs[1].includes(w)),
+    JSON.stringify(ended.tabs[1]),
+  )
+
   // B is displayed while A finishes a turn: A was not looked at.
   await app.client.evaluate(focusTabExpression(1))
   stub.command(a, TURN())

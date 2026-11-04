@@ -69,10 +69,11 @@ describe('預填不早於就緒', () => {
     })
 
     // 逐一餵入非就緒的狀態，每一步都斷言「仍然為空」。
+    // Unknown first: after the permission request below, every later step reads awaiting-choice while it stays open.
     for (const [name, body] of [
+      ['unknown', { hook_event_name: 'Notification', notification_type: 'not_a_known_type' }],
       ['busy', { hook_event_name: 'PreToolUse' }],
       ['awaiting-choice', { hook_event_name: 'PermissionRequest' }],
-      ['unknown', { hook_event_name: 'SessionEnd' }],
     ] as const) {
       fire(base, sessionId, body)
       await new Promise((resolve) => setTimeout(resolve, 600))

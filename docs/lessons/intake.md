@@ -313,7 +313,7 @@ spec 只承諾「內容 SHALL **可**過期」，所以它不算違規 —— �
 did not change: it still reads busy / awaiting-choice, and now also sees a submission that uses no tool.
 
 - **此前的判定是「不再是 ready」**，那把落回 `unknown` 的事件（不認得種類的 `Notification`、
-  `SessionEnd`、不認得的事件）一併當成送出。那在過去只撤掉一個暫時的「待送出」標示；
+  不認得的事件; `SessionEnd` at the time too, which since leaves the state as it was）一併當成送出。那在過去只撤掉一個暫時的「待送出」標示；
   **落盤之後，一次誤判就把交接的本文從它唯一的呈現位置永久移除**，而且沒有復原的入口。
   判定因此收窄為 `busy` / `awaiting-choice`（`intake-prefill.ts` 的 `isSubmitted`），
   **標示與了結共用這一個判定** —— 兩處各自判斷的話，標示消失而項目還在（或反之）。

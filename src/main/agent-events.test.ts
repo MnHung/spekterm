@@ -72,8 +72,7 @@ test('工具結束是離開等待選擇的訊號', () => {
   assert.equal(nextWaitState(ev('Stop')), 'ready')
 })
 
-test('對話結束 ⇒ 未知（它不代表 session 結束）', () => {
-  assert.equal(nextWaitState(ev('SessionEnd')), 'unknown')
+test('對話開始 ⇒ 就緒（對話結束不經過 nextWaitState：它不改變狀態，見 agent-turn.test.ts）', () => {
   assert.equal(nextWaitState(ev('SessionStart')), 'ready')
 })
 
@@ -464,7 +463,7 @@ test('對話結束後接著開始的新對話，其位置被回報且狀態為�
   // 實測 `/clear` 的形狀：`SessionEnd`（舊路徑）＋ 59ms 後 `SessionStart`（新路徑）。
   fs.writeFileSync(
     path.join(dir, '100-1.json'),
-    JSON.stringify({ hook_event_name: 'SessionEnd', transcript_path: '/p/old.jsonl' }),
+    JSON.stringify({ hook_event_name: 'SessionEnd', reason: 'clear', transcript_path: '/p/old.jsonl' }),
   )
   fs.writeFileSync(
     path.join(dir, '200-1.json'),
