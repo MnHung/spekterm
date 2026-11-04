@@ -195,6 +195,14 @@ OpenSpec 結構的側欄，讓使用者不必另外開 IDE 就能一邊駕駛 ag
   follows `firstPartyBody`, the limit follows `firstPartyBody || handoffBodyLimit`** — two facts of one item, so a
   teammate's text is third-party with the handoff's limit (`isFirstPartyBody`). The teammate label follows the
   adapter, never `originKind`, which a shared drop point file can write.
+  **The way back** (`teammate-handoff-return`): the inbox's **Sent** tab follows the server (`teammate-sent.ts`:
+  `handoff.sync` after every `hello`, then `handoff.status`; a reset replaces whatever the `seq` and sets the cursor);
+  only the device in `sentFrom` notifies, and only for a stored copy that changed. A session opened from a teammate's
+  handoff is linked **before it spawns** through the spawn ticket (`teammateHandoff`, main-owned, not a lineage), and
+  `teammate-return.ts` reports `taken` (when the user sent the prompt and the agent started, not at fill), `declined`
+  (Decline, ≤ 500) and `done` (the agent's report) one at a time, the same report again after a lost answer. Only a
+  handoff whose acknowledgement was answered, on this device, by a server offering `handoff.update`, is reported on.
+  The sending agent sees the status in its relations file, never the report or the reason (third-party text).
 
 **以 MIT 開源**（`open-source-mit`：`LICENSE`、`CONTRIBUTING.md`、產物根目錄附本身與第三方的授權文字；
 公開前已改寫全部 git 歷史）。**Linux 打包已可用**（`npm run dist:linux` → AppImage，`npm run install:desktop` 裝進應用程式

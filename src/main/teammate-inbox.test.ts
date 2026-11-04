@@ -5,6 +5,7 @@ import path from 'node:path'
 import { after, describe, it } from 'node:test'
 
 import { MAX_BODY_LENGTH } from './intake-schema'
+import { listView } from './intake-projection'
 import { IntakeService } from './intake-service'
 import { IntakeStore } from './intake-store'
 import type { Answer } from './team-connection'
@@ -17,7 +18,8 @@ class FakeTeam implements InboxTeamPort {
   stamp: MembershipStamp | null = A
   name = 'Acme'
   isConnected = true
-  ops = ['handoff.send', 'handoff.received', 'team.members']
+  ops = ['handoff.send', 'handoff.received', 'handoff.update', 'team.members']
+  device: string | null = 'd_laptop'
   acks: { id: string; storedAtAck: string | null }[] = []
   /** Pending acknowledgements, answered by the test. */
   pending: { id: string; resolve: (a: Answer) => void; reject: (e: Error) => void }[] = []
@@ -35,6 +37,9 @@ class FakeTeam implements InboxTeamPort {
   }
   connected(): boolean {
     return this.isConnected
+  }
+  deviceId(): string | null {
+    return this.device
   }
   request(_m: string, p: Record<string, unknown>): Promise<Answer> {
     const id = p.id as string
@@ -360,3 +365,73 @@ describe('receiving (task 4.3, one case per arrow of D9)', () => {
     assert.equal(traces[0].permanent, false)
   })
 })
+
+describe('which handoffs may be reported on (teammate-handoff-return D8, task 3.1)', () => {
+  it('an answered acknowledgement, this device, the current membership and handoff.update: reportable, also once shown', async () => {
+    const h = harness()
+    h.inbox.incoming(offer('h_r1'))
+    await h.inbox.idle()
+    const entry = h.inbox.entries().find((e) => e.id === 'h_r1')
+    assert.equal(entry?.state, 'shown')
+    assert.equal(entry?.answered?.deviceId, 'd_laptop')
+    assert.deepEqual(h.inbox.reportable('h_r1'), { membership: A, deviceId: 'd_laptop' })
+    // Kept across a restart.
+    assert.ok(h.make().reportable('h_r1'))
+  })
+
+  it('HANDOFF_UNKNOWN: shown, not reportable', async () => {
+    const team = new FakeTeam()
+    team.autoAnswer = () => ({ ok: false, e: { code: 'HANDOFF_UNKNOWN', message: 'x' } })
+    const h = harness({ team })
+    h.inbox.incoming(offer('h_r2'))
+    await h.inbox.idle()
+    assert.equal(h.store.get(TEAMMATE_ADAPTER, intakeId('h_r2'))?.state, 'pending')
+    assert.equal(h.inbox.reportable('h_r2'), null)
+  })
+
+  it('no handoff.received: shown, not reportable', async () => {
+    const team = new FakeTeam()
+    team.ops = ['handoff.send', 'handoff.update', 'team.members']
+    const h = harness({ team })
+    h.inbox.incoming(offer('h_r3'))
+    await h.inbox.idle()
+    assert.equal(h.store.get(TEAMMATE_ADAPTER, intakeId('h_r3'))?.state, 'pending')
+    assert.equal(h.inbox.reportable('h_r3'), null)
+  })
+
+  it('a discarded credential: shown possibly elsewhere, not reportable', async () => {
+    const team = new FakeTeam()
+    team.autoAnswer = null
+    const h = harness({ team })
+    h.inbox.incoming(offer('h_r4'))
+    await h.inbox.idle()
+    team.stamp = null
+    h.inbox.credentialDiscarded()
+    await h.inbox.idle()
+    team.stamp = A
+    assert.equal(h.inbox.reportable('h_r4'), null)
+  })
+
+  it('another device of the same member, or a server without handoff.update: not reportable', async () => {
+    const h = harness()
+    h.inbox.incoming(offer('h_r5'))
+    await h.inbox.idle()
+    h.team.device = 'd_new'
+    assert.equal(h.inbox.reportable('h_r5'), null)
+    h.team.device = 'd_laptop'
+    h.team.ops = ['handoff.send', 'handoff.received']
+    assert.equal(h.inbox.reportable('h_r5'), null)
+  })
+})
+
+describe('the phone does not see which items may be declined (teammate-handoff-return D9)', () => {
+  it('a teammate item in the projection a paired device receives carries no decline mark', async () => {
+    const h = harness()
+    h.inbox.incoming(offer('h_p1'))
+    await h.inbox.idle()
+    const [item] = listView(h.store.list(), { rules: [], fallbackFolderId: null }, new Set())
+    assert.equal(item.adapter, TEAMMATE_ADAPTER)
+    for (const key of ['declinable', 'reportable', 'answered']) assert.ok(!(key in item), key)
+  })
+})
+

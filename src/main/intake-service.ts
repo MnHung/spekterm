@@ -75,8 +75,10 @@ export interface FailureContext {
   /**
    * What failed, when a code alone cannot say: `FIELD_TYPE` and `TOO_LONG` are shared by handoffs and session
    * commands (`agent-session-control` D6). Only the notification reads it; it is not persisted with the trace.
+   * `teammate-report`: reports for a teammate's handoff were not delivered (`teammate-handoff-return` D8); the
+   * notification then names the handoff (`target`, its title) and its sender (`origin`), both reduced.
    */
-  subject?: 'command'
+  subject?: 'command' | 'teammate-report'
 }
 
 /** 一次**永久性**失敗 —— 由 adapter 經 `reportFailure()` 送出，供通知與痕跡消費。 */

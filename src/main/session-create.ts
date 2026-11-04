@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
 import type { SessionLineage } from '../shared/lineage/types'
-import { lineageFromTicket } from './handoff-ticket'
+import { lineageFromTicket, linkTeammateSession } from './handoff-ticket'
 import { decidePeerName } from './peer-name'
 import type { SessionStore } from './session-store'
 import type { SpawnTarget } from './terminal'
@@ -37,7 +37,11 @@ export async function createSession<R extends { sessionId: string; conversationI
   if (resolution?.briefBody !== undefined) sessions.writeHandoffBrief(sessionId, { body: resolution.briefBody })
   // **同步地**決定並登記 —— 兩個並行的 create 不會在 await 之間拿到同一個名字。
   const peerName = target === 'claude' ? decidePeerName(input.railLabel, sessionId, sessions.peerNames()) : undefined
-  sessions.addProvisional({ id: sessionId, folderId, spawnTarget: target, lineage, peerName })
+  // A teammate's handoff (`teammate-handoff-return` D7): the link is on the provisional record before the spawn, so
+  // the first introduction already carries the teammate report paragraph.
+  const teammateHandoff = resolution?.teammate
+  sessions.addProvisional({ id: sessionId, folderId, spawnTarget: target, lineage, peerName, ...(teammateHandoff ? { teammateHandoff } : {}) })
+  linkTeammateSession(sessionId, teammateHandoff)
 
   let result: R
   try {

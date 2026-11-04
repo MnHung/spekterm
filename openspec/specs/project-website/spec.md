@@ -319,7 +319,9 @@ spekterm's documentation SHALL state, in a page about data and network:
   fingerprint); that it keeps one connection open while on and reconnects when it drops; what passes through it and
   what the server keeps (the device's credential at authentication, the member's handle and display name, the
   device's name, the team's member list, and **handoffs to and from teammates** — their title and body kept until
-  delivered or expired, their sender, recipient, times and status after that; see `teammate-handoff`); and that **the server's operator can read everything that passes through
+  delivered or expired, their sender, recipient, times and status after that; see `teammate-handoff`; **a decline
+  reason or completion report sent back** — kept 30 days after it was written — and each handoff's record for the
+  Sent list — kept 90 days after its last change; see `teammate-handoff-return`); and that **the server's operator can read everything that passes through
   it**, since nothing is end-to-end encrypted. Statements elsewhere on the page that everything spekterm keeps is on
   the user's machine SHALL be qualified accordingly;
 - the update check: that a packaged build contacts GitHub (the releases of `spekhq/spekterm`, and on Linux the
@@ -361,7 +363,8 @@ allow-list names this page.
 - **WHEN** spekterm's data and network page of the built site is read in either language
 - **THEN** it states that the app connects to a team server only while the Team feature is on and only to the
   address from the invite, that the connection stays open while on, what the server keeps — handoffs to and from
-  teammates among it — and that the server's operator can read what passes through it
+  teammates among it, decline reasons and reports with their 30 days, and the Sent list's records with their 90
+  days — and that the server's operator can read what passes through it
 
 ### Requirement: Screenshots come only from the capture script
 

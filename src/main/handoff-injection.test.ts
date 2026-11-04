@@ -106,7 +106,7 @@ test('folder 清單變動後重寫的自我介紹仍含名字與關係檔位置'
 
 test('由交接建立的 session，spawn 時的自我介紹含完成報告的說明；其他 session 沒有（handoff-completion）', () => {
   setup()
-  prepareHandoffInjection('s1', folders, { name: 'alpha-1111', reportable: true })
+  prepareHandoffInjection('s1', folders, { name: 'alpha-1111', reportable: 'lineage' })
   prepareHandoffInjection('s2', folders, { name: 'alpha-2222' })
   assert.ok(introContext('s1').includes('"kind": "report"'))
   assert.ok(!introContext('s2').includes('"kind": "report"'))
@@ -114,12 +114,12 @@ test('由交接建立的 session，spawn 時的自我介紹含完成報告的說
 
 test('folder 清單變動後重寫的自我介紹仍含完成報告的說明', () => {
   setup()
-  prepareHandoffInjection('s1', folders, { name: 'alpha-1111', reportable: true })
+  prepareHandoffInjection('s1', folders, { name: 'alpha-1111', reportable: 'lineage' })
   refreshIntros(
     ['s1'],
     [...folders, { name: 'beta', path: '/repos/beta' }],
     () => 'alpha-1111',
-    (id) => id === 's1',
+    (id) => (id === 's1' ? 'lineage' : undefined),
   )
   assert.ok(introContext('s1').includes('"kind": "report"'), '完成報告那一段仍在')
   assert.match(introContext('s1'), /^ {4}beta$/m, '前置：真的重寫了（新 folder 在）')

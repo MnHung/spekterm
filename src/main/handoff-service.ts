@@ -326,6 +326,8 @@ export class HandoffService {
     }
     const decision = accept(sessionId, report.summary, reportIdentity(file, mtimeMs, contents))
     if (decision === 'not-handoff') return service.reject('REPORT_NOT_HANDOFF', sessionId, undefined, { adapter: HANDOFF_ADAPTER })
+    // A session opened from a teammate's handoff whose reporting stopped or which was declined (`teammate-handoff-return`).
+    if (decision === 'teammate-stopped') return service.reject('TEAMMATE_REPORT_STOPPED', sessionId, undefined, { adapter: HANDOFF_ADAPTER })
     // A repeated report changes nothing; its receipt says so (`handoff-receipt`).
     return { ok: true, consume: true, notify: false, ...(decision === 'duplicate' ? { duplicate: true } : {}) }
   }

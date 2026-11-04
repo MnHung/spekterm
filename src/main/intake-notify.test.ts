@@ -4,10 +4,13 @@ import { describe, it } from 'node:test'
 import {
   buildPayload,
   COMPLETION_ADAPTER,
+  COMPLETION_FOCUS_ADAPTER,
   FIELD_MAX,
   IntakeNotifier,
   onlyOutgoing,
   OUTGOING_ADAPTER,
+  onlySent,
+  SENT_ADAPTER,
   reduceForNotification,
   type NotifyBackend,
   type NotifyClock,
@@ -427,3 +430,60 @@ describe('teammate handoffs waiting for confirmation (teammate-handoff)', () => 
     assert.match(payload.body, /2 handoffs to teammates/)
   })
 })
+
+describe('a sent handoff ended (teammate-handoff-return)', () => {
+  it('done: its own key, the title, the reduced name and report', () => {
+    const clock = fakeClock()
+    const backend = recorder()
+    const notifier = new IntakeNotifier({ backend, clock })
+    notifier.sentStatus({ id: 'h_1', status: 'done', title: 'Fix billing export', recipientName: 'Sam <b>Lee</b>', text: 'Exported, see https://evil.example/pr/1' })
+    clock.advance(10_000)
+    assert.deepEqual(backend.keys[0], [{ adapter: SENT_ADAPTER, id: 'h_1' }])
+    assert.equal(onlySent(backend.keys[0]), true)
+    assert.match(backend.sent[0].body, /Fix billing export/)
+    assert.match(backend.sent[0].body, /Exported/)
+    assert.doesNotMatch(backend.sent[0].body, /evil\.example|</)
+  })
+
+  it('declined without a reason, and expired without a title, name the recipient', () => {
+    assert.match(buildPayload([{ kind: 'sent-status', id: 'h', status: 'declined', title: 'T', recipientName: 'Sam' }]).body, /Sam declined “T”\./)
+    assert.match(buildPayload([{ kind: 'sent-status', id: 'h', status: 'expired', recipientName: 'Sam' }]).body, /“Sam” expired/)
+  })
+
+  it('several: one notification with their count; mixed: the coalesced one', () => {
+    const two = buildPayload([
+      { kind: 'sent-status', id: 'a', status: 'done', recipientName: 'Sam', text: 'x' },
+      { kind: 'sent-status', id: 'b', status: 'expired', recipientName: 'Alex' },
+    ])
+    assert.match(two.body, /2 handoffs you sent/)
+    const mixed = buildPayload([
+      { kind: 'sent-status', id: 'a', status: 'done', recipientName: 'Sam', text: 'x' },
+      { kind: 'outgoing', id: 'o1', recipientName: 'Sam' },
+    ])
+    assert.match(mixed.title, /2/)
+    assert.equal(onlySent([{ adapter: SENT_ADAPTER, id: 'a' }, { adapter: OUTGOING_ADAPTER, id: 'o1' }]), false)
+  })
+
+  it('a stopped teammate report names the handoff and its sender, reduced', () => {
+    const payload = buildPayload([
+      { kind: 'failure', failure: { code: 'TEAMMATE_REPORT_NOT_SENT', subject: 'teammate-report', target: 'Fix <i>it</i>', origin: 'Sam', at: 1 } },
+    ])
+    assert.match(payload.body, /Fix iit\/i/)
+    assert.match(payload.body, /Sam/)
+    assert.doesNotMatch(payload.body, /</)
+  })
+})
+
+describe('a teammate session\'s completion (teammate-handoff-return D10)', () => {
+  it('names the handoff and the summary, and its key focuses the session without a sheet', () => {
+    const clock = fakeClock()
+    const backend = recorder()
+    const notifier = new IntakeNotifier({ backend, clock })
+    notifier.completed('sess-t', 'Fix billing export', 'Exported', { sheet: false })
+    clock.advance(10_000)
+    assert.deepEqual(backend.keys[0], [{ adapter: COMPLETION_FOCUS_ADAPTER, id: 'sess-t' }])
+    assert.match(backend.sent[0].body, /Fix billing export/)
+    assert.match(backend.sent[0].body, /Exported/)
+  })
+})
+

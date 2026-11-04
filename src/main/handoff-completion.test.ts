@@ -164,3 +164,45 @@ describe('完成通知綁定於採納（handoff-completion）', () => {
     assert.equal(reported.length, 1)
   })
 })
+
+describe('a session opened from a teammate\'s handoff (teammate-handoff-return D10)', () => {
+  const LINKED = '3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f'
+  function linked(answer: { ok: true; title: string } | { ok: false }) {
+    const queued: { sessionId: string; handoffId: string; text: string }[] = []
+    const notified: { sessionId: string; title: string; summary: string; sheet?: boolean }[] = []
+    sessions.addProvisional({ id: LINKED, folderId: 'f2', spawnTarget: 'claude', teammateHandoff: { handoffId: 'h_9' } })
+    const c = new HandoffCompletion({
+      sessions,
+      subscribe: () => () => {},
+      onReported: (sessionId, title, summary, options) => notified.push({ sessionId, title, summary, ...(options ? { sheet: options.sheet } : {}) }),
+      teammateReport: (sessionId, handoffId, text) => {
+        queued.push({ sessionId, handoffId, text })
+        return answer
+      },
+    })
+    return { c, queued, notified }
+  }
+
+  it('queues done with the text, notifies without a sheet, sets no lifecycle', () => {
+    const { c, queued, notified } = linked({ ok: true, title: 'Fix billing export' })
+    assert.equal(c.acceptReport(LINKED, 'Exported', 'id-1'), 'accepted')
+    assert.deepEqual(queued, [{ sessionId: LINKED, handoffId: 'h_9', text: 'Exported' }])
+    assert.deepEqual(notified, [{ sessionId: LINKED, title: 'Fix billing export', summary: 'Exported', sheet: false }])
+    assert.equal(completionOf(LINKED), undefined)
+    assert.equal(c.acceptReport(LINKED, 'Exported', 'id-1'), 'duplicate')
+    assert.equal(queued.length, 1)
+  })
+
+  it('a lone surrogate becomes U+FFFD, at the same length', () => {
+    const { c, queued } = linked({ ok: true, title: 'T' })
+    c.acceptReport(LINKED, 'ok \ud800 end', 'id-2')
+    assert.equal(queued[0].text, 'ok \ufffd end')
+  })
+
+  it('reporting stopped: teammate-stopped, nothing notified', () => {
+    const { c, notified } = linked({ ok: false })
+    assert.equal(c.acceptReport(LINKED, 'R', 'id-3'), 'teammate-stopped')
+    assert.equal(notified.length, 0)
+  })
+})
+

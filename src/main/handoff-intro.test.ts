@@ -211,11 +211,28 @@ test('告訴 agent 第一則 prompt 會被代為送出，且不再要求等使�
 })
 
 test('完成報告的說明：上限由常數推導、要求不得為空、只對由交接建立的 session 說（handoff-completion）', () => {
-  const child = introText({ folders, outbox: '/x', name: 'n', relations: '/r.json', reportable: true })
+  const child = introText({ folders, outbox: '/x', name: 'n', relations: '/r.json', reportable: 'lineage' })
   assert.ok(child.includes(`at most ${MAX_REPORT_LENGTH} characters`), child)
   assert.ok(child.includes('not empty'))
   assert.ok(child.includes('SendMessage'))
   assert.ok(!introText({ folders, outbox: '/x', name: 'n', relations: '/r.json' }).includes('"kind": "report"'))
+})
+
+test('a teammate\'s handoff gets its own report paragraph: no parent, the teammate, reachable details (teammate-handoff-return)', () => {
+  const text = introText({ folders, outbox: '/x', name: 'n', relations: '/r.json', reportable: 'teammate' })
+  assert.ok(text.includes('"kind": "report"'), text)
+  assert.ok(text.includes(`at most ${MAX_REPORT_LENGTH} characters`))
+  assert.match(text, /opened by a teammate's handoff/)
+  assert.match(text, /sends each report to that teammate through your team server/)
+  assert.match(text, /pushed branch, a pull request or an issue/)
+  assert.ok(!text.includes('your parent session or the user'), 'no parent in this paragraph')
+  assert.ok(!text.includes('send it the same summary with SendMessage'), 'no message to a parent')
+})
+
+test('the teammate variant is not longer than the lineage variant (teammate-handoff-return D11)', () => {
+  const lineage = introText(realisticInput(30))
+  const teammate = introText({ ...realisticInput(30), reportable: 'teammate' })
+  assert.ok(teammate.length <= lineage.length, `${teammate.length} > ${lineage.length}`)
 })
 
 test('告訴母 session 關係檔裡看得到子 session 的狀態與摘要', () => {
@@ -263,7 +280,7 @@ test('the session commands (agent-session-control)', async (t) => {
  * so tightening keeps them green; each was checked by deleting its sentence (control group, tasks 7.2).
  */
 test('every constraint is stated (scheduled-handoff D10)', async (t) => {
-  const handoff = introText({ folders, outbox: '/o', name: 'n', relations: '/r.json', reportable: true })
+  const handoff = introText({ folders, outbox: '/o', name: 'n', relations: '/r.json', reportable: 'lineage' })
   const cases: [string, RegExp][] = [
     ['the .json suffix', /must end in \.json/],
     ['the atomic write: a temporary name that does not end in .json', /temporary name that does NOT end\s+in \.json/],
@@ -288,6 +305,7 @@ test('every constraint is stated (scheduled-handoff D10)', async (t) => {
  * data directory gives, the longest variant (a session created by a handoff). Past ~10,000 characters the CLI
  * replaces the whole introduction with a short preview; this keeps the margin visible to the next change that
  * adds a paragraph. Control group (tasks 7.4): fixed-length padding added to the text turns it red.
+ * Measured 8,276 after `teammate-handoff-return` (whose teammate report variant is not longer than this one).
  */
 const BUDGET = 8_500
 
@@ -302,7 +320,7 @@ function realisticInput(count: number): Parameters<typeof introText>[0] {
     receipts: `/home/alex/.config/Spekterm/handoff/receipts/${id}`,
     name: 'acme-workspace-0f4c',
     relations: `/home/alex/.config/Spekterm/handoff/relations/${id}.json`,
-    reportable: true,
+    reportable: 'lineage',
     // On a team with the feature on (`teammate-handoff`): the longest variant.
     teammates: '/home/alex/.config/Spekterm/handoff/teammates.json',
   }

@@ -708,6 +708,43 @@
     "runNow": "立即執行",
     "cancelScheduled": "取消",
     "outgoingTab": "待送出",
+    "decline": "婉拒…",
+    "declineReasonLabel": "婉拒的理由（可不填）",
+    "declineReasonHint": "{{sender}} 會看到這段理由。不填就是不附理由婉拒。",
+    "declineReasonLength": "{{count}} / {{limit}}",
+    "declineConfirm": "婉拒",
+    "declineCancel": "取消",
+    "declineFailed": {
+      "unknown": "這則交接已經不能婉拒了。",
+      "TOO_LONG": "理由太長了。",
+      "stopped": "這則交接已經不能再回報，婉拒沒有送出。"
+    },
+    "sentTab": "已寄出",
+    "sentEmpty": "你還沒有寄出任何給隊友的交接。",
+    "sentUnsupported": "你的團隊 server 不保留已寄出的交接清單。",
+    "sentDamaged": "已寄出的清單讀不出來，已另存一旁。它會從團隊 server 重新補齊，但沒有標題。",
+    "sentHint": "理由和報告是隊友寫的。轉交給 agent 之前先讀過。",
+    "sent": {
+      "itemLabel": "寄給 {{name}}：{{title}}",
+      "noTitle": "（沒有標題 —— 從另一台裝置寄出，或在你重新加入之前寄出）",
+      "to": "給 {{name}}（@{{handle}}）",
+      "recipientLeft": "已不在團隊中",
+      "sentAt": "寄出於 {{time}}",
+      "since": "{{status}} {{time}}",
+      "unknownToServer": "團隊 server 已經沒有這則交接。",
+      "reasonLabel": "理由",
+      "reportLabel": "報告",
+      "reportNumber": "第 {{count}} 份報告",
+      "copy": "複製",
+      "status": {
+        "pending": "等待送達",
+        "delivered": "已送達",
+        "taken": "已接手",
+        "declined": "已婉拒",
+        "done": "已完成",
+        "expired": "已過期"
+      }
+    },
     "outgoingEmpty": "沒有等著送給隊友的交接。",
     "outgoingHint": "你按下送出之前，什麼都不會送給隊友。",
     "outgoingDamaged": "待送出的清單讀不出來，已另存一旁。原本在裡面等待、或送出後沒有收到回應的交接已經遺失。",
@@ -792,7 +829,9 @@
       "TEAMMATE_IS_SELF": "指名的隊友是你自己",
       "OUTGOING_FULL": "等你確認的隊友交接太多了",
       "SEND_UNCERTAIN": "在你離開團隊之前可能已經送給隊友了",
-      "TEAMMATE_UNREADABLE": "收到一則這個版本的 spekterm 讀不了的隊友交接"
+      "TEAMMATE_UNREADABLE": "收到一則這個版本的 spekterm 讀不了的隊友交接",
+      "TEAMMATE_REPORT_STOPPED": "agent 對隊友交接的回報沒有送出：這件交接已停止回報",
+      "TEAMMATE_REPORT_NOT_SENT": "隊友沒有收到這件交接的回報"
     },
     "rules": {
       "label": "Routing 規則",
@@ -822,7 +861,15 @@
       "outgoingTitle": "要交給隊友的交接",
       "outgoingSingle": "一個 agent 想把交接送給 {{name}}。打開它來送出或捨棄。",
       "outgoingMerged_other": "{{count}} 則要交給隊友的交接在等你。",
-      "commandFailure": "一個 session 指令沒有執行：{{reason}}"
+      "commandFailure": "一個 session 指令沒有執行：{{reason}}",
+      "sentTitle": "你寄出的交接",
+      "sentDone": "{{name}} 完成了「{{what}}」：{{text}}",
+      "sentDeclined": "{{name}} 婉拒了「{{what}}」。",
+      "sentDeclinedReason": "{{name}} 婉拒了「{{what}}」：{{text}}",
+      "sentExpired": "「{{what}}」在 {{name}} 收到之前就過期了。",
+      "sentMerged_other": "{{count}} 則你寄出的交接有新消息。",
+      "teammateReportTitle": "給隊友的回報",
+      "teammateReportFailure": "「{{title}}」的回報沒有送到 {{name}}：{{reason}}"
     },
     "badge": "{{total}} 則待處理",
     "openedLabel": "已開啟",

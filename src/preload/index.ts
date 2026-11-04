@@ -11,9 +11,11 @@ import type { DrainResult, WaitState } from '../main/agent-events'
 import type { SessionLineage } from '../shared/lineage/types'
 import type {
   ApproveResult,
+  DeclineResult,
   IntakeAcceptResult,
   IntakeRulesSnapshot,
   IntakeSnapshot,
+  SentSnapshot,
 } from '../main/ipc/intake'
 
 /** 等待選擇時「正在被問什麼」。**沒有選項** —— 作答一律回終端 view。 */
@@ -679,6 +681,11 @@ const workspaceApi = {
     discardOutgoing: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke('workspace:intake:outgoing:discard', id),
     /** Dismiss a refused one, or a sent one waiting for the recipient's device. */
     dismissOutgoing: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke('workspace:intake:outgoing:dismiss', id),
+    /** Decline a teammate's handoff with an optional reason (`teammate-handoff-return`). The main process checks it. */
+    decline: (id: string, adapter: string, reason: string): Promise<DeclineResult> =>
+      ipcRenderer.invoke('workspace:intake:decline', id, adapter, reason),
+    /** The Sent list: the handoffs this member sent to teammates, and their status. */
+    sent: (): Promise<SentSnapshot> => ipcRenderer.invoke('workspace:intake:sent'),
     rules: (): Promise<IntakeRulesSnapshot> => ipcRenderer.invoke('workspace:intake:rules'),
     setRules: (config: IntakeRulesSnapshot): Promise<{ ok: boolean }> =>
       ipcRenderer.invoke('workspace:intake:setRules', config),
@@ -690,9 +697,9 @@ const workspaceApi = {
     /** 使用者打開了收件匣 —— 通知上界的重置點。無回應通道。 */
     opened: (): void => ipcRenderer.send('workspace:intake:opened'),
     /** Open the inbox, on the given tab when it is closed (`recurring-handoff`: only proposals ⇒ Schedules). */
-    onOpenInbox: (listener: (tab: 'inbox' | 'schedules' | 'outgoing') => void): (() => void) => {
+    onOpenInbox: (listener: (tab: 'inbox' | 'schedules' | 'outgoing' | 'sent') => void): (() => void) => {
       const handler = (_event: IpcRendererEvent, tab: unknown): void =>
-        listener(tab === 'schedules' || tab === 'outgoing' ? tab : 'inbox')
+        listener(tab === 'schedules' || tab === 'outgoing' || tab === 'sent' ? tab : 'inbox')
       ipcRenderer.on('workspace:intake:openInbox', handler)
       return () => ipcRenderer.removeListener('workspace:intake:openInbox', handler)
     },

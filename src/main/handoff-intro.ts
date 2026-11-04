@@ -48,6 +48,12 @@ export const RECEIPTS_ENV = 'SPEKTERM_HANDOFF_RECEIPTS'
 /** 告知 agent 關係檔位置的環境變數（`session-lineage`）。 */
 export const RELATIONS_ENV = 'SPEKTERM_HANDOFF_RELATIONS'
 
+/**
+ * Which report paragraph a session gets (`handoff-completion`): `lineage` for a session created by a handoff on this
+ * machine, `teammate` for one opened from a teammate's handoff whose reporting is open (`teammate-handoff-return`).
+ */
+export type ReportKind = 'lineage' | 'teammate'
+
 export interface IntroInput {
   /** 可交接的對象。**它就是查表的定義域所取自的同一份清單**（見 `handoff-target`）。 */
   folders: readonly Pick<WorkspaceFolder, 'name' | 'path'>[]
@@ -65,7 +71,7 @@ export interface IntroInput {
    * **每一個寫出點都要帶上它** —— spawn 時與 folder 清單變動時的重寫。後者漏掉的話，下一次續接、
    * 壓縮、清除之後子 agent 就不知道要回報，而那個 session 永遠停在「等你」。
    */
-  reportable?: boolean
+  reportable?: ReportKind
   /**
    * The zone a repeating handoff's schedule is read in (`recurring-handoff`). Absent: the desktop's, when the
    * introduction is written. Tests pass it.
@@ -173,7 +179,7 @@ function composeIntro({ folders, outbox, receipts, name, relations, reportable, 
     'Until you have read the receipt, say that you wrote the handoff, not that it was delivered.',
     ...peerLines(name, relations),
     ...commandLines(Boolean(relations)),
-    ...(reportable ? reportLines() : []),
+    ...(reportable ? reportLines(reportable) : []),
   ]
   return lines.join('\n')
 }
@@ -246,13 +252,31 @@ function commandLines(hasRelations: boolean): string[] {
  * 上限由常數推導（`scripts/handoff-intro-source.test.mjs` 擋字面值）—— 一個未被告知的約束
  * 就是一次被拒的回報。
  */
-function reportLines(): string[] {
+function reportLines(kind: ReportKind): string[] {
+  if (kind === 'teammate') return teammateReportLines()
   return [
     '',
     'This session was opened by a handoff. Each time you finish something your parent session or the user asked of you, report it:',
     '  1. Write into your outbox, by the same rules: {"kind": "report", "summary": "<what you did and how it turned out>"}',
     `     summary: at most ${MAX_REPORT_LENGTH} characters, and not empty; a longer or empty one is rejected, not shortened. Put details in a file in this repo and point to it.`,
     '  2. Then read your relations file. If your parent has "running": true, send it the same summary with SendMessage. If not, or you have no parent any more, do not: spekterm keeps your report for it.',
+    'A report tells the user this piece of work is done. Report again after each later request you finish.',
+  ]
+}
+
+/**
+ * The report paragraph for a session opened from a teammate's handoff (`teammate-handoff-return`, design D11): no
+ * parent; the report goes to the teammate through the team server, and is all they receive; details where they can
+ * reach them, since they cannot see this machine. **Not longer than the lineage variant** (a unit test compares), so
+ * the longest variant the budget is measured on stays that one.
+ */
+function teammateReportLines(): string[] {
+  return [
+    '',
+    "This session was opened by a teammate's handoff. Each time you finish something it or the user asked of you, report it:",
+    '  1. Write into your outbox, by the same rules: {"kind": "report", "summary": "<what you did and how it turned out>"}',
+    `     summary: at most ${MAX_REPORT_LENGTH} characters, and not empty; a longer or empty one is rejected, not shortened. They cannot see this machine: point to a pushed branch, a pull request or an issue.`,
+    '  2. spekterm sends each report to that teammate through your team server; it is all they receive from this session.',
     'A report tells the user this piece of work is done. Report again after each later request you finish.',
   ]
 }
@@ -276,7 +300,7 @@ function peerLines(name: string | undefined, relations: string | undefined): str
       ? [
           'Your parent, your children and your siblings (other sessions your parent handed off) are listed, with their current names and whether they are running, in:',
           `  ${relations}`,
-          'It is kept up to date, including sessions created after you started. If this session was opened by a handoff, it has a parent.',
+          'It is kept up to date, including sessions created after you started. If another session here handed this one off, it has a parent.',
           "To contact one, use Claude Code's own session messaging (ListAgents / SendMessage), addressed by the name in that file; spekterm does not carry the message.",
           'A session listed with "running": false has no process now: it still exists but cannot receive messages. It was hibernated, or spekterm has not started it again yet after a restart; it comes back when the user wakes it or spekterm starts it again, and you must not try to wake it yourself.',
           'A message can also go unanswered - if you need a reply, ask for one.',

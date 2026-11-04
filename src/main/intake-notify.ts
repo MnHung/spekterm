@@ -130,12 +130,25 @@ export type NotifyItem =
    * 一份完成報告被採納了（`handoff-completion`）。它不是一則 intake —— 主鍵以
    * `COMPLETION_ADAPTER` ＋ session 識別碼表示，觸發時據此把使用者帶去那個 session 的交接單。
    */
-  | { kind: 'completion'; sessionId: string; title: string; summary: string }
+  | {
+      kind: 'completion'
+      sessionId: string
+      title: string
+      summary: string
+      /** A session opened from a teammate's handoff has no handoff sheet: activation focuses it only. */
+      focusOnly?: true
+    }
   /**
    * A teammate handoff started waiting for the user to send or discard it (`teammate-handoff`). Not an intake: its
    * key uses `OUTGOING_ADAPTER` and the outgoing item's id. Only the recipient's display name is said, reduced.
    */
   | { kind: 'outgoing'; id: string; recipientName: string }
+  /**
+   * A handoff this device sent to a teammate ended (`teammate-handoff-return`, design D5). Not an intake: its key
+   * uses `SENT_ADAPTER` and the server's handoff id. The title is the sender's own; the recipient's name and the
+   * text are the teammate's, reduced.
+   */
+  | { kind: 'sent-status'; id: string; status: 'done' | 'declined' | 'expired'; title?: string; recipientName: string; text?: string }
 
 /** The adapter an outgoing teammate handoff's key carries — **not any intake's adapter**; activation branches on it. */
 export const OUTGOING_ADAPTER = 'teammate-outgoing'
@@ -145,8 +158,22 @@ export function onlyOutgoing(keys: readonly IntakeKeyRef[]): boolean {
   return keys.length > 0 && keys.every((key) => key.adapter === OUTGOING_ADAPTER)
 }
 
+/** The adapter a Sent-list notification's key carries — not any intake's adapter; activation opens the Sent tab. */
+export const SENT_ADAPTER = 'teammate-sent'
+
+/** A notification's keys are all Sent-list changes: its activation opens the Sent tab. */
+export function onlySent(keys: readonly IntakeKeyRef[]): boolean {
+  return keys.length > 0 && keys.every((key) => key.adapter === SENT_ADAPTER)
+}
+
 /** 完成通知在主鍵上用的 adapter 名 —— **不是任何 intake 的 adapter**，觸發時據此分流。 */
 export const COMPLETION_ADAPTER = 'handoff-completion'
+
+/**
+ * A completion of a session opened from a teammate's handoff (`teammate-handoff-return` D10): activation focuses the
+ * session, with no handoff sheet to open.
+ */
+export const COMPLETION_FOCUS_ADAPTER = 'handoff-completion-focus'
 
 export function buildPayload(items: readonly NotifyItem[]): NotifyPayload {
   const failures = items.filter((item) => item.kind === 'failure')
@@ -189,6 +216,29 @@ export function buildPayload(items: readonly NotifyItem[]): NotifyPayload {
     return { title: t('intake.notify.titleMerged', { total: items.length }), body: t('intake.notify.merged') }
   }
 
+  // A sent handoff ended (`teammate-handoff-return`): fixed copy per status, the sender's own title (or the
+  // recipient's name), and the beginning of the reason or report — every non-fixed field reduced.
+  const sent = items.flatMap((item) => (item.kind === 'sent-status' ? [item] : []))
+  if (sent.length > 0 && sent.length === items.length) {
+    if (sent.length > 1) return { title: t('intake.notify.sentTitle'), body: t('intake.notify.sentMerged', { count: sent.length }) }
+    const [one] = sent
+    const name = reduceForNotification(one.recipientName)
+    const what = reduceForNotification(one.title ?? '') || name
+    const text = reduceForNotification(one.text ?? '')
+    const key =
+      one.status === 'done'
+        ? 'sentDone'
+        : one.status === 'declined'
+          ? text
+            ? 'sentDeclinedReason'
+            : 'sentDeclined'
+          : 'sentExpired'
+    return { title: t('intake.notify.sentTitle'), body: t(`intake.notify.${key}`, { what, name, text }) }
+  }
+  if (sent.length > 0) {
+    return { title: t('intake.notify.titleMerged', { total: items.length }), body: t('intake.notify.merged') }
+  }
+
   /**
    * **失敗的內文只由系統文案與拒絕的類別構成。**
    *
@@ -205,6 +255,18 @@ export function buildPayload(items: readonly NotifyItem[]): NotifyPayload {
     // for one (`agent-session-control`). A merged notification below counts items without naming them.
     if (failure.subject === 'command') {
       return { title: t('intake.notify.commandTitle'), body: t('intake.notify.commandFailure', { reason }) }
+    }
+    // Reports for a teammate's handoff were not delivered (`teammate-handoff-return` D8): the handoff's title and its
+    // sender are the teammate's text, reduced like any third-party field.
+    if (failure.subject === 'teammate-report') {
+      return {
+        title: t('intake.notify.teammateReportTitle'),
+        body: t('intake.notify.teammateReportFailure', {
+          title: reduceForNotification(failure.target ?? ''),
+          name: reduceForNotification(failure.origin ?? ''),
+          reason,
+        }),
+      }
     }
     return { title: t('intake.notify.title'), body: t('intake.notify.failure', { reason }) }
   }
@@ -298,8 +360,13 @@ export class IntakeNotifier {
    * 一份完成報告被採納了（`handoff-completion`）。**與到達、失敗共用同一個窗與同一組上界** ——
    * 兩條通道各自有界等於兩倍。呼叫端保證同一份報告只呼叫一次（綁定於採納，不綁定於狀態）。
    */
-  completed(sessionId: string, title: string, summary: string): void {
-    this.#push({ kind: 'completion', sessionId, title, summary })
+  completed(sessionId: string, title: string, summary: string, options?: { sheet: boolean }): void {
+    this.#push({ kind: 'completion', sessionId, title, summary, ...(options?.sheet === false ? { focusOnly: true as const } : {}) })
+  }
+
+  /** A handoff this device sent ended (`teammate-handoff-return`). The same window and bounds. */
+  sentStatus(item: Omit<Extract<NotifyItem, { kind: 'sent-status' }>, 'kind'>): void {
+    this.#push({ kind: 'sent-status', ...item })
   }
 
   /** A teammate handoff started waiting for confirmation (`teammate-handoff`). The same window and bounds. */
@@ -348,10 +415,12 @@ export class IntakeNotifier {
           item.kind === 'arrival'
             ? [{ adapter: item.record.adapter, id: item.record.id }]
             : item.kind === 'completion'
-              ? [{ adapter: COMPLETION_ADAPTER, id: item.sessionId }]
+              ? [{ adapter: item.focusOnly ? COMPLETION_FOCUS_ADAPTER : COMPLETION_ADAPTER, id: item.sessionId }]
               : item.kind === 'outgoing'
                 ? [{ adapter: OUTGOING_ADAPTER, id: item.id }]
-                : [],
+                : item.kind === 'sent-status'
+                  ? [{ adapter: SENT_ADAPTER, id: item.id }]
+                  : [],
         )
     this.#backend.present(buildPayload(batch), keys)
   }

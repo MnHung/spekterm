@@ -3,6 +3,8 @@ import { createHash } from 'node:crypto'
 import { preferredTitle } from '../shared/lineage/label'
 import { onReportAdopted, onWaitTick, type CompletionState, type WaitValue } from '../shared/lineage/lifecycle'
 import type { SessionStore } from './session-store'
+import { MAX_REPORT_LENGTH } from './handoff-delivery'
+import { toWellFormed } from './teammate-outbox'
 
 /**
  * 完成報告的採納與生命週期的推進（`handoff-completion`）。
@@ -11,7 +13,13 @@ import type { SessionStore } from './session-store'
  * 讓畫面與關係檔看得到（design D7）。
  */
 
-export type ReportDecision = 'accepted' | 'duplicate' | 'not-handoff' | 'gone'
+/**
+ * A teammate report's limit: the completion report's own (which the introduction states), never above the server's
+ * 4,000 (protocol §5 `handoff.update`). Today they are equal; the minimum keeps it so if the local one moves.
+ */
+export const MAX_TEAMMATE_REPORT_LENGTH = Math.min(MAX_REPORT_LENGTH, 4_000)
+
+export type ReportDecision = 'accepted' | 'duplicate' | 'not-handoff' | 'gone' | 'teammate-stopped'
 
 export interface CompletionDeps {
   sessions: SessionStore
@@ -24,7 +32,12 @@ export interface CompletionDeps {
    * 一份報告**剛被採納**（`handoff-completion` 的通知）。**綁定於採納，不綁定於狀態** —— 重複讀到的
    * 同一份不會再呼叫，重新啟動也不會對既有的已完成狀態呼叫。
    */
-  onReported?: (sessionId: string, title: string, summary: string) => void
+  onReported?: (sessionId: string, title: string, summary: string, options?: { sheet: boolean }) => void
+  /**
+   * A session opened from a teammate's handoff reported (`teammate-handoff-return`, design D10): queue `done` with
+   * the text. `ok: false` when reporting for that handoff has stopped or it was declined. `title` is the handoff's.
+   */
+  teammateReport?: (sessionId: string, handoffId: string, text: string) => { ok: true; title: string } | { ok: false }
 }
 
 export class HandoffCompletion {
@@ -51,7 +64,10 @@ export class HandoffCompletion {
   acceptReport(sessionId: string, summary: string, identity: string): ReportDecision {
     const session = this.#deps.sessions.view().find((entry) => entry.session.id === sessionId)?.session
     if (!session) return 'gone'
-    if (!session.lineage) return 'not-handoff'
+    if (!session.lineage) {
+      if (session.teammateHandoff && this.#deps.teammateReport) return this.#acceptTeammate(sessionId, session.teammateHandoff.handoffId, summary, identity)
+      return 'not-handoff'
+    }
     if (this.#adopted.get(sessionId) === identity) return 'duplicate'
     this.#adopted.set(sessionId, identity)
 
@@ -61,6 +77,22 @@ export class HandoffCompletion {
     this.#deps.sessions.setCompletion(sessionId, onReportAdopted(reportedAt))
     this.#deps.onChange?.(sessionId)
     this.#deps.onReported?.(sessionId, preferredTitle(session) ?? '', summary)
+    return 'accepted'
+  }
+
+  /**
+   * A linked session's report (`teammate-handoff-return` D10): made well-formed (protocol §12 receiving rule 2: the
+   * server refuses a lone surrogate, which normalization keeps), checked again in that order, and queued as `done`.
+   * The completion lifecycle is not set (no parent to show it to); the user is notified, focused on the session.
+   */
+  #acceptTeammate(sessionId: string, handoffId: string, summary: string, identity: string): ReportDecision {
+    if (this.#adopted.get(sessionId) === identity) return 'duplicate'
+    const text = toWellFormed(summary)
+    if (text.trim() === '' || text.length > MAX_TEAMMATE_REPORT_LENGTH) return 'not-handoff'
+    const queued = this.#deps.teammateReport?.(sessionId, handoffId, text)
+    if (!queued?.ok) return 'teammate-stopped'
+    this.#adopted.set(sessionId, identity)
+    this.#deps.onReported?.(sessionId, queued.title, text, { sheet: false })
     return 'accepted'
   }
 

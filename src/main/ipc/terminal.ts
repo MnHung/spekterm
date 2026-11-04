@@ -12,7 +12,7 @@ import { forgetSubmission, hasUnconfirmedSubmission } from '../intake-prefill'
 import { broadcastLifecycle } from './handoff'
 import { createSession } from '../session-create'
 import { lifecycleViewOf } from '../handoff-lifecycle-view'
-import type { RelationsWorld } from '../handoff-relations'
+import { type RelationsWorld, teammateHandoffsNow } from '../handoff-relations'
 import type { PreferencesStore } from '../preferences-store'
 import { SessionStatusService } from '../session-status'
 import type { RendererSession, SessionLineage, SessionStore } from '../session-store'
@@ -21,7 +21,7 @@ import { releaseSessions } from '../session-release'
 import { recordExit, recordHibernated, recordSpawned } from '../session-running'
 import { userEnvFailed, whenUserEnvReady } from '../user-env'
 import { agentSettingsFile } from '../agent-injection'
-import { prepareHandoffInjection } from '../handoff-injection'
+import { prepareHandoffInjection, reportKindOf } from '../handoff-injection'
 import { endHandoffSession } from '../handoff-service'
 import type { FolderLookup } from '../workspace-store'
 import { worktreesFor } from './openspec'
@@ -218,6 +218,8 @@ export function currentRelationsWorld(store: FolderLookup, sessions: SessionStor
     running: new Set(runningAgents()),
     // 子／兄弟的生命週期與最新結果（`handoff-completion`）—— 母 session 錯過訊息時的補償。
     lifecycle: new Map(lifecycleViewOf(sessions).map((view) => [view.sessionId, view])),
+    // The sending sessions' teammate handoffs and their status (`teammate-handoff-return` D6).
+    teammateHandoffs: teammateHandoffsNow(),
   }
 }
 
@@ -377,7 +379,8 @@ function serviceFor(
       name: sessions.view().find((entry) => entry.session.id === sessionId)?.session.peerName,
       world: currentRelationsWorld(store, sessions),
       // 由交接建立 ⇒ 自我介紹帶上完成回報那一段（`handoff-completion`）。來源在 spawn 之前就已寫進暫定紀錄。
-      reportable: sessions.view().some((entry) => entry.session.id === sessionId && entry.session.lineage !== undefined),
+      // A teammate's handoff (`teammate-handoff-return` D11): its link is on the provisional record too.
+      reportable: reportKindOf(sessions.view().find((entry) => entry.session.id === sessionId)?.session),
     }),
   // 交接的落點於 session 結束時收掉 —— **先處理完裡面既有的項目，再清除**（順序住在服務裡）。
   endHandoffSession,

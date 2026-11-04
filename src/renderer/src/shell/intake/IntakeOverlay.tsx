@@ -6,7 +6,16 @@ import { useTranslation } from 'react-i18next'
 
 import { formatDateTime, relativeTime } from '@shared/i18n/locale'
 import { isItemsTabItem, isProposal, isScheduled, isWaitingForUser } from '@shared/intake/scheduled'
-import type { ApproveResult, IntakeView, OutgoingView, RecurrenceListing, RecurrenceView } from '../../../../main/ipc/intake'
+import type {
+  ApproveResult,
+  IntakeView,
+  OutgoingView,
+  RecurrenceListing,
+  RecurrenceView,
+  SentSnapshot,
+  SentView,
+} from '../../../../main/ipc/intake'
+import { MAX_DECLINE_REASON_LENGTH } from '@shared/team/limits'
 import { useSessions } from '../terminal/sessions'
 import type { WorkspaceFolder } from '../types'
 import { useNow } from '../useNow'
@@ -57,7 +66,7 @@ function itemKey(item: IntakeView): string {
 }
 
 /** The overlay's tabs. `schedules` holds everything planned (`recurring-handoff`, design D6). */
-export type IntakeTab = 'inbox' | 'schedules' | 'outgoing' | 'rules'
+export type IntakeTab = 'inbox' | 'schedules' | 'outgoing' | 'sent' | 'rules'
 type Tab = IntakeTab
 
 export interface IntakeOverlayProps {
@@ -100,12 +109,33 @@ export function IntakeOverlay({
   const { snapshot, refresh: reload } = useIntake()
   const [tab, setTab] = useState<Tab>(initialTab)
   const [failure, setFailure] = useState<string | null>(null)
+  /**
+   * The Sent list (`teammate-handoff-return`): its own call, re-asked whenever the inbox snapshot changes (the Sent
+   * store emits the inbox's "changed" signal). Not in the broadcast inbox list, which carries no report texts.
+   */
+  const [sent, setSent] = useState<SentSnapshot | null>(null)
   const closeRef = useRef<HTMLButtonElement>(null)
 
   // 使用者打開了收件匣 —— 通知上界的重置點。**掛載時一次**，不隨重繪。
   useEffect(() => {
     window.workspace.intake.opened()
   }, [])
+
+  // The Sent list follows the inbox snapshot: every change to it emits the same signal (`teammate-handoff-return`).
+  useEffect(() => {
+    let live = true
+    window.workspace.intake
+      .sent()
+      .then((next) => {
+        if (live) setSent(next)
+      })
+      .catch(() => {
+        if (live) setSent(null)
+      })
+    return () => {
+      live = false
+    }
+  }, [snapshot])
 
   const close = useCallback(() => {
     onClose()
@@ -199,6 +229,9 @@ export function IntakeOverlay({
     return folder ? [{ item, folderName: folder.name }] : []
   })
   const notices = snapshot.notices
+  // Pending teammate items that may be declined (`teammate-handoff-return` D9): decided by the main process.
+  const declinable = new Set(snapshot.declinable ?? [])
+  const showSent = sent !== null && (sent.supported || sent.items.length > 0 || sent.damaged === true || tab === 'sent')
 
   return createPortal(
     <div
@@ -254,6 +287,21 @@ export function IntakeOverlay({
               {outgoing.waiting > 0 ? (
                 <span className="ml-1.5 rounded-full bg-accent/20 px-1.5 text-2xs text-accent">{outgoing.waiting}</span>
               ) : null}
+            </button>
+          ) : null}
+          {/*
+            The Sent tab (`teammate-handoff-return`): while the team server offers the list, or records are kept.
+          */}
+          {showSent ? (
+            <button
+              type="button"
+              role="tab"
+              aria-label={t('intake.sentTab')}
+              aria-selected={tab === 'sent'}
+              onClick={() => setTab('sent')}
+              className={tabClass(tab === 'sent')}
+            >
+              {t('intake.sentTab')}
             </button>
           ) : null}
           <button
@@ -367,6 +415,8 @@ export function IntakeOverlay({
           <RulesEditor />
         ) : tab === 'outgoing' ? (
           <OutgoingTab items={outgoing?.items ?? []} damaged={outgoing?.damaged === true} onChanged={reload} />
+        ) : tab === 'sent' ? (
+          <SentTab snapshot={sent ?? { supported: false, items: [] }} now={now} />
         ) : tab === 'schedules' ? (
           <SchedulesTab
             proposals={proposals}
@@ -407,6 +457,7 @@ export function IntakeOverlay({
                   onChoose={(folderId) => choose(itemKey(item), folderId)}
                   onAccept={accept}
                   onChanged={reload}
+                  declinable={item.adapter === 'teammate' && declinable.has(item.id)}
                 />
               ))}
             </ul>
@@ -848,6 +899,7 @@ function IntakeCard({
   onChoose,
   onAccept,
   onChanged,
+  declinable = false,
 }: {
   item: IntakeView
   folders: readonly WorkspaceFolder[]
@@ -856,9 +908,22 @@ function IntakeCard({
   onChoose: (folderId: string) => void
   onAccept: (item: IntakeView, folderId: string) => Promise<void>
   onChanged: () => void
+  /** A teammate's handoff that may be declined (`teammate-handoff-return` D9). */
+  declinable?: boolean
 }): React.JSX.Element {
   const { t } = useTranslation()
   const chosen = selection.folderId
+  const [declining, setDeclining] = useState(false)
+  const [reason, setReason] = useState('')
+  const [declineError, setDeclineError] = useState<string | null>(null)
+  // The count the user sees is of the raw text; the main process measures after normalization, which only removes.
+  const reasonTooLong = reason.length > MAX_DECLINE_REASON_LENGTH
+  const decline = (): void => {
+    void window.workspace.intake.decline(item.id, item.adapter, reason).then((result) => {
+      if (result.ok) onChanged()
+      else setDeclineError(t(`intake.declineFailed.${result.reason}` as 'intake.declineFailed.unknown'))
+    })
+  }
 
   return (
     <li
@@ -941,6 +1006,16 @@ function IntakeCard({
           </span>
         ) : null}
         <span className="flex-1" />
+        {declinable && !declining ? (
+          <button
+            type="button"
+            aria-label={t('intake.decline')}
+            onClick={() => setDeclining(true)}
+            className="cursor-pointer rounded px-2 py-1 text-2xs text-ink-dim hover:bg-hairline/40 focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          >
+            {t('intake.decline')}
+          </button>
+        ) : null}
         <button
           type="button"
           aria-label={t('intake.dismiss')}
@@ -959,6 +1034,51 @@ function IntakeCard({
           {t('intake.accept')}
         </button>
       </div>
+      {declining ? (
+        <div className="mt-2 flex flex-col gap-1">
+          <label className="flex flex-col gap-1 text-2xs text-ink-dim">
+            {t('intake.declineReasonLabel')}
+            <textarea
+              aria-label={t('intake.declineReasonLabel')}
+              value={reason}
+              onChange={(event) => {
+                setReason(event.target.value)
+                setDeclineError(null)
+              }}
+              rows={2}
+              className="rounded border border-hairline bg-shell px-2 py-1 text-2xs text-ink focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+            />
+          </label>
+          <div className="flex items-center gap-2">
+            <span className="text-2xs text-ink-faint">{t('intake.declineReasonHint', { sender: item.actor })}</span>
+            <span className="flex-1" />
+            <span className={`text-2xs ${reasonTooLong ? 'text-danger' : 'text-ink-faint'}`}>
+              {t('intake.declineReasonLength', { count: reason.length, limit: MAX_DECLINE_REASON_LENGTH })}
+            </span>
+            <button
+              type="button"
+              aria-label={t('intake.declineCancel')}
+              onClick={() => {
+                setDeclining(false)
+                setDeclineError(null)
+              }}
+              className="cursor-pointer rounded px-2 py-1 text-2xs text-ink-dim hover:bg-hairline/40 focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+            >
+              {t('intake.declineCancel')}
+            </button>
+            <button
+              type="button"
+              aria-label={t('intake.declineConfirm')}
+              disabled={reasonTooLong}
+              onClick={decline}
+              className="cursor-pointer rounded bg-accent/10 px-2 py-1 text-2xs text-accent disabled:cursor-default disabled:opacity-40 focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+            >
+              {t('intake.declineConfirm')}
+            </button>
+          </div>
+          {declineError ? <p className="text-2xs text-ink-dim">{declineError}</p> : null}
+        </div>
+      ) : null}
     </li>
   )
 }
@@ -1096,3 +1216,77 @@ function OutgoingCard({ item, onChanged }: { item: OutgoingView; onChanged: () =
     </li>
   )
 }
+
+/**
+ * The Sent tab (`teammate-handoff-return`, design D4): the handoffs this member sent to teammates, as the team server
+ * reports them. **A reason or a report is the teammate's text**: shown as plain text, like an inbox body, never
+ * rendered, and handed to nothing on its own — the user copies what they want to pass on.
+ */
+function SentTab({ snapshot, now }: { snapshot: SentSnapshot; now: number }): React.JSX.Element {
+  const { t } = useTranslation()
+  return (
+    <div className="flex flex-col gap-3">
+      {snapshot.damaged ? <p className="text-2xs text-ink-dim">{t('intake.sentDamaged')}</p> : null}
+      {!snapshot.supported ? <p className="text-2xs text-ink-faint">{t('intake.sentUnsupported')}</p> : null}
+      {snapshot.items.length === 0 ? (
+        snapshot.supported ? <p className="text-2xs text-ink-faint">{t('intake.sentEmpty')}</p> : null
+      ) : (
+        <>
+          <p className="text-2xs text-ink-faint">{t('intake.sentHint')}</p>
+          <ul className="flex flex-col gap-3">
+            {snapshot.items.map((item) => (
+              <SentCard key={item.id} item={item} now={now} />
+            ))}
+          </ul>
+        </>
+      )}
+    </div>
+  )
+}
+
+function SentCard({ item, now }: { item: SentView; now: number }): React.JSX.Element {
+  const { t } = useTranslation()
+  const status = t(`intake.sent.status.${item.status}` as 'intake.sent.status.done')
+  const title = item.title ?? t('intake.sent.noTitle')
+  return (
+    <li
+      aria-label={t('intake.sent.itemLabel', { name: item.to.displayName, title })}
+      className="rounded border border-hairline bg-shell px-3 py-2"
+    >
+      <div className="flex items-baseline gap-2 whitespace-nowrap">
+        <span className="text-2xs text-ink">{t('intake.sent.to', { name: item.to.displayName, handle: item.to.handle })}</span>
+        {item.to.removed ? <span className="text-2xs text-ink-dim">{t('intake.sent.recipientLeft')}</span> : null}
+        <span className="flex-1" />
+        <span className="text-2xs text-accent">{t('intake.sent.since', { status, time: relativeTime(item.changedAt, now) })}</span>
+      </div>
+      <p className={`mt-1 break-words text-sm ${item.title === undefined ? 'text-ink-faint' : 'text-ink'}`}>{title}</p>
+      <p className="mt-1 text-2xs text-ink-faint">{t('intake.sent.sentAt', { time: formatDateTime(new Date(item.sentAt)) })}</p>
+      {item.unknownToServer ? <p className="mt-1 text-2xs text-ink-dim">{t('intake.sent.unknownToServer')}</p> : null}
+      {item.text !== undefined ? (
+        <div className="mt-2">
+          <div className="flex items-center gap-2">
+            <span className="text-2xs text-ink-dim">
+              {item.status === 'declined'
+                ? t('intake.sent.reasonLabel')
+                : item.reports !== undefined && item.reports > 1
+                  ? t('intake.sent.reportNumber', { count: item.reports })
+                  : t('intake.sent.reportLabel')}
+            </span>
+            <span className="flex-1" />
+            <button
+              type="button"
+              aria-label={t('intake.sent.copy')}
+              onClick={() => window.workspace.clipboard.writeText(item.text ?? '')}
+              className="cursor-pointer rounded px-2 py-1 text-2xs text-ink-dim hover:bg-hairline/40 focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+            >
+              {t('intake.sent.copy')}
+            </button>
+          </div>
+          <p className="mt-1 whitespace-pre-wrap break-words text-2xs text-ink-dim">{item.text}</p>
+          <p className="mt-1 text-2xs text-ink-faint">{t('intake.bodyLength', { count: item.text.length })}</p>
+        </div>
+      ) : null}
+    </li>
+  )
+}
+

@@ -206,9 +206,11 @@ SHALL NOT retry it. On `INTERNAL` it SHALL retry the same report with backoff. W
 handoff was received under ends, reporting for it SHALL stop, whether or not a report is waiting. After a decline was
 answered, nothing more SHALL be reported for that handoff.
 
-When reporting stops with reports unsent, spekterm SHALL make it visible: one trace in the inbox and a notification,
-naming the handoff's title and saying that its sender did not receive them (the title and the sender's name reduced
-as third-party text). A later report from the linked session of a stopped or declined handoff SHALL be refused at
+When reporting stops with reports unsent, spekterm SHALL make it visible: one trace in the inbox naming the handoff's
+title and saying that its sender did not receive them, and a notification. The notification SHALL name the handoff's
+title and its sender (reduced as third-party text) when it is alone in its window; it coalesces with others like any
+notification (`agent-intake`) — the report that hit the limit was itself announced as a completion a moment
+before, so the two often share a window, and the coalesced one opens the inbox where the trace names it. A later report from the linked session of a stopped or declined handoff SHALL be refused at
 once with a receipt saying reporting for that handoff has stopped, and SHALL NOT be sent.
 
 #### Scenario: Taken is reported once the user sends the prompt
@@ -240,7 +242,7 @@ once with a receipt saying reporting for that handoff has stopped, and SHALL NOT
 #### Scenario: Too many reports stops reporting visibly
 
 - **WHEN** the server answers `TOO_MANY_REPORTS` to a report
-- **THEN** no further report for that handoff is sent, the inbox shows a trace for it and a notification is raised
+- **THEN** no further report for that handoff is sent, the inbox shows a trace naming it, and a notification is raised
 - **AND** the agent's next report receives a `rejected` receipt saying reporting has stopped
 
 #### Scenario: Not delivered is acknowledged again

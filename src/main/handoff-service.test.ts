@@ -458,6 +458,15 @@ describe('完成報告經同一個落點送達，以種類欄位區分', () => {
     assert.equal(h.service.notices()[0]?.code, 'REPORT_NOT_HANDOFF')
   })
 
+  test('a report after a teammate handoff\'s reporting stopped is refused visibly (teammate-handoff-return)', async () => {
+    const h = harness({ sources, report: accepting('teammate-stopped') })
+    const file = h.file('s1', 'r.json', { kind: 'report', summary: 'done' })
+    const outcome = await h.handoff.deliverFile(fs.readFileSync(file, 'utf8'), file)
+    assert.equal(outcome.ok, false)
+    assert.equal(outcome.consume, true)
+    assert.equal(h.service.notices()[0]?.code, 'TEAMMATE_REPORT_STOPPED')
+  })
+
   test('已不存在的 session 的報告被靜默丟棄（消費，但沒有痕跡）', async () => {
     const h = harness({ sources, report: accepting('gone') })
     const file = h.file('s1', 'r.json', { kind: 'report', summary: 'done' })

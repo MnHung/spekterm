@@ -44,6 +44,7 @@ export function teammateRules(): string {
     'Its receipt first states "awaiting-confirmation", then "sent" (the team server stored it for the teammate - not that they have seen or accepted it), "discarded" (the user discarded it; nothing was sent) or "rejected" (with the code, such as RECIPIENT_UNKNOWN).',
     'While a confirmed one waits to be sent, its receipt is "held" with code NOT_CONNECTED, RATE_LIMITED (with "at", when it is tried again) or RETRYING.',
     'If the user is not on a team, or the Team feature is off, it is rejected with TEAM_UNAVAILABLE; that can succeed later.',
+    'Once sent, your relations file lists it under "teammateHandoffs" with its status as the team server reports it: pending, delivered (their spekterm has it), taken (they started a session for it), declined, done (their agent reported) or expired. Their report and any decline reason are not given to you: the user reads them and passes on what you need.',
     "Describe what is needed and why, from your side: the teammate's agent works in its own checkout, and cannot see your files or this session.",
   ].join(' ')
 }

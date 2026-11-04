@@ -109,6 +109,12 @@ export interface PersistedSession {
    */
   completion?: CompletionState
   /**
+   * The teammate's handoff this session was opened for (`teammate-handoff-return`, design D7). **Main-owned**, written
+   * before the session spawns from a ticket the main process issued: a renderer that could write it would make an
+   * agent report to a teammate on a handoff it was never given. Not a lineage — no parent on this machine.
+   */
+  teammateHandoff?: { handoffId: string }
+  /**
    * claude 目標的固定名字（`agent-peer-name`）。**主行程供應**，決定一次之後不再改變。
    *
    * 它會成為 agent CLI 的參數，所以讀回時以 `isValidPeerName` 驗證；不合法就丟掉、重新決定。
@@ -194,7 +200,7 @@ interface PersistedSessions {
 export type RendererSession = Omit<PersistedSession, MainOwnedField>
 
 /** 只有主行程能寫的欄位。**加一個進來，這裡、`replace()`、`parseSessionEntry` 三處都要改。** */
-type MainOwnedField = 'claudeSessionId' | 'cwd' | 'lineage' | 'peerName' | 'completion' | 'running'
+type MainOwnedField = 'claudeSessionId' | 'cwd' | 'lineage' | 'peerName' | 'completion' | 'running' | 'teammateHandoff'
 
 /** 主行程專屬欄位的暫存形狀。 */
 type MainFields = Partial<Pick<PersistedSession, MainOwnedField>>
@@ -269,7 +275,15 @@ export function parseSessionEntry(entry: unknown): PersistedSession | null {
     completion: raw.lineage !== undefined ? parseCompletion(raw.completion) : undefined,
     // Only the literal `true`: anything else reads as dormant, the safe side (nothing starts on its own).
     running: raw.running === true ? true : undefined,
+    teammateHandoff: parseTeammateHandoff(raw.teammateHandoff),
   }
+}
+
+/** The protocol's id rule (1–64 of `[A-Za-z0-9_-]`, not starting with `-`); anything else drops the field only. */
+function parseTeammateHandoff(raw: unknown): { handoffId: string } | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined
+  const id = (raw as Record<string, unknown>).handoffId
+  return typeof id === 'string' && /^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$/.test(id) ? { handoffId: id } : undefined
 }
 
 /** 整份無法信任時回 `null`（由呼叫端隔離該檔）。個別項目不合法則只丟棄該項。 */
@@ -527,6 +541,7 @@ export class SessionStore {
         peerName: kept?.peerName,
         completion: kept?.completion,
         running: waiting?.running ?? kept?.running,
+        teammateHandoff: kept?.teammateHandoff,
       })
     }
 

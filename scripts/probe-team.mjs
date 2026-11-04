@@ -11,7 +11,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { check, connectToApp, pollFor } from './lib/cdp.mjs'
@@ -751,6 +751,259 @@ async function runTeammateAccept(_mode, context) {
   )
 }
 
+// ---- The way back (`teammate-handoff-return`) ----
+
+const sentSnapshot = (app) =>
+  app.client.evaluate(`window.workspace.intake.sent().then((v) => JSON.stringify(v))`, { awaitPromise: true }).then((json) => JSON.parse(String(json)))
+
+const SENT_ROW = (name, title) => label('intake.sent.itemLabel', { name, title })
+const sentRowText = (app, name, title) => app.client.evaluate(`document.querySelector(${JSON.stringify(SENT_ROW(name, title))})?.textContent ?? ''`)
+
+async function openSent(app) {
+  await pollFor({ read: () => app.client.evaluate(OPEN_INBOX), settled: Boolean, timeoutMs: 15_000, label: 'inbox open' })
+  await pollFor({
+    read: () => app.client.evaluate(`(() => { const t = document.querySelector('[role="tab"]${label('intake.sentTab')}'); t?.click(); return !!t })()`),
+    settled: Boolean,
+    timeoutMs: 15_000,
+    label: 'Sent tab',
+  })
+}
+
+const sentNotifications = (profile) => intakeNotifications(profile).filter((n) => JSON.stringify(n).includes(copy('intake.notify.sentTitle')))
+
+async function runSentList(_mode, context) {
+  const stub = await startStubTeamServer({ port: STUB_PORT })
+  // A handoff the member sent from another device before this one joined: found by the first sync, without a title.
+  stub.addRecord({ id: 'h_other', clientId: 'c_other', to: { id: 'm_alex', handle: 'alex', displayName: 'Alex', removed: false }, status: 'done', reports: 1, payload: { enc: 'none', text: 'OTHER-DEVICE-REPORT' } })
+  try {
+    await withRig(
+      context,
+      async (app, _stub, profile) => {
+        await joinMember(app, stub)
+        await awaitStatus(app, 'connected', 'connected')
+        const first = await pollFor({ read: () => sentSnapshot(app), settled: (v) => v.items.some((i) => i.id === 'h_other'), timeoutMs: 20_000, label: 'synced' })
+        const other = first.items.find((i) => i.id === 'h_other')
+        check(results, 'the first sync lists a handoff sent from another device, without a title', first.supported === true && other?.title === undefined && other?.status === 'done', JSON.stringify(first).slice(0, 240))
+        check(results, 'the Sent list carries no clientId or device id', !JSON.stringify(first).includes('c_other') && !JSON.stringify(first).includes('d_other'), '')
+
+        // A handoff sent from this device: Send, then the server's changes reach the list as events.
+        const sid = randomUUID()
+        writeDelivery(profile, sid, 's.json', { to: 'alex', title: 'SENT-TITLE', body: 'the work' })
+        await awaitReceipt(profile, sid, 's.json', (r) => r.status === 'awaiting-confirmation', 'awaiting')
+        await openOutgoing(app)
+        await clickInRow(app, 'Alex', 'SENT-TITLE', 'intake.outgoing.send')
+        await awaitReceipt(profile, sid, 's.json', (r) => r.status === 'sent', 'sent')
+        // The Outgoing notification for this handoff is presented first: a later one in its window would coalesce.
+        await pollFor({ read: async () => intakeNotifications(profile), settled: (list) => list.some((n) => JSON.stringify(n).includes(copy('intake.notify.outgoingTitle'))), timeoutMs: 20_000, label: 'outgoing notification presented' })
+        const id = stub.sends.find((p) => p.payload?.title === 'SENT-TITLE') ? stub.record(stub.sends.find((p) => p.payload?.title === 'SENT-TITLE').clientId)?.id : null
+        await openSent(app)
+        const pending = await pollFor({ read: () => sentRowText(app, 'Alex', 'SENT-TITLE'), settled: (t) => t.includes(copy('intake.sent.status.pending')), timeoutMs: 15_000, label: 'pending row' })
+        check(results, 'a handoff sent from this device is listed with its title and status', pending.includes(copy('intake.sent.status.pending')), pending.slice(0, 200))
+        const notifiedBefore = sentNotifications(profile).length
+
+        stub.setStatus(id, { status: 'delivered', deliveredAt: Date.now() })
+        stub.setStatus(id, { status: 'taken' })
+        const REPORT = 'Exported the billing CSV.\nSee https://example.invalid/pr/7 <b>bold</b>'
+        stub.setStatus(id, { status: 'done', reports: 1, payload: { enc: 'none', text: REPORT } })
+        const done = await pollFor({ read: () => sentRowText(app, 'Alex', 'SENT-TITLE'), settled: (t) => t.includes(copy('intake.sent.status.done')), timeoutMs: 15_000, label: 'done row' })
+        const paragraphs = await app.client.evaluate(`[...(document.querySelector(${JSON.stringify(SENT_ROW('Alex', 'SENT-TITLE'))})?.querySelectorAll('p') ?? [])].map((p) => p.textContent)`)
+        // Cross-process: the report the server holds against the row's paragraph as the renderer drew it.
+        check(results, 'the report is shown as plain text, character for character', done.includes(copy('intake.sent.status.done')) && paragraphs.includes(REPORT), JSON.stringify(paragraphs).slice(0, 240))
+        const notes = await pollFor({ read: async () => sentNotifications(profile), settled: (list) => list.length > notifiedBefore, timeoutMs: 20_000, label: 'notified' })
+        const note = JSON.stringify(notes.at(-1))
+        check(results, 'done notifies the sending device once, with the title and the reduced report', notes.length === notifiedBefore + 1 && note.includes('SENT-TITLE') && note.includes('Exported') && !note.includes('example.invalid') && !note.includes('<b>'), note.slice(0, 240))
+        const badge = await app.client.evaluate(BADGE_TEXT)
+        check(results, 'the Sent list does not count in the inbox badge', badge === '', String(badge))
+
+        // Activating it opens the inbox on the Sent tab (the inbox closed first: an open inbox is left alone).
+        await pollFor({ read: () => app.client.evaluate(`(() => { const b = document.querySelector('${label('intake.close')}'); b?.click(); return !document.querySelector('[role="dialog"]${label('intake.label')}') })()`), settled: Boolean, timeoutMs: 10_000, label: 'inbox closed' })
+        fireIntakeNotification(profile, intakeNotifications(profile).length)
+        const sentTab = await pollFor({ read: () => selectedTab(app), settled: (value) => value === copy('intake.sentTab'), timeoutMs: 15_000, label: 'opened on Sent' })
+        check(results, 'activating a Sent notification opens the inbox on the Sent tab', sentTab === copy('intake.sentTab'), sentTab)
+
+        // Another device of the member: its record arrives as an event and does not notify.
+        stub.setStatus('h_other', { status: 'done', reports: 2, payload: { enc: 'none', text: 'OTHER-2' } })
+        await pollFor({ read: () => sentSnapshot(app), settled: (v) => v.items.some((i) => i.id === 'h_other' && i.reports === 2), timeoutMs: 15_000, label: 'other updated' })
+        // Past the 4-second coalescing window: a notification raised now would be presented by then (a 3-second wait
+        // was green on the mutation that notifies every device — `notify-every-device`).
+        await new Promise((resolve) => setTimeout(resolve, 6000))
+        check(results, 'a handoff sent from another device does not notify this one', sentNotifications(profile).length === notes.length, `${notes.length} → ${sentNotifications(profile).length}`)
+
+        // A recipient who left the team: the row says so.
+        stub.setStatus('h_other', { to: { id: 'm_alex', handle: 'alex', displayName: 'Alex', removed: true } })
+        const left = await pollFor({ read: () => sentRowText(app, 'Alex', copy('intake.sent.noTitle')), settled: (t) => t.includes(copy('intake.sent.recipientLeft')), timeoutMs: 15_000, label: 'recipient left shown' })
+        check(results, 'a recipient who left the team is shown as no longer on it', left.includes(copy('intake.sent.recipientLeft')), left.slice(0, 200))
+
+        // A 1011 close: the app reconnects and syncs again from its stored cursor.
+        const syncsBefore = stub.frames.filter((f) => f.m === 'handoff.sync').length
+        stub.closeAll(1011, 'feed')
+        const resynced = await pollFor({ read: async () => stub.frames.filter((f) => f.m === 'handoff.sync').slice(syncsBefore), settled: (list) => list.length > 0, timeoutMs: 45_000, label: 'resynced' })
+        check(results, 'after a 1011 close the app reconnects and syncs from its stored cursor', resynced.length > 0 && resynced[0].p.after > 0, JSON.stringify(resynced[0]?.p ?? null))
+        await awaitStatus(app, 'connected', 'reconnected')
+        stub.setStatus(id, { status: 'done', reports: 2, payload: { enc: 'none', text: 'SECOND-REPORT' } })
+        const second = await pollFor({ read: () => sentSnapshot(app), settled: (v) => v.items.some((i) => i.id === id && i.text === 'SECOND-REPORT'), timeoutMs: 15_000, label: 'events after resync' })
+        check(results, 'events reach the list again after the resync', second.items.some((i) => i.id === id && i.reports === 2), '')
+      },
+      { stub },
+    )
+  } finally {
+    await stub.close()
+  }
+}
+
+/** Accepts a teammate's item into folder f1 (the routing has no rule, so the folder is chosen on the card). */
+async function acceptTeammateItem(app, title) {
+  await pollFor({ read: () => app.client.evaluate(OPEN_INBOX), settled: Boolean, timeoutMs: 15_000, label: 'inbox open' })
+  const row = label('intake.itemLabel', { title })
+  await pollFor({
+    read: () =>
+      app.client.evaluate(`(() => {
+        const r = document.querySelector(${JSON.stringify(row)})
+        const select = r?.querySelector('select')
+        if (!select) return false
+        const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set
+        setter.call(select, 'f1')
+        select.dispatchEvent(new Event('change', { bubbles: true }))
+        return true
+      })()`),
+    settled: Boolean,
+    timeoutMs: 15_000,
+    label: 'folder chosen',
+  })
+  await pollFor({
+    read: () =>
+      app.client.evaluate(`(() => {
+        const button = document.querySelector(${JSON.stringify(row)})?.querySelector('${label('intake.accept')}')
+        if (!button || button.disabled) return false
+        button.click()
+        return true
+      })()`),
+    settled: Boolean,
+    timeoutMs: 15_000,
+    label: 'accepted',
+  })
+}
+
+async function runReportBack(_mode, context) {
+  const profile = mkTemp('spekterm-team-return-')
+  const repo = mkTemp('spekterm-team-return-repo-')
+  writeFileSync(join(profile, 'workspace.json'), JSON.stringify({ version: 1, folders: [{ id: 'f1', path: repo, name: basename(repo), addedAt: '2026-11-03T00:00:00.000Z' }] }))
+  writeFileSync(join(profile, 'intake-routing.json'), JSON.stringify({ version: 1, rules: [], fallbackFolderId: null }))
+  const configDir = mkTemp('spekterm-team-return-config-')
+  // `busySeconds`: after a submitted prompt the agent works a while (busy) before it stops — as a real one does.
+  const stubAgent = makeStubAgent(mkTemp, configDir, { readyDelaySeconds: 2, busySeconds: 3 })
+  const env = { CLAUDE_CONFIG_DIR: configDir, HOME: stubAgent.home, PATH: `${stubAgent.bin}:${process.env.PATH}` }
+  await withRig(
+    context,
+    async (app, stub) => {
+      await joinMember(app, stub)
+      await awaitStatus(app, 'connected', 'connected')
+      stub.push(offer('h_ret', { payload: { enc: 'none', title: 'RETURN-ME', body: 'please do the thing' } }))
+      const snapshot = await pollFor({ read: () => inboxSnapshot(app), settled: (s) => Boolean(teammateItem(s, 'h_ret')), timeoutMs: 15_000, label: 'shown' })
+      check(results, 'an acknowledged teammate item may be declined', (snapshot.declinable ?? []).includes(teammateItem(snapshot, 'h_ret').id), JSON.stringify(snapshot.declinable ?? null))
+      await acceptTeammateItem(app, 'RETURN-ME')
+      await pollFor({ read: async () => stubAgent.bytes(), settled: (bytes) => /that fence is not part of the task/.test(bytes), timeoutMs: 40_000, label: 'the prompt filled' })
+      // The introduction the agent got at its first start already carries the teammate report paragraph.
+      const hookDir = join(stubAgent.home, 'hook-stdout')
+      const introAtStart = await pollFor({
+        read: async () => (existsSync(hookDir) ? readdirSync(hookDir).filter((n) => n.startsWith('SessionStart-')).map((n) => readFileSync(join(hookDir, n), 'utf8')).join('\n') : ''),
+        settled: (text) => text.includes('additionalContext'),
+        timeoutMs: 15_000,
+        label: 'first SessionStart output',
+      })
+      check(results, 'the linked session\'s first introduction tells it its reports go to the teammate', introAtStart.includes("opened by a teammate's handoff") && !introAtStart.includes('your parent session or the user'), introAtStart.slice(0, 160))
+      await new Promise((resolve) => setTimeout(resolve, 1500))
+      check(results, 'a filled prompt alone reports nothing', stub.updates.length === 0, JSON.stringify(stub.updates))
+
+      // The user sends the prompt: the agent starts working, and `taken` is reported.
+      const accepted = teammateItem(await inboxSnapshot(app), 'h_ret')
+      const sessionId = accepted?.sessionId
+      await app.client.evaluate(`window.workspace.terminal.write(${JSON.stringify(sessionId)}, '\\r')`)
+      const taken = await pollFor({ read: async () => stub.updates.slice(), settled: (list) => list.some((u) => u.status === 'taken'), timeoutMs: 20_000, label: 'taken reported' })
+      check(results, 'taken is reported once the user sent the prompt and the agent started', taken[0]?.id === 'h_ret' && taken[0]?.status === 'taken' && taken[0]?.payload === undefined, JSON.stringify(taken))
+
+      // The agent reports: `done` with the summary, through the agent's own drop point.
+      const SUMMARY = 'Did the thing; pushed branch fix/thing.'
+      writeDelivery(profile, sessionId, 'r1.json', { kind: 'report', summary: SUMMARY })
+      const done = await pollFor({ read: async () => stub.updates.slice(), settled: (list) => list.some((u) => u.status === 'done'), timeoutMs: 30_000, label: 'done reported' })
+      // Cross-process: the text the server received against the summary the agent wrote.
+      check(results, 'the agent\'s report reaches the server as done, character for character', done.find((u) => u.status === 'done')?.payload?.text === SUMMARY, JSON.stringify(done))
+      const accept = await awaitReceipt(profile, sessionId, 'r1.json', () => true, 'report receipt')
+      check(results, 'the agent\'s report receipt is accepted', accept.status === 'accepted', JSON.stringify(accept))
+      // The recipient is told too, as for any adopted report; presented before the next step so nothing coalesces.
+      const completed = await pollFor({ read: async () => intakeNotifications(profile), settled: (list) => list.some((n) => JSON.stringify(n).includes(copy('handoffLifecycle.notify.title'))), timeoutMs: 20_000, label: 'completion notified' })
+      const completionNote = JSON.stringify(completed.find((n) => JSON.stringify(n).includes(copy('handoffLifecycle.notify.title'))))
+      check(results, 'the linked session\'s report notifies the recipient, naming the handoff and the summary', completionNote.includes('RETURN-ME') && completionNote.includes('pushed branch'), completionNote.slice(0, 240))
+
+      // The server refuses further reports: reporting stops, the user sees it, the next report is refused.
+      const notesBeforeStop = intakeNotifications(profile).length
+      stub.state.respond = (m) => (m === 'handoff.update' ? { ok: false, e: { code: 'TOO_MANY_REPORTS', message: 'limit', detail: { limit: 10 } } } : undefined)
+      writeDelivery(profile, sessionId, 'r2.json', { kind: 'report', summary: 'second report' })
+      const traced = await pollFor({ read: () => inboxSnapshot(app), settled: (s) => s.notices.some((n) => n.code === 'TEAMMATE_REPORT_NOT_SENT'), timeoutMs: 30_000, label: 'stop traced' })
+      check(results, 'a stop with an unsent report leaves a trace in the inbox', traced.notices.some((n) => n.code === 'TEAMMATE_REPORT_NOT_SENT'), JSON.stringify(traced.notices).slice(0, 200))
+      // The report that hit the limit was announced as a completion a moment before: the stop's notification shares its
+      // window, and the user gets either the named one (alone) or the coalesced one, which opens the inbox.
+      const stopNotes = await pollFor({
+        read: async () => intakeNotifications(profile).slice(notesBeforeStop),
+        settled: (list) => list.length > 0,
+        timeoutMs: 20_000,
+        label: 'stop notified',
+      })
+      const stopNote = JSON.stringify(stopNotes)
+      const named = stopNote.includes(copy('intake.notify.teammateReportTitle')) && stopNote.includes('RETURN-ME')
+      const merged = stopNote.includes(copy('intake.notify.merged'))
+      check(results, 'the stop raises a notification: named alone, or coalesced with the completion', named || merged, stopNote.slice(0, 240))
+      const updatesAtStop = stub.updates.length
+      writeDelivery(profile, sessionId, 'r3.json', { kind: 'report', summary: 'third report' })
+      const refused = await awaitReceipt(profile, sessionId, 'r3.json', () => true, 'refused receipt')
+      check(results, 'a report after the stop is refused at once and not sent', refused.status === 'rejected' && refused.code === 'TEAMMATE_REPORT_STOPPED' && stub.updates.length === updatesAtStop, JSON.stringify(refused))
+      stub.state.respond = undefined
+
+      // Declining another item, with a reason.
+      stub.push(offer('h_dec', { payload: { enc: 'none', title: 'DECLINE-ME', body: 'not mine' } }))
+      await pollFor({ read: () => inboxSnapshot(app), settled: (s) => Boolean(teammateItem(s, 'h_dec')), timeoutMs: 15_000, label: 'second shown' })
+      // Accepting closed the inbox (the new session took the stage): open it again.
+      await pollFor({ read: () => app.client.evaluate(OPEN_INBOX), settled: Boolean, timeoutMs: 15_000, label: 'inbox open again' })
+      const decRow = label('intake.itemLabel', { title: 'DECLINE-ME' })
+      await pollFor({ read: () => app.client.evaluate(`(() => { const b = document.querySelector(${JSON.stringify(decRow)})?.querySelector('${label('intake.decline')}'); b?.click(); return !!b })()`), settled: Boolean, timeoutMs: 15_000, label: 'Decline…' })
+      await pollFor({ read: () => app.client.evaluate(`(() => { const t = document.querySelector(${JSON.stringify(decRow)})?.querySelector('textarea'); t?.focus(); return !!t && document.activeElement === t })()`), settled: Boolean, timeoutMs: 10_000, label: 'reason field' })
+      const REASON = 'Not my area — ask the billing team'
+      await app.client.send('Input.insertText', { text: REASON })
+      await pollFor({ read: () => app.client.evaluate(`(() => { const b = document.querySelector(${JSON.stringify(decRow)})?.querySelector('${label('intake.declineConfirm')}'); if (!b || b.disabled) return false; b.click(); return true })()`), settled: Boolean, timeoutMs: 10_000, label: 'Decline' })
+      const declined = await pollFor({ read: async () => stub.updates.slice(), settled: (list) => list.some((u) => u.id === 'h_dec'), timeoutMs: 20_000, label: 'declined reported' })
+      check(results, 'declining with a reason reaches the server', declined.find((u) => u.id === 'h_dec')?.status === 'declined' && declined.find((u) => u.id === 'h_dec')?.payload?.text === REASON, JSON.stringify(declined.find((u) => u.id === 'h_dec')))
+      const after = await pollFor({ read: () => inboxSnapshot(app), settled: (s) => teammateItem(s, 'h_dec')?.state !== 'pending', timeoutMs: 15_000, label: 'left the list' })
+      // Ignoring another item tells the sender nothing.
+      stub.push(offer('h_ign', { payload: { enc: 'none', title: 'IGNORE-ME', body: 'b' } }))
+      await pollFor({ read: () => inboxSnapshot(app), settled: (s) => Boolean(teammateItem(s, 'h_ign')), timeoutMs: 15_000, label: 'third shown' })
+      const ignRow = label('intake.itemLabel', { title: 'IGNORE-ME' })
+      await pollFor({ read: () => app.client.evaluate(`(() => { const b = document.querySelector(${JSON.stringify(ignRow)})?.querySelector('${label('intake.dismiss')}'); b?.click(); return !!b })()`), settled: Boolean, timeoutMs: 15_000, label: 'Ignore' })
+      await pollFor({ read: () => inboxSnapshot(app), settled: (s) => teammateItem(s, 'h_ign')?.state !== 'pending', timeoutMs: 15_000, label: 'ignored' })
+      await new Promise((resolve) => setTimeout(resolve, 2500))
+      check(results, 'ignoring a teammate item sends nothing to the server', !stub.updates.some((u) => u.id === 'h_ign'), JSON.stringify(stub.updates.filter((u) => u.id === 'h_ign')))
+      check(results, 'a declined item leaves the pending list', teammateItem(after, 'h_dec')?.state === 'dismissed' || !teammateItem(after, 'h_dec'), JSON.stringify(teammateItem(after, 'h_dec') ?? null).slice(0, 120))
+    },
+    { profile, env },
+  )
+}
+
+async function runNoWayBack(_mode, context) {
+  await withRig(context, async (app, stub) => {
+    // A 0.2-style server: no `handoff.update`, no `handoff.sync`.
+    stub.state.operations = ['device.rename', 'device.leave', 'team.members', 'handoff.send', 'handoff.received']
+    await joinMember(app, stub)
+    await awaitStatus(app, 'connected', 'connected')
+    stub.push(offer('h_old', { payload: { enc: 'none', title: 'OLD-SERVER', body: 'b' } }))
+    const snapshot = await pollFor({ read: () => inboxSnapshot(app), settled: (s) => Boolean(teammateItem(s, 'h_old')), timeoutMs: 15_000, label: 'shown' })
+    check(results, 'a server without handoff.update offers no Decline', (snapshot.declinable ?? []).length === 0, JSON.stringify(snapshot.declinable ?? null))
+    await pollFor({ read: () => app.client.evaluate(OPEN_INBOX), settled: Boolean, timeoutMs: 15_000, label: 'inbox open' })
+    const row = await pollFor({ read: () => app.client.evaluate(`document.querySelector(${JSON.stringify(label('intake.itemLabel', { title: 'OLD-SERVER' }))})?.innerHTML ?? ''`), settled: (h) => h.length > 0, timeoutMs: 15_000, label: 'row' })
+    check(results, 'the row has no Decline button', !row.includes(`aria-label="${copy('intake.decline')}"`) && row.includes(`aria-label="${copy('intake.dismiss')}"`), '')
+    const sent = await sentSnapshot(app)
+    check(results, 'the Sent list says the server does not offer it, and nothing was synced', sent.supported === false && stub.count('handoff.sync') === 0, JSON.stringify(sent))
+  })
+}
+
 const SECTIONS = [
   { name: 'runOffAndInvalidLinks', run: runOffAndInvalidLinks },
   { name: 'runJoinMember', run: runJoinMember },
@@ -766,6 +1019,9 @@ const SECTIONS = [
   { name: 'runTeammateRefusedBeforeAsking', run: runTeammateRefusedBeforeAsking },
   { name: 'runTeammateReceive', run: runTeammateReceive },
   { name: 'runTeammateAccept', run: runTeammateAccept },
+  { name: 'runSentList', run: runSentList },
+  { name: 'runReportBack', run: runReportBack },
+  { name: 'runNoWayBack', run: runNoWayBack },
 ]
 
 const outcome = await runSections({

@@ -5,7 +5,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, it } from 'node:test'
 
 import type { SessionLineage } from '../shared/lineage/types'
-import { configureTicketLineage, handoffTickets } from './handoff-ticket'
+import { configureTeammateTickets, configureTicketLineage, handoffTickets } from './handoff-ticket'
 import { createSession } from './session-create'
 import { SessionStore } from './session-store'
 
@@ -111,3 +111,34 @@ describe('建立 session 時寫入來源與名字（handoff-lineage）', () => {
     assert.equal(b.lineage?.parentId, PARENT)
   })
 })
+
+describe('a teammate handoff\'s session is linked before it spawns (teammate-handoff-return D7)', () => {
+  it('the provisional record carries teammateHandoff at spawn, the link is reported, and it survives the persist', async () => {
+    const linked: [string, string][] = []
+    configureTicketLineage((claim) => (claim.id === 'teammate:h.1' ? { teammate: { handoffId: 'h_1' } } : undefined))
+    configureTeammateTickets({ reportable: () => true, linked: (sessionId, handoffId) => linked.push([sessionId, handoffId]) })
+    try {
+      const seen: unknown[] = []
+      const ticket = handoffTickets.issue({ adapter: 'teammate', id: 'teammate:h.1', folderId: 'f2' })
+      const result = await createSession({ sessions, folderId: 'f2', target: 'claude', railLabel: 'beta', ticket, spawn: recordingSpawn(seen) })
+      const atSpawn = seen[0] as { teammateHandoff?: { handoffId: string }; lineage?: unknown }
+      assert.deepEqual(atSpawn.teammateHandoff, { handoffId: 'h_1' })
+      assert.equal(atSpawn.lineage, undefined)
+      assert.deepEqual(linked, [[result.sessionId, 'h_1']])
+      // The renderer persists it without the field; the main-owned value is kept, and read back after a reload.
+      sessions.replace([{ id: result.sessionId, folderId: 'f2', spawnTarget: 'claude', ordinal: 0 }])
+      const reloaded = new SessionStore(path.join(dir, 'sessions.json'), path.join(dir, 'sessions'))
+      reloaded.load()
+      assert.deepEqual(reloaded.view().find((v) => v.session.id === result.sessionId)?.session.teammateHandoff, { handoffId: 'h_1' })
+    } finally {
+      configureTeammateTickets({ reportable: () => false, linked: () => {} })
+    }
+  })
+
+  it('no ticket: no link', async () => {
+    const seen: unknown[] = []
+    await createSession({ sessions, folderId: 'f2', target: 'claude', railLabel: 'beta', ticket: undefined, spawn: recordingSpawn(seen) })
+    assert.equal((seen[0] as { teammateHandoff?: unknown }).teammateHandoff, undefined)
+  })
+})
+

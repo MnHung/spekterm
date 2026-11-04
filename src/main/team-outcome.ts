@@ -47,6 +47,9 @@ export type PreAuthError =
   | 'HANDOFF_UNKNOWN'
   | 'HANDOFF_EXPIRED'
   | 'HANDOFF_DELIVERED_ELSEWHERE'
+  | 'HANDOFF_NOT_DELIVERED'
+  | 'HANDOFF_FINISHED'
+  | 'TOO_MANY_REPORTS'
   | 'INTERNAL'
   | 'other'
 
@@ -54,7 +57,7 @@ const KNOWN_ERRORS: readonly string[] = [
   'BAD_FRAME', 'BAD_PARAMS', 'UNKNOWN_OPERATION', 'UNSUPPORTED_VERSION', 'NOT_AUTHENTICATED', 'ALREADY_AUTHENTICATED',
   'AUTH_FAILED', 'INVITE_UNKNOWN', 'INVITE_EXPIRED', 'INVITE_USED', 'HANDLE_TAKEN', 'RECIPIENT_UNKNOWN',
   'RECIPIENT_IS_SELF', 'HANDOFF_ID_REUSED', 'RATE_LIMITED', 'HANDOFF_UNKNOWN', 'HANDOFF_EXPIRED',
-  'HANDOFF_DELIVERED_ELSEWHERE', 'INTERNAL',
+  'HANDOFF_DELIVERED_ELSEWHERE', 'HANDOFF_NOT_DELIVERED', 'HANDOFF_FINISHED', 'TOO_MANY_REPORTS', 'INTERNAL',
 ] satisfies Exclude<PreAuthError, 'other'>[]
 
 export function preAuthErrorOf(code: string): PreAuthError {
@@ -89,15 +92,18 @@ export function outcomeOfPreAuthError(code: PreAuthError): Outcome {
     case 'HANDOFF_UNKNOWN':
     case 'HANDOFF_EXPIRED':
     case 'HANDOFF_DELIVERED_ELSEWHERE':
+    case 'HANDOFF_NOT_DELIVERED':
+    case 'HANDOFF_FINISHED':
+    case 'TOO_MANY_REPORTS':
     case 'other':
       return { kind: 'stop', reason: 'FAULT' }
   }
 }
 
 /** Close codes protocol v1 names, and `other`. */
-export type CloseClass = 1000 | 1001 | 1003 | 1006 | 1009 | 4001 | 4003 | 4004 | 4006 | 'other'
+export type CloseClass = 1000 | 1001 | 1003 | 1006 | 1009 | 1011 | 4001 | 4003 | 4004 | 4006 | 'other'
 
-const KNOWN_CLOSES: readonly number[] = [1000, 1001, 1003, 1006, 1009, 4001, 4003, 4004, 4006] satisfies Exclude<CloseClass, 'other'>[]
+const KNOWN_CLOSES: readonly number[] = [1000, 1001, 1003, 1006, 1009, 1011, 4001, 4003, 4004, 4006] satisfies Exclude<CloseClass, 'other'>[]
 
 export function closeClassOf(code: number): CloseClass {
   return KNOWN_CLOSES.includes(code) ? (code as CloseClass) : 'other'
@@ -112,8 +118,11 @@ function outcomeOfClose(code: CloseClass): Outcome {
     case 1003:
     case 1009:
       return { kind: 'stop', reason: 'FAULT' }
-    // A 4003 with no recorded error: treated as `INTERNAL`.
+    // A 4003 with no recorded error: treated as `INTERNAL`. A 1011: the server could not bring this connection's
+    // `handoff.status` events up to date — reconnect with backoff, and the next `connected` syncs from the stored
+    // cursor (`teammate-handoff-return`).
     case 4003:
+    case 1011:
       return { kind: 'retry', reason: 'SERVER_ERROR' }
     case 1000:
     case 1001:

@@ -15,6 +15,13 @@
  * `clientId` answers the stored handoff with `duplicate: true`); `handoff.received` is answered `{}` unless
  * `state.holdReceived` keeps it pending until `releaseReceived(answer)`; `push(data)` sends a `handoff.incoming`
  * event to every open connection. `sends` and `acks` record what the app sent.
+ *
+ * The way back (`teammate-handoff-return`): every sent handoff is a StatusRecord with its own `seq` from one
+ * counter. `handoff.sync` pages them (`state.syncPageSize`; `state.syncReset` answers the next sync as a reset), and a
+ * connection whose last sync answer said `more: false` receives `handoff.status` events. `setStatus(id, patch)`
+ * changes a record (a new `seq`) and pushes it; `addRecord(record)` stores one sent from another device;
+ * `closeAll(code)` closes every connection with a code (1011). `handoff.update` is recorded in `updates` and answered
+ * `{ status }`, or by `state.respond`.
  */
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -56,7 +63,7 @@ function defaultState() {
       { id: 'm_sam', handle: 'sam', displayName: 'Sam' },
       { id: 'm_alex', handle: 'alex', displayName: 'Alex' },
     ],
-    operations: ['device.rename', 'device.leave', 'team.members', 'handoff.send', 'handoff.received'],
+    operations: ['device.rename', 'device.leave', 'team.members', 'handoff.send', 'handoff.received', 'handoff.update', 'handoff.sync'],
     deviceName: 'laptop',
     respond: undefined,
     /** `handoff.received` is held, unanswered, until `releaseReceived`. */
@@ -65,6 +72,10 @@ function defaultState() {
     received: undefined,
     /** Devices the recipient of a send has (0: the handoff waits until they add one). */
     recipientDevices: 1,
+    /** Records per `handoff.sync` page. */
+    syncPageSize: 100,
+    /** The next `handoff.sync` is answered as a reset (`reset: true`, from 0). */
+    syncReset: false,
   }
 }
 
@@ -79,6 +90,15 @@ export async function startStubTeamServer({ port }) {
   const acks = []
   const held = []
   const stored = new Map()
+  /** StatusRecords by handoff id, and the one counter of their `seq` (protocol §10). */
+  const records = new Map()
+  let seq = 0
+  /** Connections whose last `handoff.sync` answer said `more: false`: they receive `handoff.status`. */
+  const subscribed = new Set()
+  const updates = []
+  const pushStatus = (record) => {
+    for (const socket of subscribed) if (socket.readyState === 1) socket.send(JSON.stringify({ t: 'evt', k: 'handoff.status', d: record }))
+  }
 
   const server = https.createServer({ key: cert.keyPem, cert: cert.certPem })
   server.on('connection', () => (connections.tcp += 1))
@@ -131,7 +151,33 @@ export async function startStubTeamServer({ port }) {
         const previous = stored.get(p.clientId)
         const handoff = previous ?? { id: `h_stub${stored.size + 1}`, status: 'pending', sentAt: Date.now(), expiresAt: Date.now() + 30 * 86_400_000 }
         stored.set(p.clientId, handoff)
-        return { ok: true, r: { handoff, recipient: { ...recipient, deviceCount: state.recipientDevices }, duplicate: Boolean(previous) } }
+        if (!previous) {
+          seq += 1
+          records.set(handoff.id, {
+            seq, id: handoff.id, clientId: String(p.clientId), to: { id: recipient.id, handle: recipient.handle, displayName: recipient.displayName, removed: false },
+            sentFrom: 'd_stub', status: 'pending', sentAt: handoff.sentAt, expiresAt: handoff.expiresAt, changedAt: handoff.sentAt,
+          })
+          // After the answer, as the server publishes (protocol §10).
+          setTimeout(() => pushStatus(records.get(handoff.id)), 30)
+        }
+        const record = records.get(handoff.id)
+        return { ok: true, r: { handoff: { ...handoff, status: record?.status ?? handoff.status, seq: record?.seq ?? 0 }, recipient: { ...recipient, deviceCount: state.recipientDevices }, duplicate: Boolean(previous) } }
+      }
+      case 'handoff.sync': {
+        let after = typeof p.after === 'number' ? p.after : 0
+        const reset = state.syncReset
+        state.syncReset = false
+        if (reset) after = 0
+        const all = [...records.values()].filter((r) => r.seq > after).sort((a, b) => a.seq - b.seq)
+        const page = all.slice(0, state.syncPageSize)
+        const more = all.length > page.length
+        if (more) subscribed.delete(socket)
+        else subscribed.add(socket)
+        return { ok: true, r: { records: page, more, latest: seq, reset } }
+      }
+      case 'handoff.update': {
+        const status = String(p.status)
+        return { ok: true, r: { status } }
       }
       case 'handoff.received': {
         if (state.holdReceived) return 'held'
@@ -146,6 +192,7 @@ export async function startStubTeamServer({ port }) {
 
   wss.on('connection', (socket) => {
     sockets.push(socket)
+    socket.on('close', () => subscribed.delete(socket))
     socket.on('message', (data) => {
       let frame
       try {
@@ -157,6 +204,7 @@ export async function startStubTeamServer({ port }) {
       // Recorded before any scripted answer: a dropped answer is still a request the server received.
       if (frame.m === 'handoff.send') sends.push(frame.p ?? {})
       if (frame.m === 'handoff.received') acks.push(String(frame.p?.id))
+      if (frame.m === 'handoff.update') updates.push(frame.p ?? {})
       const reply = answer(frame.m, frame.p ?? {}, socket)
       if (reply === 'silent') return
       if (reply === 'held') {
@@ -185,6 +233,31 @@ export async function startStubTeamServer({ port }) {
     count: (m) => frames.filter((frame) => frame.m === m).length,
     sends,
     acks,
+    /** Every `handoff.update` the app sent, in order. */
+    updates,
+    /** The stored StatusRecord of a sent handoff, by id or `clientId`. */
+    record: (key) => [...records.values()].find((r) => r.id === key || r.clientId === key) ?? null,
+    /** Changes a sent handoff (a new `seq`) and pushes the record to subscribed connections. */
+    setStatus(id, patch) {
+      const current = records.get(id)
+      if (!current) throw new Error(`no record ${id}`)
+      seq += 1
+      const next = { ...current, ...patch, seq, changedAt: Date.now() }
+      records.set(id, next)
+      pushStatus(next)
+      return next
+    },
+    /** Stores a record as if another device of the member had sent it (no event: it is found by a sync). */
+    addRecord(record) {
+      seq += 1
+      const next = { sentFrom: 'd_other', sentAt: Date.now(), expiresAt: Date.now() + 30 * 86_400_000, changedAt: Date.now(), ...record, seq }
+      records.set(next.id, next)
+      return next
+    },
+    /** Closes every open connection with a code (1011: status events could not be brought up to date). */
+    closeAll(code, reason = '') {
+      for (const socket of sockets) if (socket.readyState === 1) socket.close(code, reason)
+    },
     /** Answers every held `handoff.received` (on connections still open) with `answer`. */
     releaseReceived(answer = { ok: true, r: {} }) {
       for (const { socket, id } of held.splice(0)) {

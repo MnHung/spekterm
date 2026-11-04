@@ -64,6 +64,8 @@ export function isPermanentRejection({ code, notify }: RejectionOutcome): boolea
     case 'TEAMMATE_NOT_FOUND': // As `TARGET_NOT_FOUND`: the same handle names the same nobody.
     case 'TEAMMATE_IS_SELF':
     case 'SEND_UNCERTAIN': // It may have been delivered: writing it again would send it twice without asking.
+    case 'TEAMMATE_REPORT_STOPPED': // The server refused this handoff's reports for good, or it was declined.
+    case 'TEAMMATE_REPORT_NOT_SENT': // The reports the trace names were dropped; nothing sends them later.
       return true
 
     // ── 暫時：狀態或設定改變後可能成功 ──────────────────────────────────────

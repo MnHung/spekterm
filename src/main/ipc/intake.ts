@@ -17,6 +17,9 @@ import { listView, type IntakeView } from '../intake-projection'
 import { OVERFLOW_KEY } from '../intake-service'
 import type { IntakeService } from '../intake-service'
 import type { OutgoingView } from '../teammate-outbox'
+import { TEAMMATE_ADAPTER } from '../teammate-inbox'
+import type { SentView } from '../teammate-sent'
+import type { IntakeRecord } from '../intake-store'
 import type { FolderLookup } from '../workspace-store'
 import { existingTerminalService } from './terminal'
 import { dismissIntake, notifyIntakeChanged, onIntakeChanged } from '../intake-changes'
@@ -42,6 +45,7 @@ import { dismissIntake, notifyIntakeChanged, onIntakeChanged } from '../intake-c
 
 export type { IntakeView } from '../intake-projection'
 export type { OutgoingView } from '../teammate-outbox'
+export type { SentView } from '../teammate-sent'
 export type { IntakeAcceptResult } from '../intake-accept'
 export type { ApproveResult, RecurrenceListing, RecurrenceView } from '../recurrence-keeper'
 
@@ -62,6 +66,10 @@ export const INTAKE_CHANNELS = {
   outgoingSend: 'workspace:intake:outgoing:send',
   outgoingDiscard: 'workspace:intake:outgoing:discard',
   outgoingDismiss: 'workspace:intake:outgoing:dismiss',
+  /** Decline a teammate's handoff with an optional reason (`teammate-handoff-return`). */
+  decline: 'workspace:intake:decline',
+  /** The Sent list (`teammate-handoff-return`): its own call, not part of the broadcast inbox list. */
+  sent: 'workspace:intake:sent',
   setRules: 'workspace:intake:setRules',
   /** 主行程 → renderer：收件匣有變動。 */
   changed: 'workspace:intake:changed',
@@ -145,6 +153,11 @@ export interface IntakeSnapshot {
    */
   outgoing?: { items: OutgoingView[]; waiting: number; damaged?: boolean }
   /**
+   * The intake ids of pending teammate items that may be declined (`teammate-handoff-return` D9). Desktop only:
+   * outside `listView`, whose items a paired phone receives, and which has no such field in the remote protocol.
+   */
+  declinable?: string[]
+  /**
    * 拒絕的痕跡 —— **逐則**，不是一個總數。
    *
    * 一個計數器回答不了「哪一則」「為什麼」「我要怎麼辦」中的任何一個，
@@ -190,7 +203,7 @@ export interface IntakeHandlerDeps {
    * **以回呼交出而不是導出一個函式**：送出的對象是這一層持有的 `senders`，而那個集合的
    * 生命週期綁在這次註冊上。
    */
-  registerOpenInbox?: (open: (tab?: 'inbox' | 'schedules' | 'outgoing') => void) => void
+  registerOpenInbox?: (open: (tab?: 'inbox' | 'schedules' | 'outgoing' | 'sent') => void) => void
   /** 把「請 renderer 在某個 folder 自動建立 session」交出去，供交接的 producer 呼叫。 */
   registerAutoAccept?: (request: (adapter: string, id: string, folderId: string) => void) => void
   /** 把「把焦點移到某個 session」交出去，供通知被觸發時呼叫。 */
@@ -206,6 +219,18 @@ export interface IntakeHandlerDeps {
   runNow?: (adapter: string, id: string) => boolean
   /** The recurrence keeper (`recurring-handoff`). Unprovided ⇒ approval and stop are refused, nothing is listed. */
   recurrences?: Pick<RecurrenceKeeper, 'listing' | 'approve' | 'stop' | 'ensureNext'>
+  /**
+   * The way back of teammate handoffs (`teammate-handoff-return`). Unprovided ⇒ no Decline, no Sent list, no `taken`.
+   */
+  teammates?: {
+    /** Whether a pending teammate record may be reported on (and so declined). */
+    reportable(record: IntakeRecord): boolean
+    /** Decline it: `reason` is untrusted (from the renderer); the implementation normalizes and checks it. */
+    decline(record: IntakeRecord, reason: unknown): DeclineResult
+    /** The session opened for a teammate record started working on it: `taken` (D8). */
+    taken(sessionId: string): void
+    sent(): SentSnapshot
+  }
   /** The outgoing teammate handoffs (`TeammateOutbox`). Unprovided ⇒ no Outgoing tab, and its handlers refuse. */
   outgoing?: {
     list(): OutgoingView[]
@@ -215,6 +240,16 @@ export interface IntakeHandlerDeps {
     discard(id: string): Promise<boolean>
     dismiss(id: string): Promise<boolean>
   }
+}
+
+export type DeclineResult = { ok: true } | { ok: false; reason: 'unknown' | 'TOO_LONG' | 'stopped' }
+
+/** The Sent tab's content (`teammate-handoff-return` D4). */
+export interface SentSnapshot {
+  /** The server offers the Sent list (`handoff.sync` in its operations); false also with no membership. */
+  supported: boolean
+  damaged?: boolean
+  items: SentView[]
 }
 
 export function registerIntakeHandlers(deps: IntakeHandlerDeps): void {
@@ -252,6 +287,14 @@ export function registerIntakeHandlers(deps: IntakeHandlerDeps): void {
             },
           }
         : {}),
+      ...(deps.teammates
+        ? {
+            declinable: service.store
+              .list()
+              .filter((record) => record.adapter === TEAMMATE_ADAPTER && record.state === 'pending' && deps.teammates?.reportable(record))
+              .map((record) => record.id),
+          }
+        : {}),
       notices: service.notices().map((notice) => ({
         ...notice,
         ...(notice.key === OVERFLOW_KEY ? { overflow: true } : {}),
@@ -272,6 +315,21 @@ export function registerIntakeHandlers(deps: IntakeHandlerDeps): void {
     })
   }
 
+  /**
+   * Decline a teammate's handoff (`teammate-handoff-return` D9). The record is looked up by its key; the reason is
+   * untrusted and goes through the same text path as everything sent to the team server.
+   */
+  ipcMain.handle(INTAKE_CHANNELS.decline, (_event, id: unknown, adapter: unknown, reason: unknown): DeclineResult => {
+    if (typeof id !== 'string' || adapter !== TEAMMATE_ADAPTER || !deps.teammates) return { ok: false, reason: 'unknown' }
+    const record = service.store.get(adapter, id)
+    if (!record?.content || record.state !== 'pending' || !deps.teammates.reportable(record)) return { ok: false, reason: 'unknown' }
+    const result = deps.teammates.decline(record, reason)
+    if (result.ok) dismissIntake(service.store, adapter, id)
+    return result
+  })
+
+  ipcMain.handle(INTAKE_CHANNELS.sent, (): SentSnapshot => deps.teammates?.sent() ?? { supported: false, items: [] })
+
   // 無回應通道 —— 沒有負載，因此不需要型別 guard（`clipboard:writeText` 那條的成因是它收字串）。
   ipcMain.on(INTAKE_CHANNELS.opened, () => {
     onInboxOpened?.()
@@ -281,7 +339,7 @@ export function registerIntakeHandlers(deps: IntakeHandlerDeps): void {
    * 把收件匣打開。**重用既有的 `senders` 集合與其銷毀剪除** —— 另外持有一份參考的話，
    * renderer 重新載入之後那份就指向一個已銷毀的 `WebContents`。
    */
-  const openInbox = (tab: 'inbox' | 'schedules' | 'outgoing' = 'inbox'): void => {
+  const openInbox = (tab: 'inbox' | 'schedules' | 'outgoing' | 'sent' = 'inbox'): void => {
     for (const sender of senders) {
       if (sender.isDestroyed()) senders.delete(sender)
       else sender.send(INTAKE_CHANNELS.openInbox, tab)
@@ -470,6 +528,9 @@ export function registerIntakeHandlers(deps: IntakeHandlerDeps): void {
             },
             onSubmitted: () => {
               if (!sender.isDestroyed()) sender.send(INTAKE_CHANNELS.prefill, sessionId, 'sent')
+              // The session started working on a teammate's handoff: `taken` (`teammate-handoff-return` D8) — not at
+              // Accept, not when the prompt was filled. Only the session the record names, as the settle below.
+              if (adapter === TEAMMATE_ADAPTER && service.store.get(adapter, id)?.sessionId === sessionId) deps.teammates?.taken(sessionId)
               // **只了結這個 session 所屬的那一則**：再次接受時 record 上的關聯會被換成新的
               // session，舊訂閱若晚到，不能把新的那一次一併了結。
               if (service.store.get(adapter, id)?.sessionId === sessionId) {

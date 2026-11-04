@@ -748,6 +748,43 @@
     },
     "teammate": "Teammate",
     "possiblyElsewhere": "This may also have reached your other device.",
+    "decline": "Decline…",
+    "declineReasonLabel": "Reason for declining (optional)",
+    "declineReasonHint": "{{sender}} sees this reason. Leave it empty to decline without one.",
+    "declineReasonLength": "{{count}} / {{limit}}",
+    "declineConfirm": "Decline",
+    "declineCancel": "Cancel",
+    "declineFailed": {
+      "unknown": "This handoff can no longer be declined.",
+      "TOO_LONG": "The reason is too long.",
+      "stopped": "This handoff can no longer be reported on, so the decline was not sent."
+    },
+    "sentTab": "Sent",
+    "sentEmpty": "You have not sent a handoff to a teammate yet.",
+    "sentUnsupported": "Your team server does not keep a list of sent handoffs.",
+    "sentDamaged": "The list of sent handoffs could not be read and was set aside. It fills again from the team server, without titles.",
+    "sentHint": "Reasons and reports are written by your teammates. Read them before passing them on to an agent.",
+    "sent": {
+      "itemLabel": "Sent to {{name}}: {{title}}",
+      "noTitle": "(no title — sent from another device or before you joined again)",
+      "to": "To {{name}} (@{{handle}})",
+      "recipientLeft": "no longer on the team",
+      "sentAt": "Sent {{time}}",
+      "since": "{{status}} {{time}}",
+      "unknownToServer": "The team server no longer has this handoff.",
+      "reasonLabel": "Reason",
+      "reportLabel": "Report",
+      "reportNumber": "Report {{count}}",
+      "copy": "Copy",
+      "status": {
+        "pending": "Waiting for delivery",
+        "delivered": "Delivered",
+        "taken": "Taken",
+        "declined": "Declined",
+        "done": "Done",
+        "expired": "Expired"
+      }
+    },
     "schedulesTab": "Schedules",
     "schedulesEmpty": "Nothing is scheduled.",
     "proposalsLabel": "Waiting for approval",
@@ -807,7 +844,9 @@
       "TEAMMATE_IS_SELF": "named you as the teammate",
       "OUTGOING_FULL": "too many handoffs to teammates are waiting for you",
       "SEND_UNCERTAIN": "may have been sent to a teammate before you left the team",
-      "TEAMMATE_UNREADABLE": "a teammate's handoff arrived that this version of spekterm cannot read"
+      "TEAMMATE_UNREADABLE": "a teammate's handoff arrived that this version of spekterm cannot read",
+      "TEAMMATE_REPORT_STOPPED": "an agent's report for a teammate's handoff was not sent: reporting for it has stopped",
+      "TEAMMATE_REPORT_NOT_SENT": "the teammate did not receive the reports for their handoff"
     },
     "rules": {
       "label": "Routing rules",
@@ -838,7 +877,16 @@
       "outgoingSingle": "An agent wants to send a handoff to {{name}}. Open it to send or discard it.",
       "outgoingMerged_one": "{{count}} handoff to a teammate is waiting for you.",
       "outgoingMerged_other": "{{count}} handoffs to teammates are waiting for you.",
-      "commandFailure": "A session command could not be carried out: {{reason}}"
+      "commandFailure": "A session command could not be carried out: {{reason}}",
+      "sentTitle": "A handoff you sent",
+      "sentDone": "{{name}} finished “{{what}}”: {{text}}",
+      "sentDeclined": "{{name}} declined “{{what}}”.",
+      "sentDeclinedReason": "{{name}} declined “{{what}}”: {{text}}",
+      "sentExpired": "“{{what}}” expired before {{name}} received it.",
+      "sentMerged_one": "{{count}} handoff you sent has news.",
+      "sentMerged_other": "{{count}} handoffs you sent have news.",
+      "teammateReportTitle": "Report to a teammate",
+      "teammateReportFailure": "Reports for “{{title}}” did not reach {{name}}: {{reason}}"
     },
     "badge": "{{total}} waiting",
     "openedLabel": "Already opened",

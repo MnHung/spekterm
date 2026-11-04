@@ -314,6 +314,13 @@ export type IntakeRejection =
   | 'SEND_UNCERTAIN'
   /** A teammate's handoff this version cannot read (its id, its encoding, or its sender's handle). Temporary. */
   | 'TEAMMATE_UNREADABLE'
+  /**
+   * A completion report from a session opened from a teammate's handoff, after reporting for that handoff stopped or
+   * it was declined (`teammate-handoff-return`). Permanent: nothing more is sent for it.
+   */
+  | 'TEAMMATE_REPORT_STOPPED'
+  /** The trace of reports for a teammate's handoff that did not reach its sender (`teammate-handoff-return` D8). */
+  | 'TEAMMATE_REPORT_NOT_SENT'
   | 'MALFORMED'
   | 'MISSING_ID'
   | 'INVALID_ID'

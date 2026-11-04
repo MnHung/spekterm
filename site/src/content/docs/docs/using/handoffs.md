@@ -174,6 +174,22 @@ it, the title and the **whole body** as plain text with its length — exactly t
 - A handoff belongs to the team you were on when the agent wrote it. If you leave that team, it is not sent to
   another; one whose sending may already have reached the server is refused rather than sent twice.
 
+### Following what you sent
+
+The inbox's **Sent** tab lists every handoff you sent to a teammate and where it is now: **waiting for delivery**,
+**delivered** (their spekterm has it), **taken** (they started a session on it), **declined**, **done** (their agent
+reported), or **expired** (not delivered within 30 days). A decline reason or the latest report is shown there as
+plain text, with a **Copy** button. Handoffs you sent from another of your devices, or before you joined again, are
+listed too, without their title. A teammate who left the team is marked.
+
+When one of your handoffs is **done**, **declined** or **expires**, the device you sent it from shows a desktop
+notification; your other devices update their list quietly. A handoff that stays **delivered** for a while is your
+cue to talk to your teammate: spekterm does not remind them for you.
+
+The agent that sent it sees the status in its relations file, as it sees a session it handed off on this computer —
+**but not the report or the reason**: those are your teammate's words, so spekterm shows them to you and leaves it
+to you to pass on what the agent needs.
+
 ## When a handoff fails
 
 A handoff that cannot be delivered is not lost silently. That happens when the agent names a repository that

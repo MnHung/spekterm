@@ -273,7 +273,10 @@ Reports of one handoff are sent **one at a time, in order**, each after the prev
   failure path, with a new `FailureContext.subject: 'teammate-report'` (the precedent is the session commands'
   `'command'`) whose copy says that reports for "<title>" did not reach <sender>, the code's reason as detail; title and
   sender name are third-party text and are reduced before the notification. The trace's label is the title. A stop with
-  nothing unsent (a resend of the last report refused) is silent.
+  nothing unsent (a resend of the last report refused) is silent. **Measured in `probe:team`**: the report that hits
+  `TOO_MANY_REPORTS` was announced as a completion when it was adopted, a moment before, so the two notifications
+  usually share the coalescing window and the user gets the coalesced one, which opens the inbox; the trace there
+  names the handoff. The named notification is what a stop alone in its window shows (unit-tested).
 - **Pruning**: an entry is removed 90 days after `touchedAt` (its last report, answer or stop), or when its session no
   longer exists and its queue is empty.
 

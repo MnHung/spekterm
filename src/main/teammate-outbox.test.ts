@@ -16,6 +16,7 @@ import { rescanLog, rescanOnce, silentWatcher } from './intake-source.testkit'
 import { IntakeStore } from './intake-store'
 import type { Answer } from './team-connection'
 import type { TeamMember } from './team-store'
+import type { SendRecord } from './teammate-sent'
 import { MAX_OUTGOING_WAITING, type MembershipStamp, type OutgoingView, type TeamPort, TeammateOutbox, toWellFormed } from './teammate-outbox'
 
 const A: MembershipStamp = { server: 'wss://team-a.example:8443', memberId: 'm_me' }
@@ -100,6 +101,8 @@ interface Harness {
   handoff: HandoffService
   arrivals: OutgoingView[]
   refusedLater: string[]
+  /** `recordSend` calls, each with the outgoing file as it was at the call. */
+  recorded: (SendRecord & { outgoingAtCall: string })[]
   now: { value: number }
   /** Writes a delivery, reads it the way the drop point does, and writes its receipt. */
   deliver: (name: string, payload: unknown) => Promise<{ outcome: Awaited<ReturnType<HandoffService['deliverFile']>>; file: string }>
@@ -120,6 +123,7 @@ function harness(options: { team?: FakeTeam; base?: string } = {}): Harness {
   team.file = file
   const arrivals: OutgoingView[] = []
   const refusedLater: string[] = []
+  const recorded: Harness['recorded'] = []
   const now = { value: Date.UTC(2026, 10, 3, 9, 0, 0) }
   const make = (): TeammateOutbox => {
     const outbox = new TeammateOutbox({
@@ -130,6 +134,7 @@ function harness(options: { team?: FakeTeam; base?: string } = {}): Harness {
       refusedLater: (code) => refusedLater.push(code),
       onChange: () => {},
       onArrival: (item) => arrivals.push(item),
+      recordSend: (send) => recorded.push({ ...send, outgoingAtCall: fs.readFileSync(file, 'utf8') }),
       now: () => now.value,
     })
     outboxes.push(outbox)
@@ -154,6 +159,7 @@ function harness(options: { team?: FakeTeam; base?: string } = {}): Harness {
     handoff,
     arrivals,
     refusedLater,
+    recorded,
     now,
     async deliver(name, payload) {
       prepareOutbox(SESSION)
@@ -463,6 +469,35 @@ describe('sending (tasks 2.3, 2.5)', () => {
     assert.equal(h.receipt('a.json')?.to, 'sam')
     assert.equal(h.receipt('a.json')?.handoffId, 'h_0123')
     assert.doesNotMatch(JSON.stringify(h.receipt('a.json')), /received|accepted|line one/)
+  })
+
+  it('a sent handoff is recorded in the Sent list before it leaves the outgoing store (teammate-handoff-return D3)', async () => {
+    const h = harness()
+    h.team.answers = [
+      (p) =>
+        Promise.resolve({
+          ok: true,
+          r: {
+            handoff: { id: 'h_77', status: 'pending', sentAt: 5, expiresAt: 6, seq: 41 },
+            recipient: { id: 'm_sam', handle: 'sam', displayName: 'Sam Lee', deviceCount: 1 },
+            duplicate: false,
+            clientIdEcho: p.clientId,
+          },
+        }),
+    ]
+    await h.deliver('a.json', toSam)
+    await h.outbox.send(h.outbox.list()[0].id)
+    await settle(h)
+    assert.equal(h.recorded.length, 1)
+    const [record] = h.recorded
+    assert.equal(record.handoffId, 'h_77')
+    assert.equal(record.seq, 41)
+    assert.equal(record.title, toSam.title)
+    assert.equal(record.sourceSessionId, SESSION)
+    assert.equal(record.to.handle, 'sam')
+    // The outgoing store still held the item when the Sent list recorded it.
+    assert.match(record.outgoingAtCall, /"clientId"/)
+    assert.equal(h.outbox.list().length, 0)
   })
 
   it('attempted is on disk before the request reaches the socket, and survives a restart', async () => {

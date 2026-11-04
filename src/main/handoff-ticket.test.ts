@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { TICKET_TTL_MS, TicketStore, ticketFor } from './handoff-ticket'
+import { configureTeammateTickets, TICKET_TTL_MS, TicketStore, ticketFor, ticketResolutionFor } from './handoff-ticket'
 import type { IntakeRecord } from './intake-store'
 
 const claim = { adapter: 'handoff', id: 'h1', folderId: 'f2' }
@@ -72,3 +72,35 @@ describe('簽發的條件', () => {
     assert.equal(ticketFor(record('pending', false), 'f2', new TicketStore()), undefined)
   })
 })
+
+describe('teammate handoffs (teammate-handoff-return D7)', () => {
+  const teammate = (state: IntakeRecord['state'] = 'pending'): IntakeRecord => ({
+    adapter: 'teammate',
+    id: 'teammate:h.0123',
+    state,
+    digest: 'd',
+    content: {
+      verified: { adapter: 'teammate', originKind: 'teammate', originId: 'sam' },
+      authored: { title: 't', body: 'b', actor: 'Sam', originLabel: 'Acme' },
+      receivedAt: 0,
+    },
+  })
+
+  it('issues a ticket only for a reportable pending teammate record', () => {
+    let reportable = false
+    configureTeammateTickets({ reportable: () => reportable, linked: () => {} })
+    try {
+      assert.equal(ticketFor(teammate(), 'f2', new TicketStore()), undefined)
+      reportable = true
+      assert.ok(ticketFor(teammate(), 'f2', new TicketStore()))
+      assert.equal(ticketFor(teammate('accepted'), 'f2', new TicketStore()), undefined)
+    } finally {
+      configureTeammateTickets({ reportable: () => false, linked: () => {} })
+    }
+  })
+
+  it('resolves to the server id, without a lineage', () => {
+    assert.deepEqual(ticketResolutionFor(teammate()), { teammate: { handoffId: 'h_0123' } })
+  })
+})
+

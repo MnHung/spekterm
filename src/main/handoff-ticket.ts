@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto'
 import type { SessionLineage } from '../shared/lineage/types'
 import { bodyOf } from './intake-schema'
 import type { IntakeRecord } from './intake-store'
+import { handoffIdOfIntake, TEAMMATE_ADAPTER } from './teammate-inbox'
 
 /**
  * 交接的**單次憑證**（`session-lineage`「由交接建立的 session 於建立當下記住它的來源 session」）。
@@ -110,8 +111,35 @@ function claimKey(adapter: string, id: string): string {
  * （`handoff-brief`）—— 本文另存一個檔，於是它不能跟著 `lineage` 進 `sessions.json`。
  */
 export interface TicketResolution {
-  lineage: SessionLineage
+  lineage?: SessionLineage
   briefBody?: string
+  /**
+   * A teammate's handoff the session is opened for (`teammate-handoff-return`, design D7): written into the new
+   * session's main-owned `teammateHandoff` before it spawns, and the report entry linked to it. Not a lineage.
+   */
+  teammate?: { handoffId: string }
+}
+
+let teammateTickets: (record: IntakeRecord) => boolean = () => false
+let teammateLinked: (sessionId: string, handoffId: string) => void = () => {}
+
+/**
+ * Tickets for teammate records (`teammate-handoff-return`, D7): `reportable` says whether a pending record of the
+ * `teammate` adapter may be reported on (its acknowledgement answered, this membership and device, `handoff.update`
+ * offered); `linked` creates the report entry once the session is created. Wired in `index.ts`, as
+ * `configureTicketLineage`.
+ */
+export function configureTeammateTickets(options: {
+  reportable: (record: IntakeRecord) => boolean
+  linked: (sessionId: string, handoffId: string) => void
+}): void {
+  teammateTickets = options.reportable
+  teammateLinked = options.linked
+}
+
+/** The session was created from a ticket that carried a teammate's handoff. */
+export function linkTeammateSession(sessionId: string, teammate: TicketResolution['teammate']): void {
+  if (teammate) teammateLinked(sessionId, teammate.handoffId)
 }
 
 let resolveSource: ((claim: TicketClaim) => TicketResolution | undefined) | null = null
@@ -147,7 +175,9 @@ export function ticketFor(
   markFired?: (adapter: string, id: string) => void,
 ): string | undefined {
   if (record) markFired?.(record.adapter, record.id)
-  if (!record?.content?.verified.source || record.state !== 'pending') return undefined
+  if (!record?.content || record.state !== 'pending') return undefined
+  // A same-machine handoff carries its source; a teammate's handoff is issued one only when it may be reported on.
+  if (!record.content.verified.source && !teammateTickets(record)) return undefined
   if (tickets.isLive(record.adapter, record.id)) return undefined
   return tickets.issue({ adapter: record.adapter, id: record.id, folderId })
 }
@@ -160,6 +190,11 @@ export function ticketFor(
  */
 export function ticketResolutionFor(record: IntakeRecord | undefined): TicketResolution | undefined {
   const content = record?.content
+  // A teammate's handoff (`teammate-handoff-return` D7): the link only; the ticket was issued because it is reportable.
+  if (record && content && record.adapter === TEAMMATE_ADAPTER) {
+    const handoffId = handoffIdOfIntake(record.id)
+    return handoffId ? { teammate: { handoffId } } : undefined
+  }
   const source = content?.verified.source
   if (!record || !content || !source) return undefined
   const brief = content.verified.firstPartyBody === true

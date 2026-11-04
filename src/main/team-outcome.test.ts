@@ -8,9 +8,9 @@ const PROTOCOL_ERRORS = [
   'BAD_FRAME', 'BAD_PARAMS', 'UNKNOWN_OPERATION', 'UNSUPPORTED_VERSION', 'NOT_AUTHENTICATED', 'ALREADY_AUTHENTICATED',
   'AUTH_FAILED', 'INVITE_UNKNOWN', 'INVITE_EXPIRED', 'INVITE_USED', 'HANDLE_TAKEN', 'RECIPIENT_UNKNOWN',
   'RECIPIENT_IS_SELF', 'HANDOFF_ID_REUSED', 'RATE_LIMITED', 'HANDOFF_UNKNOWN', 'HANDOFF_EXPIRED',
-  'HANDOFF_DELIVERED_ELSEWHERE', 'INTERNAL',
+  'HANDOFF_DELIVERED_ELSEWHERE', 'HANDOFF_NOT_DELIVERED', 'HANDOFF_FINISHED', 'TOO_MANY_REPORTS', 'INTERNAL',
 ]
-const PROTOCOL_CLOSES = [1001, 1003, 1009, 4001, 4003, 4004, 4006]
+const PROTOCOL_CLOSES = [1001, 1003, 1009, 1011, 4001, 4003, 4004, 4006]
 
 test('every protocol error code and close code is mapped by name', () => {
   for (const code of PROTOCOL_ERRORS) assert.equal(preAuthErrorOf(code), code)
@@ -32,6 +32,7 @@ test('the reconnect table, row by row', () => {
     [closed(4001), { kind: 'retry', reason: 'SERVER_CLOSED' }],
     [closed(4003, 'INTERNAL'), { kind: 'retry', reason: 'SERVER_ERROR' }],
     [closed(4003), { kind: 'retry', reason: 'SERVER_ERROR' }],
+    [closed(1011), { kind: 'retry', reason: 'SERVER_ERROR' }],
     [closed(4004), { kind: 'discard' }],
     [closed(4003, 'AUTH_FAILED'), { kind: 'discard' }],
     [closed(4006), { kind: 'stop', reason: 'REPLACED' }],

@@ -7,6 +7,7 @@ import { preferredTitle } from '../shared/lineage/label'
 import type { LifecycleState } from '../shared/lineage/lifecycle'
 import { relationsDir, relationsFile } from './handoff-outbox'
 import type { PersistedSession } from './session-store'
+import type { TeammateHandoffView } from './teammate-sent'
 
 /**
  * 關係檔 —— agent 隨時查得到它當下的母、子、兄弟 session（`session-lineage`）。
@@ -61,6 +62,12 @@ export interface Relations {
   parent: RelatedSession | ClosedParent | null
   children: RelatedSession[]
   siblings: RelatedSession[]
+  /**
+   * The handoffs this session sent to teammates, with their status (`teammate-handoff-return`, design D6). **No
+   * text and no display name**: the report and the decline reason are the teammate's (third-party to this agent),
+   * and a display name is the teammate's own choice. Present only when there is at least one.
+   */
+  teammateHandoffs?: TeammateHandoffView[]
 }
 
 export interface RelationsWorld {
@@ -72,6 +79,22 @@ export interface RelationsWorld {
   running: ReadonlySet<string>
   /** 由交接建立的 session 的生命週期（`handoff-completion`）。缺席 ＝ 不提供。 */
   lifecycle?: ReadonlyMap<string, { state: LifecycleState; summary?: string }>
+  /** Each sending session's teammate handoffs (`teammate-handoff-return`). Absent ＝ none. */
+  teammateHandoffs?: ReadonlyMap<string, readonly TeammateHandoffView[]>
+}
+
+let teammateHandoffsProvider: () => ReadonlyMap<string, readonly TeammateHandoffView[]> = () => new Map()
+
+/**
+ * Where the world's teammate handoffs come from (the Sent list, wired at startup in `index.ts`). A provider, as
+ * `configureTeamIntro`: the world is built in `ipc/terminal.ts`, which does not know the team.
+ */
+export function configureTeammateHandoffs(provider: () => ReadonlyMap<string, readonly TeammateHandoffView[]>): void {
+  teammateHandoffsProvider = provider
+}
+
+export function teammateHandoffsNow(): ReadonlyMap<string, readonly TeammateHandoffView[]> {
+  return teammateHandoffsProvider()
 }
 
 function labelOf(session: PersistedSession): string | undefined {
@@ -141,7 +164,14 @@ export function relationsOf(selfId: string, world: RelationsWorld): Relations | 
         .map((entry) => describe(entry.session, true))
     : []
 
-  return { self: { ...(self.peerName ? { name: self.peerName } : {}) }, parent, children, siblings }
+  const teammateHandoffs = world.teammateHandoffs?.get(selfId) ?? []
+  return {
+    self: { ...(self.peerName ? { name: self.peerName } : {}) },
+    parent,
+    children,
+    siblings,
+    ...(teammateHandoffs.length > 0 ? { teammateHandoffs: teammateHandoffs.map((view) => ({ ...view })) } : {}),
+  }
 }
 
 /**

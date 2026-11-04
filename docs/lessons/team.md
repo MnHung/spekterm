@@ -96,3 +96,24 @@ further connection), and a leave from the last device (the member removed, no no
 One trap on the server's side when it runs outside Docker: **the admin command needs `TLS_CERT` in its environment
 too**, or the invites it prints carry no `fp`, and spekterm then verifies the self-signed certificate against the
 system's trust store and cannot connect. In the documented Docker setup the container's environment provides it.
+
+## 9. The way back (`teammate-handoff-return`): what failed silently while building it
+
+- **A stand-in agent that answers and stops at once is never seen busy.** It reported `UserPromptSubmit` and `Stop`
+  in one breath; the wait state drains every 400 ms and landed on ready, so "the user sent the prompt" (busy or
+  awaiting a choice) never happened and `taken` was never reported. The probe's agent works a few seconds
+  (`busySeconds`), as a real one does.
+- **Notifications in one window coalesce, and a probe that filters by title then sees nothing.** The Outgoing
+  notification and a Sent one, or a teammate session's completion and the `TOO_MANY_REPORTS` stop of that same
+  report, land in one 4-second window and come out as "2 new handoffs". Wait for the earlier one to be presented
+  before causing the next, or accept the coalesced one where that is the product's behavior.
+- **"Nothing was notified" must wait past the coalescing window.** A 3-second wait after the event was green on the
+  mutation that notifies every device (`notify-every-device`): the wrong notification would only have been presented
+  at 4 seconds.
+- **"Some notification mentions the title" was green on the wrong notification**: the inbox arrival of the same
+  handoff names it too. Find the notification by its own title first.
+- **Accepting an inbox item closes the inbox.** Row lookups afterwards return nothing, and an assertion of the shape
+  "nothing was sent for it" passes without the click ever happening — reopen the inbox, and wait for the row.
+- **Anchored control groups follow the exact source text.** Changing `ticketFor`'s gate and `createSession`'s
+  `addProvisional` line broke two `scripts/intake-control-groups.mjs` anchors (`scripts/control-groups-source.test.mjs`
+  caught it); re-anchoring them is only half the job — run them, and see them turn red.

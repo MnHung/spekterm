@@ -196,6 +196,10 @@ export function receiptReason(code: IntakeRejection | 'READ_FAILED'): string {
       return 'The user left the team or this device was removed while this handoff was being sent; it may have been delivered. Do not write it again without asking the user.'
     case 'TEAMMATE_UNREADABLE':
       return 'A teammate\'s handoff arrived that this version of spekterm cannot read.'
+    case 'TEAMMATE_REPORT_STOPPED':
+      return 'Reporting for this teammate\'s handoff has stopped (it was declined, the team server refused further reports, or this device left the team), so this report was not sent. Tell the user in this session instead.'
+    case 'TEAMMATE_REPORT_NOT_SENT':
+      return 'Reports for this teammate\'s handoff did not reach its sender.'
   }
 }
 

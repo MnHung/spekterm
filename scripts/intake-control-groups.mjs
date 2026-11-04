@@ -865,8 +865,8 @@ export const MUTATIONS = [
     name: 'ticket-any-state',
     file: 'src/main/handoff-ticket.ts',
     command: 'test',
-    from: `  if (!record?.content?.verified.source || record.state !== 'pending') return undefined`,
-    to: `  if (!record?.content?.verified.source) return undefined`,
+    from: `  if (!record?.content || record.state !== 'pending') return undefined`,
+    to: `  if (!record?.content) return undefined`,
     expectRed: '已接受（含已了結）不簽發 —— 歷史上的交接不能再長出子 session',
     why: '**對任何狀態的 record 都簽發。** record 永不刪除、了結之後仍是 accepted，於是一則歷史上的交接隨時都能再產生子 session。',
   },
@@ -874,15 +874,18 @@ export const MUTATIONS = [
     name: 'lineage-after-spawn',
     file: 'src/main/session-create.ts',
     command: 'test',
-    from: `  sessions.addProvisional({ id: sessionId, folderId, spawnTarget: target, lineage, peerName })
+    from: `  sessions.addProvisional({ id: sessionId, folderId, spawnTarget: target, lineage, peerName, ...(teammateHandoff ? { teammateHandoff } : {}) })
+  linkTeammateSession(sessionId, teammateHandoff)
 
   let result: R
   try {
     result = await input.spawn(sessionId, peerName)`,
-    to: `  let result: R
+    to: `  linkTeammateSession(sessionId, teammateHandoff)
+
+  let result: R
   try {
     result = await input.spawn(sessionId, peerName)
-    sessions.addProvisional({ id: sessionId, folderId, spawnTarget: target, lineage, peerName })`,
+    sessions.addProvisional({ id: sessionId, folderId, spawnTarget: target, lineage, peerName, ...(teammateHandoff ? { teammateHandoff } : {}) })`,
     expectRed: 'spawn 的那一刻，暫定紀錄已含來源與名字',
     why: '**關係與名字在 spawn 之後才寫入。** 自我介紹與關係檔在 spawn 時寫出 —— 子 session 的 agent 第一次被注入時看不到母 session，也不知道自己叫什麼。這正是被否決的「在 attach 時寫入」的形狀。',
   },

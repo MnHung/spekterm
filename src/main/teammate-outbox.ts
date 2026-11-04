@@ -16,6 +16,7 @@ import { type IntakeRejection, MAX_FIELD_LENGTH, MAX_TEAMMATE_BODY_LENGTH, norma
 import type { DeliverOutcome, FailureContext } from './intake-service'
 import type { Answer } from './team-connection'
 import type { TeamMember } from './team-store'
+import type { SendRecord } from './teammate-sent'
 
 /**
  * Handing work to a teammate (`teammate-handoff`): reading a `to` delivery, the outgoing store
@@ -145,6 +146,11 @@ export interface TeammateOutboxDeps {
   onChange: () => void
   /** A teammate handoff started waiting for confirmation (the notification). */
   onArrival: (item: OutgoingView) => void
+  /**
+   * The server answered a send (`teammate-handoff-return`, design D3): the Sent list records it **synchronously**,
+   * before this store removes the item, so a crash in between cannot lose the title.
+   */
+  recordSend?: (send: SendRecord) => void
   now?: () => number
   /** Tests: the clientId's random bytes. */
   randomBytes?: (size: number) => Buffer
@@ -259,6 +265,11 @@ export class TeammateOutbox {
   waitingCount(): number {
     const current = this.#deps.team.membership()
     return this.#items.filter((item) => item.state === 'awaiting' && sameStamp(item.membership, current)).length
+  }
+
+  /** Whether a `clientId` is a send still in this store (waiting for its answer; `teammate-handoff-return` D5). */
+  hasClientId(clientId: string): boolean {
+    return this.#items.some((item) => item.clientId === clientId && item.state === 'confirmed')
   }
 
   /** Whether one more could wait for confirmation (`OUTGOING_FULL`). */
@@ -501,9 +512,28 @@ export class TeammateOutbox {
       return
     }
     if (answer.ok) {
-      const r = (answer.r ?? {}) as { handoff?: { id?: unknown }; recipient?: { handle?: unknown; deviceCount?: unknown } }
+      const r = (answer.r ?? {}) as {
+        handoff?: { id?: unknown; status?: unknown; seq?: unknown; sentAt?: unknown; expiresAt?: unknown }
+        recipient?: { id?: unknown; handle?: unknown; deviceCount?: unknown }
+      }
       const noDevice = r.recipient?.deviceCount === 0
       const handoffId = typeof r.handoff?.id === 'string' ? r.handoff.id : undefined
+      if (handoffId && this.#deps.recordSend) {
+        // Before the outgoing write below: the other order loses the title on a crash in between.
+        const now = this.#now()
+        this.#deps.recordSend({
+          membership: item.membership,
+          clientId: item.clientId,
+          handoffId,
+          seq: typeof r.handoff?.seq === 'number' ? r.handoff.seq : 0,
+          status: typeof r.handoff?.status === 'string' ? r.handoff.status : 'pending',
+          sentAt: typeof r.handoff?.sentAt === 'number' ? r.handoff.sentAt : now,
+          expiresAt: typeof r.handoff?.expiresAt === 'number' ? r.handoff.expiresAt : now,
+          to: { ...(typeof r.recipient?.id === 'string' ? { id: r.recipient.id } : {}), handle: item.to, displayName: item.recipientName },
+          title: item.title,
+          sourceSessionId: item.source.sessionId,
+        })
+      }
       const sent: OutgoingItem = {
         ...item,
         state: 'sent',

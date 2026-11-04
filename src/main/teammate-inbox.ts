@@ -44,6 +44,12 @@ export const INCOMING_TICK_MS = 30_000
 /** `shown` and `gone` entries keep their id this long past `expiresAt`, to recognise a repeat. */
 const PRUNE_AFTER_MS = 24 * 60 * 60 * 1000
 
+/**
+ * An entry whose acknowledgement was answered is kept this long past the answer (`teammate-handoff-return` D8): a
+ * delivered handoff does not expire, and it may be reported on for as long as the server keeps its record.
+ */
+export const ANSWERED_KEEP_MS = 90 * 24 * 60 * 60 * 1000
+
 /** The protocol's id rule (§5): 1–64 of `[A-Za-z0-9_-]`, not starting with `-`. Case-sensitive. */
 const SERVER_ID = /^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$/
 
@@ -65,6 +71,11 @@ export interface IncomingEntry {
   sentAt?: number
   /** Shown after the credential was discarded with its acknowledgement unanswered (protocol §11 rule 6). */
   possiblyElsewhere?: true
+  /**
+   * `handoff.received` was answered `{}` (protocol §12 receiving rule 1): when, and by which device. Only such an entry
+   * may be reported on, and only from that device (`teammate-handoff-return` D8). Kept through `shown`.
+   */
+  answered?: { at: number; deviceId: string }
 }
 
 /** A `handoff.incoming` event, as read. */
@@ -85,6 +96,8 @@ export interface InboxTeamPort {
   operations(): string[]
   connected(): boolean
   request(m: string, p: Record<string, unknown>): Promise<Answer>
+  /** This device's id; absent in tests that do not report. */
+  deviceId?(): string | null
 }
 
 export interface TeammateInboxDeps {
@@ -108,6 +121,13 @@ export interface TeammateInboxDeps {
 export function teammateIntakeId(serverId: string): string | null {
   if (!SERVER_ID.test(serverId)) return null
   return `teammate:${serverId.replace(/_/g, '.')}`
+}
+
+/** The server's handoff id of a teammate intake id (the inverse of `teammateIntakeId`); `null` for any other id. */
+export function handoffIdOfIntake(intakeId: string): string | null {
+  if (!intakeId.startsWith('teammate:')) return null
+  const serverId = intakeId.slice('teammate:'.length).replace(/\./g, '_')
+  return SERVER_ID.test(serverId) ? serverId : null
 }
 
 /** Reads an event's data. `{ unreadable }` names the intake key for the trace (or the raw id when it has none). */
@@ -185,6 +205,20 @@ export class TeammateInbox {
   /** The entries, for tests. */
   entries(): IncomingEntry[] {
     return this.#entries.map((entry) => ({ ...entry }))
+  }
+
+  /**
+   * Whether this device may report on a handoff (`teammate-handoff-return` D7–D9): its acknowledgement was answered
+   * `{}`, under the current membership, by this device, and the server offers `handoff.update`. A handoff shown
+   * without an answered acknowledgement (`HANDOFF_UNKNOWN`, no `handoff.received`, a discarded credential) is not.
+   */
+  reportable(handoffId: string): { membership: MembershipStamp; deviceId: string } | null {
+    const entry = this.#entries.find((e) => e.id === handoffId)
+    if (!entry?.answered || (entry.state !== 'acked' && entry.state !== 'shown')) return null
+    if (!sameStamp(entry.membership, this.#deps.team.membership())) return null
+    if (entry.answered.deviceId !== (this.#deps.team.deviceId?.() ?? null)) return null
+    if (!this.#deps.team.operations().includes('handoff.update')) return null
+    return { membership: { ...entry.membership }, deviceId: entry.answered.deviceId }
   }
 
   // ---- Events ----
@@ -325,7 +359,8 @@ export class TeammateInbox {
     if (answer.ok) {
       // `{}` for an entry not waiting for one changes nothing.
       if (entry.state !== 'stored') return
-      const acked = this.#acked(entry)
+      const deviceId = this.#deps.team.deviceId?.() ?? null
+      const acked = this.#acked(entry, deviceId ? { at: this.#now(), deviceId } : undefined)
       if (this.#deps.hasRoom()) await this.#deliver(acked)
       return
     }
@@ -348,8 +383,8 @@ export class TeammateInbox {
     }
   }
 
-  #acked(entry: IncomingEntry): IncomingEntry {
-    const acked: IncomingEntry = { ...entry, state: 'acked' }
+  #acked(entry: IncomingEntry, answered?: IncomingEntry['answered']): IncomingEntry {
+    const acked: IncomingEntry = { ...entry, state: 'acked', ...(answered ? { answered } : {}) }
     this.#save(this.#entries.map((e) => (e === entry ? acked : e)))
     return acked
   }
@@ -383,13 +418,21 @@ export class TeammateInbox {
 
   /** Keeps the id and state only. */
   #strip(entry: IncomingEntry, state: 'shown' | 'gone'): void {
-    const kept: IncomingEntry = { id: entry.id, state, membership: entry.membership, expiresAt: entry.expiresAt }
+    const kept: IncomingEntry = {
+      id: entry.id,
+      state,
+      membership: entry.membership,
+      expiresAt: entry.expiresAt,
+      ...(entry.answered && state === 'shown' ? { answered: entry.answered } : {}),
+    }
     this.#save(this.#entries.map((e) => (e === entry ? kept : e)))
   }
 
   #prune(): void {
     const now = this.#now()
-    const kept = this.#entries.filter((e) => !((e.state === 'shown' || e.state === 'gone') && now > e.expiresAt + PRUNE_AFTER_MS))
+    const keepUntil = (e: IncomingEntry): number =>
+      Math.max(e.expiresAt + PRUNE_AFTER_MS, e.answered ? e.answered.at + ANSWERED_KEEP_MS : 0)
+    const kept = this.#entries.filter((e) => !((e.state === 'shown' || e.state === 'gone') && now > keepUntil(e)))
     if (kept.length !== this.#entries.length) this.#save(kept)
   }
 
@@ -433,6 +476,12 @@ export class TeammateInbox {
 
 const STATES: ReadonlySet<string> = new Set(['stored', 'acked', 'shown', 'gone'])
 
+function readAnswered(value: unknown): { answered: { at: number; deviceId: string } } | null {
+  if (typeof value !== 'object' || value === null) return null
+  const a = value as Record<string, unknown>
+  return typeof a.at === 'number' && typeof a.deviceId === 'string' ? { answered: { at: a.at, deviceId: a.deviceId } } : null
+}
+
 /** Field by field; `null` for a file that is not this shape. An unreadable entry is dropped. */
 export function parseIncoming(text: string): IncomingEntry[] | null {
   let raw: unknown
@@ -467,6 +516,7 @@ export function parseIncoming(text: string): IncomingEntry[] | null {
       ...(typeof e.body === 'string' ? { body: e.body } : {}),
       ...(typeof e.sentAt === 'number' ? { sentAt: e.sentAt } : {}),
       ...(e.possiblyElsewhere === true ? { possiblyElsewhere: true as const } : {}),
+      ...(readAnswered(e.answered) ?? {}),
     }
     // An entry that still has to enter the inbox needs its content; one without it cannot.
     if ((entry.state === 'stored' || entry.state === 'acked') && (!entry.from || entry.title === undefined || entry.body === undefined)) continue

@@ -43,6 +43,8 @@ describe('the teammates file', () => {
     assert.match(rules, /"to" together with "target" is rejected/)
     assert.match(rules, /"at", "repeat" or "until": a teammate handoff cannot be scheduled/)
     assert.match(rules, /compared case-insensitively/)
+    assert.match(rules, /"teammateHandoffs" with its status/)
+    assert.match(rules, /report and any decline reason are not given to you/)
     assert.match(rules, /and so is your own/)
     assert.ok(rules.includes(`title: at most ${MAX_FIELD_LENGTH} characters`))
     assert.ok(rules.includes(`body: at most ${MAX_TEAMMATE_BODY_LENGTH} characters`))

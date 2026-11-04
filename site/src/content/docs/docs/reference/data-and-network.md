@@ -36,7 +36,8 @@ when it names one). It keeps one connection open while the feature is on, and re
 the feature off closes it. Through it pass your device's credential (when it connects), your handle, display name
 and device name, the team's member list, and **handoffs to and from your teammates**. The server is run by your
 team, not by the project, and it keeps those — a handoff's title and body until it is delivered or expires, its
-sender, recipient, times and status after that. **Its operator can read everything that passes through it**: nothing is end-to-end encrypted. See
+sender, recipient, times and status after that; **a decline reason or completion report sent back** for 30 days after
+it was written; and each handoff's record for your Sent list for 90 days after its last change. **Its operator can read everything that passes through it**: nothing is end-to-end encrypted. See
 [Teams](/docs/using/teams/).
 
 ## Remote access (off unless you turn it on)

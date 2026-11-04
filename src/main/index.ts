@@ -58,14 +58,14 @@ import { configureAttachments } from './remote-attachments'
 import { configureAgentStatus } from './agent-status'
 import { contextRoot } from './intake-context'
 import { ensureDeliveryRoot } from './intake-archive'
-import { COMPLETION_ADAPTER, IntakeNotifier, onlyOutgoing } from './intake-notify'
+import { COMPLETION_ADAPTER, COMPLETION_FOCUS_ADAPTER, IntakeNotifier, onlyOutgoing, onlySent } from './intake-notify'
 import { electronNotifyBackend } from './intake-notify-electron'
 import { createStubBackend, stubNotifyRoot } from './intake-notify-stub'
 import { IntakeService } from './intake-service'
 import { IntakeSource, inboxRoot } from './intake-source'
 import { configureHandoff, liveSessions, receiptsDir, teammatesFile } from './handoff-outbox'
-import { configureTeamIntro, refreshIntros, teamIntro } from './handoff-injection'
-import { refreshRelations } from './handoff-relations'
+import { configureTeamIntro, configureTeammateReports, refreshIntros, reportKindOf, teamIntro } from './handoff-injection'
+import { configureTeammateHandoffs, refreshRelations } from './handoff-relations'
 import { anyWindowReceives, HandoffOpener, OPENER_INTERVAL_MS, whenAnnounced } from './handoff-opener'
 import { HandoffService, registerHandoffService } from './handoff-service'
 import { HandoffCompletion } from './handoff-completion'
@@ -76,11 +76,11 @@ import { isRestored, onRestoreGateOpen, whenRestored } from './restore-gate'
 import { SessionControl } from './session-control'
 import { cancelCommandEnd, expectCommandEnd, lastProcessChangeAt, runStartedAt } from './session-runs'
 import { sessionExists } from '../shared/lineage/existence'
-import { configureTicketLineage, handoffTickets, ticketResolutionFor } from './handoff-ticket'
+import { configureTeammateTickets, configureTicketLineage, handoffTickets, ticketResolutionFor } from './handoff-ticket'
 import { ancestryOf } from '../shared/lineage/ancestry'
 import { preferredTitle } from '../shared/lineage/label'
 import { RoutingStore, routingFile } from './intake-routing'
-import { IntakeStore } from './intake-store'
+import { type IntakeRecord, IntakeStore } from './intake-store'
 import { PanelStore } from './panel-store'
 import { PreferencesStore } from './preferences-store'
 import { SecretStore } from './secret-store'
@@ -103,7 +103,9 @@ import { registerTeamHandlers, sendShowTeam } from './ipc/team'
 import { createTeamNotifier } from './team-notify'
 import { TeamService } from './team-service'
 import { TeammateOutbox, type TeamPort } from './teammate-outbox'
-import { TEAMMATE_ADAPTER, TeammateInbox } from './teammate-inbox'
+import { declineTeammate, TeammateReturn } from './teammate-return'
+import { TeammateSent } from './teammate-sent'
+import { handoffIdOfIntake, TEAMMATE_ADAPTER, TeammateInbox, teammateIntakeId } from './teammate-inbox'
 import { writeTeammatesFile } from './teammates-file'
 import { TeamStore } from './team-store'
 
@@ -616,8 +618,12 @@ void app.whenReady().then(async () => {
    */
   intakeService.onFailure((failure) => notifier.failed(failure))
 
-  let openInbox: ((tab?: 'inbox' | 'schedules' | 'outgoing') => void) | null = null
+  let openInbox: ((tab?: 'inbox' | 'schedules' | 'outgoing' | 'sent') => void) | null = null
   let outgoingRef: TeammateOutbox | null = null
+  // The way back of teammate handoffs (`teammate-handoff-return`), created with the team below.
+  let sentRef: TeammateSent | null = null
+  let returnRef: TeammateReturn | null = null
+  let incomingRef: TeammateInbox | null = null
   let requestAutoAccept: ((adapter: string, id: string, folderId: string) => void) | null = null
   let focusSession: ((sessionId: string) => void) | null = null
   let receivers: () => number[] = () => []
@@ -639,6 +645,11 @@ void app.whenReady().then(async () => {
   })
   recurrenceKeeper.ensureAll()
   onIntakeDismissed((adapter, id) => recurrenceKeeper.afterDismiss(adapter, id))
+  /** Whether a pending teammate record may be reported on, and so declined or linked (`teammate-handoff-return`). */
+  const teammateReportable = (record: IntakeRecord): boolean => {
+    const handoffId = handoffIdOfIntake(record.id)
+    return handoffId !== null && (incomingRef?.reportable(handoffId) ?? null) !== null
+  }
   registerIntakeHandlers({
     service: intakeService,
     routing: routingStore,
@@ -655,6 +666,30 @@ void app.whenReady().then(async () => {
     runNow: (adapter, id) => opener?.runNow(adapter, id) ?? false,
     recurrences: recurrenceKeeper,
     // Created with the handoff producers below; the handlers only reach it later.
+    teammates: {
+      reportable: (record) => teammateReportable(record),
+      decline: (record, reason) => {
+        const handoffId = handoffIdOfIntake(record.id)
+        if (!returnRef) return { ok: false, reason: 'unknown' }
+        return declineTeammate({
+          returns: returnRef,
+          handoffId,
+          reportable: handoffId ? (incomingRef?.reportable(handoffId) ?? null) : null,
+          reason,
+          title: record.content?.authored.title ?? '',
+          senderName: record.content?.authored.actor ?? '',
+        })
+      },
+      taken: (sessionId) => {
+        const link = sessionStore.view().find((entry) => entry.session.id === sessionId)?.session.teammateHandoff
+        if (link) returnRef?.queue(link.handoffId, { status: 'taken' })
+      },
+      sent: () => ({
+        supported: teamService.membership() !== null && (sentRef?.supported() ?? false),
+        ...(sentRef?.loadIssue() ? { damaged: true } : {}),
+        items: sentRef?.list() ?? [],
+      }),
+    },
     outgoing: {
       list: () => outgoingRef?.list() ?? [],
       waitingCount: () => outgoingRef?.waitingCount() ?? 0,
@@ -693,6 +728,16 @@ void app.whenReady().then(async () => {
     // 不查收件匣；session 已不存在時 renderer 那一側是無操作。
     if (keys.length === 1 && keys[0].adapter === COMPLETION_ADAPTER) {
       revealHandoffBrief(keys[0].id)
+      return
+    }
+    // A session opened from a teammate's handoff reported (`teammate-handoff-return` D10): it has no handoff sheet.
+    if (keys.length === 1 && keys[0].adapter === COMPLETION_FOCUS_ADAPTER) {
+      focusSession?.(keys[0].id)
+      return
+    }
+    // Only ended sent handoffs ⇒ the Sent tab (`teammate-handoff-return` D5).
+    if (onlySent(keys)) {
+      openInbox?.('sent')
       return
     }
     const single = keys.length === 1 ? intakeService.store.get(keys[0].adapter, keys[0].id) : undefined
@@ -894,6 +939,30 @@ void app.whenReady().then(async () => {
     refreshMembers: (options) => teamService.refreshMembers(options),
     request: (m, p) => teamService.request(m, p),
   }
+  /**
+   * The way back (`teammate-handoff-return`): the Sent list (`TeammateSent`) and the reports on teammates' handoffs
+   * (`TeammateReturn`). Created before the outbox, which records each answered send in the Sent list.
+   */
+  const deviceId = (): string | null => teamService.snapshot().membership?.device.id ?? null
+  let refreshRelationsLater: () => void = () => {}
+  const teammateSent = new TeammateSent({
+    file: join(app.getPath('userData'), 'team-sent.json'),
+    team: {
+      membership: () => teamService.membership(),
+      deviceId,
+      operations: () => teamService.operations(),
+      connected: () => teamService.snapshot().status === 'connected',
+      request: (m, p) => teamService.request(m, p),
+    },
+    onChange: () => {
+      notifyIntakeChanged()
+      refreshRelationsLater()
+    },
+    notify: (notice) => notifier.sentStatus(notice),
+    pendingSend: (clientId) => outgoingRef?.hasClientId(clientId) ?? false,
+  })
+  sentRef = teammateSent
+  configureTeammateHandoffs(() => teammateSent.bySession())
   const teammateOutbox = new TeammateOutbox({
     file: join(app.getPath('userData'), 'team-outgoing.json'),
     team: teamPort,
@@ -908,6 +977,7 @@ void app.whenReady().then(async () => {
     },
     onChange: notifyIntakeChanged,
     onArrival: (item) => notifier.outgoing(item.id, item.recipientName),
+    recordSend: (send) => teammateSent.recordSend(send),
   })
   outgoingRef = teammateOutbox
   const teammateInbox = new TeammateInbox({
@@ -918,10 +988,50 @@ void app.whenReady().then(async () => {
       operations: () => teamService.operations(),
       connected: () => teamService.snapshot().status === 'connected',
       request: (m, p) => teamService.request(m, p),
+      deviceId,
     },
     deliver: (contents, provenance) => intakeService.deliver(contents, TEAMMATE_ADAPTER, provenance),
     hasRoom: () => intakeService.hasRoom(),
     unreadable: (key) => void intakeService.reject('TEAMMATE_UNREADABLE', key, undefined, { adapter: TEAMMATE_ADAPTER }),
+  })
+  incomingRef = teammateInbox
+  let refreshIntrosLater: () => void = () => {}
+  const teammateReturn = new TeammateReturn({
+    file: join(app.getPath('userData'), 'team-return.json'),
+    team: {
+      membership: () => teamService.membership(),
+      deviceId,
+      connected: () => teamService.snapshot().status === 'connected',
+      request: (m, p) => teamService.request(m, p),
+    },
+    // Reports that did not reach the sender (D8): one trace and a notification, naming the handoff and its sender.
+    stopped: (stop) => {
+      const failure = { target: stop.title, origin: stop.senderName, subject: 'teammate-report' as const }
+      intakeService.reject('TEAMMATE_REPORT_NOT_SENT', stop.title || stop.handoffId, stop.code, { adapter: TEAMMATE_ADAPTER, ...failure })
+      intakeService.reportFailure({ code: 'TEAMMATE_REPORT_NOT_SENT', detail: stop.code, ...failure, at: Date.now() })
+    },
+    // A stop or an answered decline: the next `SessionStart` of its session no longer promises a report (D11).
+    onChange: () => refreshIntrosLater(),
+    sessionExists: (sessionId) => sessionStore.view().some((entry) => entry.session.id === sessionId),
+  })
+  returnRef = teammateReturn
+  configureTeammateReports((handoffId) => teammateReturn.reportsOpenFor(handoffId))
+  configureTeammateTickets({
+    reportable: (record) => teammateReportable(record),
+    // The session for a teammate's handoff was created (D7): its report entry, with the stamp it may report under.
+    linked: (sessionId, handoffId) => {
+      const stamp = teammateInbox.reportable(handoffId)
+      const intakeId = teammateIntakeId(handoffId)
+      const record = intakeId ? intakeStore.get(TEAMMATE_ADAPTER, intakeId) : undefined
+      if (!stamp) return
+      teammateReturn.link({
+        handoffId,
+        sessionId,
+        stamp: { ...stamp.membership, deviceId: stamp.deviceId },
+        title: record?.content?.authored.title ?? '',
+        senderName: record?.content?.authored.actor ?? '',
+      })
+    },
   })
   /** The teammates file: written while on a team with the feature on, removed otherwise. */
   const writeTeammates = (): void => {
@@ -953,9 +1063,14 @@ void app.whenReady().then(async () => {
     subscribe: subscribeWait,
     onChange: (sessionId) => onCompletionChange?.(sessionId),
     // 完成的那一刻告訴使用者（`handoff-completion`）—— 與收件匣的通知共用同一個窗與上界。
-    onReported: (sessionId, title, summary) => {
-      notifier.completed(sessionId, title, summary)
+    onReported: (sessionId, title, summary, options) => {
+      notifier.completed(sessionId, title, summary, options)
       remoteAttention.onReported(sessionId, title, summary)
+    },
+    // A session opened from a teammate's handoff reported (`teammate-handoff-return` D10): `done` for its handoff.
+    teammateReport: (_sessionId, handoffId, text) => {
+      if (teammateReturn.queue(handoffId, { status: 'done', text }) !== 'queued') return { ok: false }
+      return { ok: true, title: teammateReturn.entries().find((entry) => entry.handoffId === handoffId)?.title ?? '' }
     },
   })
   /**
@@ -1078,7 +1193,7 @@ void app.whenReady().then(async () => {
   store.subscribe(() => {
     // 由交接建立的 session 要保有完成回報那一段 —— 查含暫定紀錄的視圖（剛建好的子 session 還只在那裡）。
     refreshIntros(liveSessions(), store.list(), nameOf, (sessionId) =>
-      sessionStore.view().some((entry) => entry.session.id === sessionId && entry.session.lineage !== undefined),
+      reportKindOf(sessionStore.view().find((entry) => entry.session.id === sessionId)?.session),
     )
   })
 
@@ -1092,11 +1207,12 @@ void app.whenReady().then(async () => {
     writeTeammates()
     teammateOutbox.membershipChanged()
     teammateInbox.membershipChanged()
+    teammateReturn.membershipChanged()
     const intro = teamIntro()
     if (intro !== lastTeamIntro) {
       lastTeamIntro = intro
       refreshIntros(liveSessions(), store.list(), nameOf, (sessionId) =>
-        sessionStore.view().some((entry) => entry.session.id === sessionId && entry.session.lineage !== undefined),
+        reportKindOf(sessionStore.view().find((entry) => entry.session.id === sessionId)?.session),
       )
     }
     notifyIntakeChanged()
@@ -1107,6 +1223,9 @@ void app.whenReady().then(async () => {
     if (state === 'connected') {
       teammateOutbox.pump()
       teammateInbox.connected()
+      // After every `hello` (and `join`): the Sent list syncs from its stored cursor (protocol §12 sending rule 1).
+      teammateSent.connected()
+      teammateReturn.connected()
     } else {
       teammateOutbox.disconnected()
       teammateInbox.disconnected()
@@ -1115,20 +1234,31 @@ void app.whenReady().then(async () => {
   teamService.onCredentialDiscarded(() => {
     teammateOutbox.credentialDiscarded()
     teammateInbox.credentialDiscarded()
+    teammateReturn.membershipChanged()
   })
   teamService.onEvent('handoff.incoming', (data) => teammateInbox.incoming(data))
+  teamService.onEvent('handoff.status', (data) => teammateSent.status(data))
   teammateOutbox.start()
   teammateInbox.start()
+  teammateSent.start()
+  teammateReturn.start()
   writeTeammates()
   // The team service started before these listened: a connection already up is acted on now.
   if (teamService.snapshot().status === 'connected') {
     teammateOutbox.pump()
     teammateInbox.connected()
+    teammateSent.connected()
+    teammateReturn.connected()
   }
   app.on('will-quit', () => {
     teammateOutbox.dispose()
     teammateInbox.dispose()
+    teammateReturn.dispose()
   })
+  refreshIntrosLater = () =>
+    refreshIntros(liveSessions(), store.list(), nameOf, (sessionId) =>
+      reportKindOf(sessionStore.view().find((entry) => entry.session.id === sessionId)?.session),
+    )
 
   /**
    * 關係檔的**單一觸發點**（`handoff-lineage` design D6）：session 清單（含暫定紀錄、標籤）、pty 的
@@ -1142,6 +1272,8 @@ void app.whenReady().then(async () => {
   sessionStore.subscribe(refreshAllRelations)
   onPtyChange(refreshAllRelations)
   store.subscribe(refreshAllRelations)
+  // A sent handoff's status changed: its sending session's relations file shows it (`teammate-handoff-return` D6).
+  refreshRelationsLater = refreshAllRelations
 
   /**
    * 生命週期的訂閱**跟著 pty 走**：pty 在就追蹤，不在就退掉（`clearWait` 會連計時器一起清）。

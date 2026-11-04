@@ -43,12 +43,26 @@ characters — the same limit as a handoff between your own repositories, longer
 If this device is removed from the team while a handoff was arriving, spekterm still shows it, with a line saying
 it may also have reached your other device.
 
+Your teammate follows what happens to it in their **Sent** list ([Handoffs](/docs/using/handoffs/)):
+
+- When the session you opened for it starts working — after you send its first prompt — they see **taken**.
+  Accepting alone, or a prompt filled in and not sent, tells them nothing.
+- **Decline…** on the inbox item lets you say no, with an optional reason of up to 500 characters that they will read.
+  **Ignore** tells them nothing: they keep seeing it as delivered.
+- The agent in that session is told that its completion reports go to your teammate. Each report it writes is sent
+  to them as **done**, and you get the usual notification. If the team server stops accepting reports for it (for
+  example after ten), or you leave the team, spekterm says so in the inbox and with a notification, and the agent's
+  next report is refused with that reason.
+- An older team server that does not support this shows no **Decline…**, and the agent is not told it can report.
+
 ## What the server sees
 
 The server is run by your team, and **its operator can read everything that passes through it**, including
 handoffs: nothing is end-to-end encrypted. It keeps your handle, display name, your devices' names, the
 team's member list, and each handoff's title and body until it is delivered or expires (after that, only who sent it
-to whom, and when). See [Data and network](/docs/reference/data-and-network/).
+to whom, and when). A decline reason or a completion report sent back is kept for 30 days after it was written, and
+each handoff's record — who, to whom, when, its status — for 90 days after its last change, so your Sent list can be
+rebuilt on another device. See [Data and network](/docs/reference/data-and-network/).
 
 Your device's credential is given once when you join and is kept in spekterm's secret file on your computer, next to
 the Slack credentials. spekterm never puts it in a terminal, an agent's environment, or any file it writes for an

@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, it } from 'node:test'
 import { configureHandoff, relationsFile, resetHandoffState } from './handoff-outbox'
 import { refreshRelations, relationsOf, resetRelationsState, type RelationsWorld } from './handoff-relations'
 import type { PersistedSession } from './session-store'
+import { TeammateSent } from './teammate-sent'
 
 const P = '11111111-1111-4111-8111-111111111111'
 const C1 = '22222222-2222-4222-8222-222222222222'
@@ -193,3 +194,64 @@ describe('refreshRelations', () => {
     assert.ok(!fs.existsSync(relationsFile(C1)))
   })
 })
+
+describe('teammate handoffs in the sending session\'s relations (teammate-handoff-return D6)', () => {
+  const stamp = { server: 'wss://team.example', memberId: 'm_me' }
+  function sentList(): TeammateSent {
+    const dir = fs.mkdtempSync(path.join(tmpdir(), 'rel-sent-'))
+    const sent = new TeammateSent({
+      file: path.join(dir, 'team-sent.json'),
+      team: {
+        membership: () => stamp,
+        deviceId: () => 'd_me',
+        operations: () => [],
+        connected: () => false,
+        request: () => Promise.reject(new Error('unused')),
+      },
+      onChange: () => {},
+      notify: () => {},
+      pendingSend: () => false,
+    })
+    sent.start()
+    return sent
+  }
+  const record = (id: string, seq: number, status: string, extra: Record<string, unknown> = {}) => ({
+    seq, id, clientId: `c_${id}`, to: { id: 'm_sam', handle: 'sam', displayName: 'Sam Lee', removed: false },
+    sentFrom: 'd_me', status, sentAt: Date.now(), expiresAt: Date.now() + 1, changedAt: Date.now(), ...extra,
+  })
+
+  it('lists the status and the title, never the report or the display name', () => {
+    const sent = sentList()
+    sent.recordSend({
+      membership: stamp, clientId: 'c_h1', handoffId: 'h1', seq: 1, status: 'pending', sentAt: Date.now(), expiresAt: Date.now() + 1,
+      to: { handle: 'sam', displayName: 'Sam Lee' }, title: 'Fix billing export', sourceSessionId: P,
+    })
+    sent.status(record('h1', 2, 'done', { reports: 1, payload: { enc: 'none', text: 'SECRET REPORT TEXT' } }))
+    const r = relationsOf(P, world([session(P, 'fa')], [P], { teammateHandoffs: sent.bySession() }))
+    assert.equal(r?.teammateHandoffs?.length, 1)
+    assert.equal(r?.teammateHandoffs?.[0].status, 'done')
+    assert.equal(r?.teammateHandoffs?.[0].to, 'sam')
+    assert.equal(r?.teammateHandoffs?.[0].title, 'Fix billing export')
+    const text = JSON.stringify(r)
+    assert.doesNotMatch(text, /SECRET REPORT TEXT|Sam Lee/)
+  })
+
+  it('a handoff sent from another device is attributed to no session; a session without any has no field', () => {
+    const sent = sentList()
+    sent.status(record('h9', 3, 'done', { sentFrom: 'd_other' }))
+    const r = relationsOf(P, world([session(P, 'fa')], [P], { teammateHandoffs: sent.bySession() }))
+    assert.equal(r?.teammateHandoffs, undefined)
+  })
+
+  it('a recipient who left is marked', () => {
+    const sent = sentList()
+    sent.recordSend({
+      membership: stamp, clientId: 'c_h2', handoffId: 'h2', seq: 1, status: 'pending', sentAt: Date.now(), expiresAt: Date.now() + 1,
+      to: { handle: 'sam', displayName: 'Sam Lee' }, title: 'T', sourceSessionId: P,
+    })
+    sent.status(record('h2', 4, 'delivered', { clientId: 'c_h2', to: { handle: 'sam', displayName: 'Sam Lee', removed: true } }))
+    const r = relationsOf(P, world([session(P, 'fa')], [P], { teammateHandoffs: sent.bySession() }))
+    assert.equal(r?.teammateHandoffs?.[0].recipientLeft, true)
+  })
+})
+

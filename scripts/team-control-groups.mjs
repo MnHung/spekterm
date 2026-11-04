@@ -142,6 +142,39 @@ export const MUTATIONS = [
     expectRed: 'a shared drop point delivery cannot pose as a teammate',
     why: 'The teammate label decided by a field any shared drop point file can write.',
   },
+  {
+    name: 'notify-every-device',
+    file: 'src/main/teammate-sent.ts',
+    from: `    if (!deviceId || record.sentFrom !== deviceId) return null`,
+    to: `    if (!deviceId) return null`,
+    section: 'runSentList',
+    expectRed: 'a handoff sent from another device does not notify this one',
+    why: 'Notified on every device of the member: the user is interrupted on each machine at once (protocol §12 rule 5).',
+  },
+  {
+    name: 'report-taken-at-fill',
+    file: 'src/main/ipc/intake.ts',
+    from: `        onFilled: () => {`,
+    to: `        onFilled: () => {
+          if (adapter === TEAMMATE_ADAPTER) deps.teammates?.taken(sessionId)`,
+    section: 'runReportBack',
+    expectRed: 'a filled prompt alone reports nothing',
+    why: '`taken` when the prompt is merely filled: the sender is told the work started before the user decided anything.',
+  },
+  {
+    name: 'report-not-serial',
+    file: 'src/main/teammate-return.ts',
+    from: `    if (this.#pumping) {
+      this.#again = true
+      return
+    }
+`,
+    to: ``,
+    command: 'test',
+    testFile: 'src/main/teammate-return.test.ts',
+    expectRed: 'one at a time: a report made while one is in flight waits for its answer',
+    why: 'Two reports of one handoff in flight at once: a lost answer could be overtaken by a later report (rule 3).',
+  },
 ]
 
 function run(names) {

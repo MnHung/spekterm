@@ -1,4 +1,5 @@
-import { INTRO_COMMAND, INTRO_ENV, OUTBOX_ENV, RECEIPTS_ENV, RELATIONS_ENV, writeIntroFile } from './handoff-intro'
+import { INTRO_COMMAND, INTRO_ENV, OUTBOX_ENV, RECEIPTS_ENV, RELATIONS_ENV, type ReportKind, writeIntroFile } from './handoff-intro'
+import type { PersistedSession } from './session-store'
 import { introFile, outboxDir, prepareOutbox, receiptsDir, relationsFile } from './handoff-outbox'
 import { writeRelationsFor, type RelationsWorld } from './handoff-relations'
 import type { InjectionContribution } from './agent-injection'
@@ -19,6 +20,24 @@ export function configureTeamIntro(provider: () => string | undefined): void {
 
 export function teamIntro(): string | undefined {
   return teamIntroProvider()
+}
+
+let teammateReportsOpen: (handoffId: string) => boolean = () => false
+
+/** Whether a teammate's handoff is still reported on (not stopped, not declined): `TeammateReturn`, wired in `index.ts`. */
+export function configureTeammateReports(open: (handoffId: string) => boolean): void {
+  teammateReportsOpen = open
+}
+
+/**
+ * The report paragraph a session gets, at every intro write point (`handoff-completion`, `teammate-handoff-return`
+ * D11): `lineage` with a lineage; `teammate` with a teammate link whose reporting is open; none otherwise.
+ */
+export function reportKindOf(session: Pick<PersistedSession, 'lineage' | 'teammateHandoff'> | undefined): ReportKind | undefined {
+  if (!session) return undefined
+  if (session.lineage !== undefined) return 'lineage'
+  if (session.teammateHandoff && teammateReportsOpen(session.teammateHandoff.handoffId)) return 'teammate'
+  return undefined
 }
 
 /**
@@ -43,7 +62,7 @@ export function prepareHandoffInjection(
     /** 算關係用的當下狀態。關係檔在這裡先寫一次 —— 那時這個 session 的 pty 還不在執行中集合裡。 */
     world?: RelationsWorld
     /** 由交接建立 ⇒ 告知它如何回報完成（`handoff-completion`）。 */
-    reportable?: boolean
+    reportable?: ReportKind
   } = {},
 ): InjectionContribution | null {
   const outbox = prepareOutbox(sessionId)
@@ -79,7 +98,7 @@ export function refreshIntros(
    * 這個 session 是否由交接建立（`handoff-completion`）。**與名字同一條理由**：重寫時漏掉它，
    * 下一次續接、壓縮、清除之後子 agent 就不知道要回報完成，而那個 session 永遠停在「等你」。
    */
-  reportableOf: (sessionId: string) => boolean = () => false,
+  reportableOf: (sessionId: string) => ReportKind | undefined = () => undefined,
 ): void {
   for (const sessionId of sessionIds) {
     const outbox = outboxDir(sessionId)

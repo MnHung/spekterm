@@ -328,6 +328,10 @@ const PROBE_EXPRESSION = `(async () => {
           'sendOutgoing',
           'discardOutgoing',
           'dismissOutgoing',
+          // teammate-handoff-return: decline a teammate's item (by its key; the reason is checked in the main process)
+          // and read the Sent list. Neither takes a path or a recipient.
+          'decline',
+          'sent',
           'settle',
           'dismissNotices',
           'dismissNotice',
