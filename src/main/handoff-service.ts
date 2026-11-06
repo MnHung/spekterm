@@ -87,6 +87,8 @@ export interface HandoffServiceDeps {
    * `identity` 讓同一份投遞檔被讀兩次時只採納一次。
    */
   acceptReport?: (sessionId: string, summary: string, identity: string) => ReportDecision
+  /** An agent's cancel (`handoff-cancel`, `HandoffCanceller.deliver`). Unprovided ⇒ refused as an unknown kind is. */
+  cancel?: (sessionId: string, contents: string) => DeliverOutcome
   /**
    * An agent's session command (`agent-session-control`, `SessionControl.deliver`). Unprovided ⇒ the command kinds
    * are refused as an unknown kind is. `mtimeMs` is the file's time as the read saw it.
@@ -184,6 +186,12 @@ export class HandoffService {
     if (kind === 'malformed') return { ok: false, code: 'MALFORMED', consume: false, notify: false }
     if (kind === 'unknown') return service.reject('FIELD_TYPE', sessionId, 'kind', { adapter: HANDOFF_ADAPTER })
     if (kind === 'report') return this.#deliverReport(sessionId, contents, file)
+    if (kind === 'cancel') {
+      // Any session may cancel (`handoff-cancel` D4): no lineage check, and the canceller marks the item with this
+      // session's label.
+      const cancel = this.#deps.cancel
+      return cancel ? cancel(sessionId, contents) : service.reject('FIELD_TYPE', sessionId, 'kind', { adapter: HANDOFF_ADAPTER })
+    }
     if (isCommandKind(kind)) {
       const control = this.#deps.control
       if (!control) return service.reject('FIELD_TYPE', sessionId, 'kind', { adapter: HANDOFF_ADAPTER })

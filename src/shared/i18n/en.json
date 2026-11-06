@@ -790,6 +790,13 @@
     "proposalsLabel": "Waiting for approval",
     "proposalItemLabel": "Repeating handoff waiting for approval: {{title}}",
     "recurrencesLabel": "Repeating",
+    "agentCancelsLabel": "Cancelled by an agent",
+    "agentCancel": {
+      "cancelled": "“{{title}}” was cancelled by an agent in {{source}}",
+      "skipped": "One time of “{{title}}” was skipped by an agent in {{source}}",
+      "declined": "The proposal “{{title}}” was declined by an agent in {{source}}",
+      "stopped": "“{{title}}” stopped repeating: an agent in {{source}} stopped it"
+    },
     "recurrenceItemLabel": "Repeating handoff: {{title}}",
     "repeats": "Repeats {{repeat}}",
     "repeatNext": "Next: {{times}}",
@@ -846,7 +853,9 @@
       "SEND_UNCERTAIN": "may have been sent to a teammate before you left the team",
       "TEAMMATE_UNREADABLE": "a teammate's handoff arrived that this version of spekterm cannot read",
       "TEAMMATE_REPORT_STOPPED": "an agent's report for a teammate's handoff was not sent: reporting for it has stopped",
-      "TEAMMATE_REPORT_NOT_SENT": "the teammate did not receive the reports for their handoff"
+      "TEAMMATE_REPORT_NOT_SENT": "the teammate did not receive the reports for their handoff",
+      "CANCEL_NOT_FOUND": "it is not scheduled, or it has already started",
+      "CANCEL_UNAVAILABLE": "the repeating handoffs could not be read"
     },
     "rules": {
       "label": "Routing rules",
@@ -878,6 +887,8 @@
       "outgoingMerged_one": "{{count}} handoff to a teammate is waiting for you.",
       "outgoingMerged_other": "{{count}} handoffs to teammates are waiting for you.",
       "commandFailure": "A session command could not be carried out: {{reason}}",
+      "cancelTitle": "Cancelling a scheduled handoff",
+      "cancelFailure": "An agent could not cancel a scheduled handoff: {{reason}}",
       "sentTitle": "A handoff you sent",
       "sentDone": "{{name}} finished “{{what}}”: {{text}}",
       "sentDeclined": "{{name}} declined “{{what}}”.",

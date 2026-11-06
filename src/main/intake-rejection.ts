@@ -66,6 +66,7 @@ export function isPermanentRejection({ code, notify }: RejectionOutcome): boolea
     case 'SEND_UNCERTAIN': // It may have been delivered: writing it again would send it twice without asking.
     case 'TEAMMATE_REPORT_STOPPED': // The server refused this handoff's reports for good, or it was declined.
     case 'TEAMMATE_REPORT_NOT_SENT': // The reports the trace names were dropped; nothing sends them later.
+    case 'CANCEL_NOT_FOUND': // The same id, resent, names the same nothing (or the same opened handoff).
       return true
 
     // ── 暫時：狀態或設定改變後可能成功 ──────────────────────────────────────
@@ -79,6 +80,7 @@ export function isPermanentRejection({ code, notify }: RejectionOutcome): boolea
     // `TEAM_UNAVAILABLE` —— joining a team or turning the feature on lets it succeed (`teammate-handoff`).
     // `OUTGOING_FULL` —— held, never consumed: it is read again once a waiting teammate handoff leaves.
     // `TEAMMATE_UNREADABLE` —— a newer spekterm may read it; the server offers it to another device meanwhile.
+    // `CANCEL_UNAVAILABLE` —— the recurrence file readable or writable again lets it succeed (`handoff-cancel`).
     case 'MALFORMED':
     case 'CAPACITY':
     case 'PREFILL_UNAVAILABLE':
@@ -87,6 +89,7 @@ export function isPermanentRejection({ code, notify }: RejectionOutcome): boolea
     case 'TEAM_UNAVAILABLE':
     case 'OUTGOING_FULL':
     case 'TEAMMATE_UNREADABLE':
+    case 'CANCEL_UNAVAILABLE':
       return false
 
     // ── 一個代碼、兩種行為 ──────────────────────────────────────────────────

@@ -74,6 +74,14 @@ test('告訴 agent 目標可以用絕對路徑 —— 那是同名歧義唯一�
   assert.match(text, /Names are not unique/)
 })
 
+test('points every agent session to the schedules file for cancelling and changing (handoff-cancel)', () => {
+  // Control: drop the sentence from `composeIntro` and both assertions turn red.
+  const derived = introText({ folders, outbox: '/x/outbox/s1' })
+  assert.match(derived, /^To cancel or change a scheduled or repeating handoff \(any session's\), read \/x\/schedules\.json: it lists them, with ids, and states how\.$/m)
+  const given = introText({ folders: [], outbox: '/o/outbox/s2', schedules: '/elsewhere/schedules.json' })
+  assert.ok(given.includes('read /elsewhere/schedules.json'))
+})
+
 test('tells the agent where its receipts are and what they state (handoff-receipt)', () => {
   const text = introText({ folders, outbox: '/x/outbox/s1', receipts: '/x/receipts/s1' })
   assert.ok(text.includes('/x/receipts/s1'))

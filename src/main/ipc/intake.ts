@@ -20,6 +20,7 @@ import type { OutgoingView } from '../teammate-outbox'
 import { TEAMMATE_ADAPTER } from '../teammate-inbox'
 import type { SentView } from '../teammate-sent'
 import type { IntakeRecord } from '../intake-store'
+import type { AgentCancelView } from '../handoff-cancel'
 import type { FolderLookup } from '../workspace-store'
 import { existingTerminalService } from './terminal'
 import { dismissIntake, notifyIntakeChanged, onIntakeChanged } from '../intake-changes'
@@ -48,6 +49,7 @@ export type { OutgoingView } from '../teammate-outbox'
 export type { SentView } from '../teammate-sent'
 export type { IntakeAcceptResult } from '../intake-accept'
 export type { ApproveResult, RecurrenceListing, RecurrenceView } from '../recurrence-keeper'
+export type { AgentCancelView } from '../handoff-cancel'
 
 export const INTAKE_CHANNELS = {
   list: 'workspace:intake:list',
@@ -158,6 +160,11 @@ export interface IntakeSnapshot {
    */
   declinable?: string[]
   /**
+   * What agents cancelled in the last 7 days (`handoff-cancel`, design D5), newest first. **Desktop only**: its own
+   * field, never on `IntakeView`, which `remote-host.ts` passes to a device.
+   */
+  agentCancels?: AgentCancelView[]
+  /**
    * 拒絕的痕跡 —— **逐則**，不是一個總數。
    *
    * 一個計數器回答不了「哪一則」「為什麼」「我要怎麼辦」中的任何一個，
@@ -231,6 +238,8 @@ export interface IntakeHandlerDeps {
     taken(sessionId: string): void
     sent(): SentSnapshot
   }
+  /** What agents cancelled recently (`agentCancels`). Unprovided ⇒ the section is absent. */
+  agentCancels?: () => AgentCancelView[]
   /** The outgoing teammate handoffs (`TeammateOutbox`). Unprovided ⇒ no Outgoing tab, and its handlers refuse. */
   outgoing?: {
     list(): OutgoingView[]
@@ -278,6 +287,7 @@ export function registerIntakeHandlers(deps: IntakeHandlerDeps): void {
     return {
       items: listView(service.store.list(), config, ids),
       ...(deps.recurrences ? { recurrences: deps.recurrences.listing() } : {}),
+      ...(deps.agentCancels ? { agentCancels: deps.agentCancels() } : {}),
       ...(deps.outgoing
         ? {
             outgoing: {

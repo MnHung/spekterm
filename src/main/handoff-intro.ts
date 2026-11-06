@@ -83,6 +83,8 @@ export interface IntroInput {
    * takes it from `teamIntro()` (`handoff-injection.ts`), so none can forget it.
    */
   teammates?: string
+  /** The schedules file (`handoff-cancel`). Absent: beside the outbox root, where `schedulesFile()` puts it. */
+  schedules?: string
 }
 
 /**
@@ -117,7 +119,7 @@ export function introText(input: IntroInput): string {
   return text
 }
 
-function composeIntro({ folders, outbox, receipts, name, relations, reportable, timeZone, teammates }: IntroInput, shown: number): string {
+function composeIntro({ folders, outbox, receipts, name, relations, reportable, timeZone, teammates, schedules }: IntroInput, shown: number): string {
   /**
    * **數字由實際生效的常數推導，不寫死。**
    *
@@ -130,6 +132,8 @@ function composeIntro({ folders, outbox, receipts, name, relations, reportable, 
    */
   const deliveryKb = Math.floor(MAX_DELIVERY_BYTES / 1024)
   const receiptsPath = receipts ?? receiptsDir(path.basename(outbox))
+  // `<root>/outbox/<session>` → `<root>/schedules.json`, as `schedulesFile()` places it.
+  const schedulesPath = schedules ?? path.join(path.dirname(path.dirname(outbox)), 'schedules.json')
   const zone = timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone
   const lines = [
     'You are running inside spekterm, a desktop workspace that hosts this terminal session.',
@@ -177,6 +181,7 @@ function composeIntro({ folders, outbox, receipts, name, relations, reportable, 
       : []),
     'A rejected handoff is also shown to the user in their inbox. An accepted handoff is checked again when it opens; a failure then reaches the user, not the receipt.',
     'Until you have read the receipt, say that you wrote the handoff, not that it was delivered.',
+    `To cancel or change a scheduled or repeating handoff (any session's), read ${schedulesPath}: it lists them, with ids, and states how.`,
     ...peerLines(name, relations),
     ...commandLines(Boolean(relations)),
     ...(reportable ? reportLines(reportable) : []),

@@ -61,6 +61,8 @@ const MODULE_ALLOW = new Set([
   '@shared/i18n/languages',
   '@shared/i18n/locale',
   '@shared/insights/cue-rules.json',
+  // The Schedules tab's predicates (`handoff-cancel`): the cancel and the schedules file judge by the tab's own rules.
+  '@shared/intake/scheduled',
   'child_process',
   'crypto',
   'fs',

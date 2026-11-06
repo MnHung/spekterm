@@ -1,4 +1,4 @@
-import type { IntakeStore } from './intake-store'
+import type { CancelledBy, IntakeStore } from './intake-store'
 
 /**
  * The one "the inbox changed" signal (`remote-protocol`'s inbox requirement).
@@ -38,9 +38,12 @@ export function onIntakeDismissed(listener: (adapter: string, id: string) => voi
   return () => dismissListeners.delete(listener)
 }
 
-/** Ignore an item: the desktop's ignore and a device's ignore are this one function. */
-export function dismissIntake(store: Pick<IntakeStore, 'setState'>, adapter: string, id: string): void {
-  store.setState(adapter, id, 'dismissed')
+/**
+ * Ignore an item: the desktop's ignore, a device's ignore and an agent's cancel (`handoff-cancel`) are this one
+ * function. `by` marks an agent's cancel, saved with the state.
+ */
+export function dismissIntake(store: Pick<IntakeStore, 'setState'>, adapter: string, id: string, by?: CancelledBy): void {
+  store.setState(adapter, id, 'dismissed', undefined, by)
   for (const listener of [...dismissListeners]) {
     try {
       listener(adapter, id)

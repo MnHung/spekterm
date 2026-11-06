@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 import { parseHandoffSource, type IntakeAuthored, type IntakeVerified } from './intake-schema'
+import { type CancelledBy, parseCancelledBy } from './intake-store'
 
 /**
  * The approved repeating handoffs (`recurring-handoff`, design D1), in `<userData>/handoff-recurrences.json`.
@@ -43,6 +44,8 @@ export interface Recurrence {
   lastOccurrenceAt?: number
   /** Tombstone: the user stopped it. Its unopened occurrence is removed; nothing further is created. */
   stoppedAt?: number
+  /** An agent stopped it (`handoff-cancel`, design D5), written in the same save as `stoppedAt`. */
+  cancelledBy?: CancelledBy
   /** Its next time fell after `until`: it has ended. An occurrence created before that still opens. */
   endedAt?: number
 }
@@ -97,6 +100,7 @@ function parseEntry(raw: unknown): Recurrence | null {
     ...(isInstant(e.lastOccurrenceAt) ? { lastOccurrenceAt: e.lastOccurrenceAt } : {}),
     ...(isInstant(e.stoppedAt) ? { stoppedAt: e.stoppedAt } : {}),
     ...(isInstant(e.endedAt) ? { endedAt: e.endedAt } : {}),
+    ...(isInstant(e.stoppedAt) && parseCancelledBy(e.cancelledBy) ? { cancelledBy: parseCancelledBy(e.cancelledBy) } : {}),
   }
 }
 

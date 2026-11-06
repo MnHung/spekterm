@@ -200,6 +200,10 @@ export function receiptReason(code: IntakeRejection | 'READ_FAILED'): string {
       return 'Reporting for this teammate\'s handoff has stopped (it was declined, the team server refused further reports, or this device left the team), so this report was not sent. Tell the user in this session instead.'
     case 'TEAMMATE_REPORT_NOT_SENT':
       return 'Reports for this teammate\'s handoff did not reach its sender.'
+    case 'CANCEL_NOT_FOUND':
+      return 'The id names nothing that can be cancelled now: only what the schedules file lists can be. A handoff whose opening has begun is not cancelled; close its session instead.'
+    case 'CANCEL_UNAVAILABLE':
+      return 'The repeating handoffs could not be read or written, so a recurrence cannot be stopped now. It can succeed once the user resolves it in the inbox; write it again then.'
   }
 }
 

@@ -256,6 +256,10 @@ export function buildPayload(items: readonly NotifyItem[]): NotifyPayload {
     if (failure.subject === 'command') {
       return { title: t('intake.notify.commandTitle'), body: t('intake.notify.commandFailure', { reason }) }
     }
+    // An agent's cancel (`handoff-cancel`): nothing failed to arrive, a scheduled handoff was not cancelled.
+    if (failure.subject === 'cancel') {
+      return { title: t('intake.notify.cancelTitle'), body: t('intake.notify.cancelFailure', { reason }) }
+    }
     // Reports for a teammate's handoff were not delivered (`teammate-handoff-return` D8): the handoff's title and its
     // sender are the teammate's text, reduced like any third-party field.
     if (failure.subject === 'teammate-report') {

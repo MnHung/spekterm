@@ -30,8 +30,8 @@ held to the length limit of a handoff's title, counted in code points. A longer 
 a name, and a target that is present but not a non-empty string, SHALL be refused. A rename SHALL NOT change any
 session's fixed name.
 
-A delivery whose kind is none of a handoff, a completion report, or one of these three commands SHALL be refused,
-as it is today.
+A delivery whose kind is none of a handoff, a completion report, one of these three commands, or a cancel (see
+`handoff-cancel`) SHALL be refused, as it is today.
 
 #### Scenario: An agent closes its own session
 

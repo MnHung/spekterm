@@ -7,6 +7,7 @@ import { useTranslation } from 'react-i18next'
 import { formatDateTime, relativeTime } from '@shared/i18n/locale'
 import { isItemsTabItem, isProposal, isScheduled, isWaitingForUser } from '@shared/intake/scheduled'
 import type {
+  AgentCancelView,
   ApproveResult,
   IntakeView,
   OutgoingView,
@@ -422,6 +423,7 @@ export function IntakeOverlay({
             proposals={proposals}
             scheduled={scheduled}
             recurrences={recurrences}
+            agentCancels={snapshot.agentCancels ?? []}
             folders={folders}
             folderName={folderName}
             selectionFor={(item) =>
@@ -635,6 +637,7 @@ function SchedulesTab({
   proposals,
   scheduled,
   recurrences,
+  agentCancels,
   folders,
   folderName,
   selectionFor,
@@ -644,6 +647,7 @@ function SchedulesTab({
   proposals: readonly IntakeView[]
   scheduled: readonly IntakeView[]
   recurrences: RecurrenceListing
+  agentCancels: readonly AgentCancelView[]
   folders: readonly WorkspaceFolder[]
   folderName: (id: string | undefined) => string | undefined
   selectionFor: (item: IntakeView) => Preselection
@@ -651,7 +655,13 @@ function SchedulesTab({
   onChanged: () => void
 }): React.JSX.Element {
   const { t } = useTranslation()
-  if (proposals.length === 0 && scheduled.length === 0 && recurrences.recurrences.length === 0 && recurrences.available) {
+  if (
+    proposals.length === 0 &&
+    scheduled.length === 0 &&
+    recurrences.recurrences.length === 0 &&
+    recurrences.available &&
+    agentCancels.length === 0
+  ) {
     return <p className="text-2xs text-ink-faint">{t('intake.schedulesEmpty')}</p>
   }
   return (
@@ -702,7 +712,32 @@ function SchedulesTab({
           </ul>
         </section>
       ) : null}
+      {agentCancels.length > 0 ? <AgentCancels lines={agentCancels} /> : null}
     </div>
+  )
+}
+
+/**
+ * What agents cancelled in the last 7 days (`handoff-cancel`, design D5): a quiet record, no action. Any session may
+ * cancel and an agent's stop asks nothing, so a session misled by text someone else wrote could otherwise stop the
+ * user's plans unseen.
+ */
+function AgentCancels({ lines }: { lines: readonly AgentCancelView[] }): React.JSX.Element {
+  const { t } = useTranslation()
+  return (
+    <section className="flex flex-col gap-1">
+      <h3 className="text-2xs font-bold text-ink-dim">{t('intake.agentCancelsLabel')}</h3>
+      <ul aria-label={t('intake.agentCancelsLabel')} className="flex flex-col gap-1">
+        {lines.map((line) => (
+          <li key={line.key} className="flex items-baseline gap-2 text-2xs text-ink-dim">
+            <span className="min-w-0 flex-1 break-words">
+              {t(`intake.agentCancel.${line.action}`, { title: line.title, source: line.label })}
+            </span>
+            <span className="shrink-0 text-ink-faint">{formatDateTime(new Date(line.at), OCCURRED_FORMAT)}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
   )
 }
 

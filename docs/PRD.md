@@ -708,6 +708,10 @@ session 脈絡裡送出的，彙整成一份跨數十天、跨數十個專案的
 > also name a **later time**, and opens when due or at the next start (spekterm does not run while closed). Since
 > `recurring-handoff` a handoff may **repeat** on a cron schedule, with an optional start and end: it is a proposal
 > the user approves on the desktop, each time opens a new session, and times missed while closed run once.
+> Since `handoff-cancel` **any agent session can take a plan back** (`{"kind": "cancel", "id"}`): cancel a scheduled
+> handoff, skip an occurrence, decline a proposal or stop a recurrence (no confirmation), by the id its receipt or the
+> schedules file gives; there is no edit (new, then cancel the old), and each agent cancel is listed quietly in the
+> Schedules tab for 7 days.
 >
 > **Handoffs to a person** (`teammate-handoff`, spekterm-server's milestone M1): on a team (`team-membership`) an
 > agent writes `"to": "<handle>"` instead of a target. Nothing is sent until the user presses Send in the inbox's

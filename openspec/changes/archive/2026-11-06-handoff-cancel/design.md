@@ -159,7 +159,7 @@ receipt still works.
 {
   "rules": "<how to cancel and how to change, see below>",
   "recurrencesAvailable": true,
-  "proposals":   [{ "id", "title", "target", "repeat", "start"?, "until"?, "source", "preview" }],
+  "proposals":   [{ "id", "title", "target", "repeat", "next"?, "until"?, "source", "preview" }],
   "scheduled":   [{ "id", "title", "target", "at", "source", "preview", "recurrenceId"? }],
   "recurrences": [{ "id", "title", "target", "repeat", "until"?, "next"?, "source", "preview" }]
 }

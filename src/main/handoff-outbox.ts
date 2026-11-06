@@ -71,6 +71,14 @@ export function teammatesFile(): string {
   return handoffRootPath ? path.join(handoffRootPath, 'teammates.json') : ''
 }
 
+/**
+ * The schedules file (`handoff-cancel`): what can be cancelled now, with ids, and the cancel rules. One for every
+ * session, outside the outbox as the teammates file is.
+ */
+export function schedulesFile(): string {
+  return handoffRootPath ? path.join(handoffRootPath, 'schedules.json') : ''
+}
+
 /** 某個 session 的自我介紹檔。**在 outbox 之外** —— 放進去會被當成一份投遞。 */
 export function introFile(sessionId: string): string {
   return handoffRootPath ? path.join(handoffRootPath, 'intro', `${sessionId}.json`) : ''

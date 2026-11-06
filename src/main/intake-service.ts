@@ -53,6 +53,11 @@ export interface DeliverOutcome {
   record?: IntakeRecord
   /** An accepted delivery that changed nothing: a completion report adopted before (`handoff-receipt`). */
   duplicate?: boolean
+  /**
+   * The id the receipt states (`handoff-receipt`): a duplicate's known record, or what a cancel named
+   * (`handoff-cancel`). A scheduled or proposed handoff's comes from `record`.
+   */
+  receiptId?: string
   /** A teammate handoff now waiting for the user (`teammate-handoff`): its receipt carries `ref`. */
   awaiting?: { ref: string }
   /**
@@ -78,7 +83,7 @@ export interface FailureContext {
    * `teammate-report`: reports for a teammate's handoff were not delivered (`teammate-handoff-return` D8); the
    * notification then names the handoff (`target`, its title) and its sender (`origin`), both reduced.
    */
-  subject?: 'command' | 'teammate-report'
+  subject?: 'command' | 'teammate-report' | 'cancel'
 }
 
 /** 一次**永久性**失敗 —— 由 adapter 經 `reportFailure()` 送出，供通知與痕跡消費。 */
@@ -390,7 +395,7 @@ export class IntakeService {
       const digest = digestOf(intake.authored, intake.verified)
       if (digest === existing.digest) {
         // **內容相同 ⇒ 靜默。** 正常的重送與我們自己的雙重讀取都落在這裡。
-        return { ok: false, code: 'DUPLICATE', consume: true, notify: false }
+        return { ok: false, code: 'DUPLICATE', consume: true, notify: false, receiptId: intake.id }
       }
       // **內容不同 ⇒ 可見。** 那才是識別碼搶佔，而使用者必須有機會知道有一件事沒進來。
       this.#notice('DUPLICATE', intake.id, undefined, { adapter, ...failure, notify: true })
@@ -419,7 +424,7 @@ export class IntakeService {
       // 一次識別碼搶佔賽進來時，後到的那一份會覆寫紀錄並**再發一次到達**，
       // 於是計數說 N、合併的通知說 N+1（就是這麼被抓到的）。
       if (raced.digest === digestOf(intake.authored, intake.verified)) {
-        return { ok: false, code: 'DUPLICATE', consume: true, notify: false }
+        return { ok: false, code: 'DUPLICATE', consume: true, notify: false, receiptId: intake.id }
       }
       this.#notice('DUPLICATE', intake.id, undefined, { adapter, ...failure, notify: true })
       this.#emit()

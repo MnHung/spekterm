@@ -83,7 +83,30 @@ the schedule.
 - The schedule may open at most once an hour (the minute must be a single number), and it must have a time
   in the next four years.
 - A paired phone can decline a proposal, and can run or skip a time. Approving and stopping happen only on
-  the computer.
+  the computer, or through an agent (next section).
+
+## Cancelling or changing what is scheduled
+
+Plans change in conversation, so an agent can take back what is scheduled, too. Ask any agent session, not only
+the one that scheduled it:
+
+> Skip this week's review. And move the nightly build check to Thursdays.
+
+- **What an agent can cancel** is exactly what the **Schedules** tab lists: a scheduled handoff (it never opens),
+  one time of a repeating handoff (it is skipped, and the schedule continues), a proposal (it is declined), or a
+  repeating handoff (it stops repeating). **Stopping through an agent does not ask for confirmation**; the agent
+  is told to check with you which item it means.
+- **A handoff whose session has started is not cancelled.** Close its session instead.
+- **There is no "edit".** To change a time or a schedule, the agent writes the new handoff first and cancels the
+  old one only after the new one is accepted. A changed repeating handoff is a new proposal you approve again;
+  the old one keeps running until you do.
+- **Every cancel an agent makes is listed quietly** under **Schedules**, in **Cancelled by an agent**, for 7 days:
+  what it was, what was done, and which session did it. There is no notification. A cancel that could not be
+  carried out notifies you like any refused delivery.
+
+The agent finds what it can cancel in a file spekterm keeps up to date (`schedules.json`, beside the agent's
+outbox), with each item's id, title, target, time and the start of its text. The receipt of a scheduled or
+repeating handoff carries the same id.
 
 ## Following a handed-off session
 
@@ -199,13 +222,13 @@ restarts.
 
 ## Receipts: what the agent learns
 
-For every file an agent writes to spekterm (a handoff, a completion report, or a command), spekterm writes a
+For every file an agent writes to spekterm (a handoff, a completion report, a command, or a cancel), spekterm writes a
 **receipt** the agent can read. The receipt says one of:
 
 - **accepted**;
-- **scheduled**, with the time;
-- **proposed**: a repeating handoff waiting for your approval;
-- **duplicate**;
+- **scheduled**, with the time and the handoff's id;
+- **proposed**: a repeating handoff waiting for your approval, with its id;
+- **duplicate**: nothing new happened (for a cancel: it was already cancelled);
 - **rejected**, with the reason and whether trying again can help;
 - **held**: not finished yet; the reason says what happens next;
 - for a handoff to a teammate: **awaiting confirmation** while it waits for you, then **sent**, **discarded**, or

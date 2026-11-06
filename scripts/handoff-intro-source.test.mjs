@@ -140,3 +140,20 @@ test('the teammates file does not write those limits as literals either (teammat
     assert.equal(mentions(texts, value), false, `${TEAMMATES} writes ${name}'s value (${value}) as a literal; derive it from the constant.`)
   }
 })
+
+/**
+ * The schedules file states the cancel rules (`handoff-cancel`): a limit it ever states must come from its constant.
+ * Its rules state none today; the scheduling bound is the one a "change it" rule would be tempted to repeat.
+ * (`MAX_FIELD_LENGTH` is not guarded here: the preview length is its own constant, which happens to share the value.)
+ */
+const SCHEDULES = 'src/main/schedules-file.ts'
+const GUARDED_SCHEDULES = [{ name: 'MAX_SCHEDULE_AHEAD_DAYS', file: 'src/main/handoff-delivery.ts' }]
+
+test('the schedules file does not write the limits it could state as literals (handoff-cancel)', () => {
+  const texts = writtenNumbers(readFileSync(join(repoRoot, SCHEDULES), 'utf8'), SCHEDULES)
+  for (const { name, file } of GUARDED_SCHEDULES) {
+    const value = constantValue(file, name)
+    assert.notEqual(value, null, `${file} has no ${name}`)
+    assert.equal(mentions(texts, value), false, `${SCHEDULES} writes ${name}'s value (${value}) as a literal; derive it from the constant.`)
+  }
+})

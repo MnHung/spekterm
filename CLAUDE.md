@@ -226,7 +226,12 @@ cron subset in the desktop's zone, with `at` as its start and `until` as its end
 nothing until the user approves it on the desktop; then `RecurrenceKeeper` is the **one owner** of its upcoming
 occurrence (an ordinary scheduled record, so the opener opens it), found by scanning, never by a pointer. A time
 the opener refuses pauses the recurrence until the user deals with it; an unreadable recurrence file is
-unavailable, never empty. Scheduling lives in the inbox's Schedules tab. **Every automatic opening goes through `HandoffOpener`**, which waits for a window
+unavailable, never empty. Scheduling lives in the inbox's Schedules tab. **Any agent session can take a plan back** (`handoff-cancel`,
+`{"kind": "cancel", "id"}`): exactly what the Schedules tab lists, judged by the tab's own predicates
+(`scheduleShapeOf`), carried out through the desktop's own `dismissIntake` / `RecurrenceKeeper.stop` (a write to the
+store directly would reach neither the keeper nor an open inbox), an agent's stop with no confirmation; ids come from the
+`scheduled` / `proposed` receipts and `<userData>/handoff/schedules.json`, and each agent cancel is listed quietly in
+the Schedules tab for 7 days (`cancelledBy`, saved with the state). **Every automatic opening goes through `HandoffOpener`**, which waits for a window
 that has restored and lists the inbox, and opens each handoff **at most once, ever** (`firedAt`, persisted
 first) — an open request no window receives is lost. The introduction must stay under the CLI's 10,000-character
 `additionalContext` threshold; past it the agent keeps only a 2 KB preview (`docs/lessons/handoff.md` §16).

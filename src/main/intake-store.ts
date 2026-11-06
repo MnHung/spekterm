@@ -32,6 +32,24 @@ import { parseHandoffSource, type Intake, type IntakeAuthored, type IntakeReject
 
 export type IntakeState = 'pending' | 'accepted' | 'dismissed'
 
+/** Who cancelled an item or stopped a recurrence, when an agent did (`handoff-cancel`, design D5). */
+export interface CancelledBy {
+  /** The cancelling session's source label: a folder name, `Global`, or ended. */
+  label: string
+  at: number
+}
+
+/** How long a label may be once read back: a folder name, or a reserved coordinate. */
+const MAX_CANCELLED_BY_LABEL = 200
+
+/** Reads a stored mark field by field; anything malformed reads as absent. */
+export function parseCancelledBy(raw: unknown): CancelledBy | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined
+  const { label, at } = raw as Record<string, unknown>
+  if (typeof label !== 'string' || typeof at !== 'number' || !Number.isFinite(at)) return undefined
+  return { label: [...label].slice(0, MAX_CANCELLED_BY_LABEL).join(''), at }
+}
+
 /** 永久保留的那一半。 */
 interface IntakeKey {
   adapter: string
@@ -64,6 +82,12 @@ interface IntakeKey {
    * otherwise open another session at every start.
    */
   firedAt?: number
+  /**
+   * An agent cancelled it (`handoff-cancel`, design D5): the cancelling session's source label, and when. Saved in
+   * the same write as the state change, so a mark never sits on an item that was not cancelled. Optional and in
+   * this half for the reason `settledAt` gives; an older build drops it on read.
+   */
+  cancelledBy?: CancelledBy
 }
 
 /** 可過期的那一半。 */
@@ -167,6 +191,11 @@ export function digestOf(authored: IntakeAuthored, verified: IntakeVerified): st
   return `${h1.toString(16).padStart(8, '0')}${h2.toString(16).padStart(8, '0')}`
 }
 
+function withCancelledBy(raw: unknown): { cancelledBy?: CancelledBy } {
+  const cancelledBy = parseCancelledBy(raw)
+  return cancelledBy ? { cancelledBy } : {}
+}
+
 export function parseIntakeFile(raw: string): PersistedIntake | null {
   let data: unknown
   try {
@@ -197,6 +226,7 @@ export function parseIntakeFile(raw: string): PersistedIntake | null {
       ...(typeof e.settledAt === 'number' ? { settledAt: e.settledAt } : {}),
       ...(isInstant(e.opensAt) ? { opensAt: e.opensAt } : {}),
       ...(isInstant(e.firedAt) ? { firedAt: e.firedAt } : {}),
+      ...withCancelledBy(e.cancelledBy),
       content: isContent(content) ? withSafeSchedule(withSafeSource(content)) : null,
     })
   }
@@ -370,11 +400,13 @@ export class IntakeStore {
     return record
   }
 
-  setState(adapter: string, id: string, state: IntakeState, sessionId?: string): void {
+  setState(adapter: string, id: string, state: IntakeState, sessionId?: string, cancelledBy?: CancelledBy): void {
     const record = this.#entries.get(intakeKeyOf(adapter, id))
     if (!record) return
     record.state = state
     if (sessionId !== undefined) record.sessionId = sessionId
+    // Written with the state, one save (`handoff-cancel` D5): a crash cannot leave a mark without its cancel.
+    if (cancelledBy !== undefined) record.cancelledBy = cancelledBy
     // **再次被接受 ⇒ 了結的標記作廢。** 路徑：預填還沒發生時使用者清除它 → 逾時退回待處理
     // （標記仍在）→ 再次接受 —— 少了這一行，它一建立 session 就從收件匣消失，使用者看不到
     // 他正要送出的本文。

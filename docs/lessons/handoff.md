@@ -676,3 +676,26 @@ recorded "1 萬字, then a file and a 2,000 preview" all along. The reviewer rep
   two proposal ids (the same race a one-off `at` already has).
 - **Classify by the record's role, never by `scheduledAt`.** An occurrence whose opening failed is pending with no
   `scheduledAt`, which is exactly what a proposal looks like if one goes by that field.
+
+## 19. Cancelling: what fails silently here (`handoff-cancel`)
+
+- **The effect must go through `dismissIntake` / `RecurrenceKeeper.stop`, never the store.** `IntakeStore.setState`
+  notifies nobody: a cancel written there leaves the open inbox showing the item until its next reload, and a skipped
+  occurrence without a next one (the keeper hears of an ignore only through `onIntakeDismissed`). Every unit test of
+  the store passes either way; the control groups `cancel-skips-change-signal` (probe) and "a cancel that writes the
+  state through the store" (unit) are what turn red.
+- **Judge with the tab's own reading, `scheduleShapeOf`, not the record's fields.** `opensAt <= now` looks like "not
+  yet opening" and is wrong after Run now, which fires a handoff whose time is still ahead. While implementing, the
+  `firedAt` guard landed in the wrong function and the decision dismissed a handoff whose session was being opened;
+  only the Run-now fixture turned it red.
+- **An approved recurrence's id is also an inbox record's id** (its proposal, `accepted` and kept for good). With the
+  recurrence file unreadable, that record must not read as "opened" and be refused for good: the unavailable row
+  comes before the not-found row.
+- **A second cancel is not a failure.** A dismissed record or a stopped recurrence answers `duplicate`, with no trace;
+  a crash between carrying a cancel out and removing its file makes the restart read it again.
+- **The mark is saved with the state** (`cancelledBy` through `setState` / `stop`), never in a separate write: a mark
+  left on an item that was not cancelled would later list the user's own cancel as an agent's.
+- **A cancelled handoff written again with the same content from the same session is a duplicate** (its id is the
+  content's digest, and the dismissed record stays). The schedules file's rules say so; the fix is a changed title.
+- **The schedules file is written only after `configureHandoff`**: before it, `schedulesFile()` is empty, and a
+  write that never throws would do nothing without a word. It logs an empty path.

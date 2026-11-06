@@ -175,7 +175,8 @@ You are not notified about the session you are looking at on your computer right
 A scheduled handoff arrives when it opens, not when it was scheduled. Until then, the phone lists it apart
 with its time, and can run it now or cancel it. For a repeating handoff, the phone can decline the proposal,
 and can run or skip an upcoming time. Approving the proposal and stopping the schedule happen only on the
-computer.
+computer, though you can ask an agent from the phone to stop one
+([Handoffs](/docs/using/handoffs/#cancelling-or-changing-what-is-scheduled)).
 
 ## Who is connected, revoking, and resetting
 

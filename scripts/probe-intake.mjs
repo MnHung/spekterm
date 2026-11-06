@@ -2844,6 +2844,143 @@ async function runScheduled(_mode, _modeConfig, context) {
   check(results, 'an unparseable file has a held receipt and stays in the outbox', all.bad?.status === 'held' && existsSync(join(outbox, 'bad.json')), JSON.stringify(all.bad))
 }
 
+/** The schedules file an agent reads before it cancels (`handoff-cancel`). */
+function schedulesOf(profile) {
+  try {
+    return JSON.parse(readFileSync(join(profile, 'handoff', 'schedules.json'), 'utf8'))
+  } catch {
+    return null
+  }
+}
+
+/** The Schedules tab's "Cancelled by an agent" lines, or null when the section is absent. */
+const AGENT_CANCEL_LINES = `(() => {
+  const list = document.querySelector(${JSON.stringify(`ul${label('intake.agentCancelsLabel')}`)})
+  return list ? [...list.querySelectorAll('li')].map((li) => li.textContent ?? '') : null
+})()`
+
+/**
+ * handoff-cancel through the real outbox: session A schedules, session B (another folder) cancels by the id A's
+ * receipt and the schedules file give; the open Schedules tab follows without a reload; a second cancel is a
+ * duplicate; an occurrence is skipped and a recurrence stopped with no confirmation, each listed quietly as an
+ * agent's cancel; a proposal is declined; an unknown id is refused visibly.
+ */
+async function runCancel(_mode, _modeConfig, context) {
+  const { profile, folders } = seedProfile()
+  seedRouting(profile, { fallbackFolderId: folders[0].id })
+  const configDir = mkTemp('spekterm-intake-config-')
+  const marker = `spek-intake-${process.pid}-${Date.now()}`
+  const stub = makeStubAgent(mkTemp, configDir, { readyDelaySeconds: 2, busySeconds: 1 })
+  drop(profile, 'source', intake({ id: 'src-1', title: 'SOURCE-TITLE' }))
+  const app = await freshApp(context, { profile, configDir, stub, marker })
+  await openInbox(app)
+  await pollFor({ read: () => app.client.evaluate(acceptExpression('SOURCE-TITLE')), settled: Boolean, timeoutMs: 20_000, label: 'source session opened' })
+  const outboxA = await awaitOutbox(profile, 'the source outbox')
+  const sessionA = basename(outboxA)
+  const writeIn = (outbox) => (name, payload) => {
+    writeFileSync(join(outbox, `${name}.partial`), JSON.stringify(payload))
+    renameSync(join(outbox, `${name}.partial`), join(outbox, name))
+  }
+  const writeA = writeIn(outboxA)
+  await pollFor({ read: () => app.client.evaluate(CLOSE_INBOX), settled: Boolean, timeoutMs: 10_000, label: 'inbox closed' })
+
+  // Session B, in the third folder: the one that cancels.
+  writeA('canceller.json', { target: basename(folders[2].path), title: 'CANCELLER', body: 'stand by' })
+  const outboxB = await pollFor({
+    read: () => readdirSync(outboxRootOf(profile)).filter((name) => name !== sessionA),
+    settled: (names) => names.length >= 1,
+    timeoutMs: 30_000,
+    label: 'the cancelling session\'s outbox',
+  }).then((names) => join(outboxRootOf(profile), names[0]))
+  const sessionB = basename(outboxB)
+  const writeB = writeIn(outboxB)
+  let n = 0
+  const cancel = async (id) => {
+    const name = `cancel-${(n += 1)}.json`
+    writeB(name, { kind: 'cancel', id })
+    return pollFor({ read: () => receiptOf(profile, sessionB, name), settled: Boolean, timeoutMs: 20_000, label: `the receipt of ${name}` })
+  }
+
+  // ── A schedules; its receipt and the schedules file give the id ──
+  const tomorrow = new Date(Date.now() + 24 * 3600_000).toISOString()
+  writeA('later.json', { target: basename(folders[1].path), title: 'CANCEL-ME', body: 'never mind', at: tomorrow })
+  const scheduled = await pollFor({ read: () => receiptOf(profile, sessionA, 'later.json'), settled: Boolean, timeoutMs: 20_000, label: 'the scheduled receipt' })
+  check(results, 'a scheduled receipt carries the id a cancel names', scheduled?.status === 'scheduled' && typeof scheduled?.id === 'string', JSON.stringify(scheduled))
+  const listedInFile = await pollFor({ read: () => schedulesOf(profile), settled: (file) => file?.scheduled?.some((entry) => entry.id === scheduled?.id), timeoutMs: 10_000, label: 'the schedules file lists it' })
+  check(
+    results,
+    'the schedules file lists the scheduled handoff with its id, title and target name',
+    listedInFile?.scheduled?.some((entry) => entry.id === scheduled?.id && entry.title === 'CANCEL-ME' && entry.target === basename(folders[1].path)),
+    JSON.stringify(listedInFile?.scheduled),
+  )
+
+  // ── B cancels it; the open Schedules tab follows without a reload ──
+  await openSchedules(app)
+  await pollFor({ read: () => app.client.evaluate(`Boolean(document.querySelector(${JSON.stringify(scheduledItem('CANCEL-ME'))}))`), settled: Boolean, timeoutMs: 10_000, label: 'CANCEL-ME listed' })
+  const quiet = await settledNotifications(profile, 'notifications settled before the cancel')
+  const cancelled = await cancel(scheduled?.id)
+  check(results, 'a cancel from another session is accepted once carried out', cancelled?.status === 'accepted' && cancelled?.id === scheduled?.id, JSON.stringify(cancelled))
+  const gone = await pollFor({ read: () => app.client.evaluate(`!document.querySelector(${JSON.stringify(scheduledItem('CANCEL-ME'))})`), settled: Boolean, timeoutMs: 5_000, label: 'CANCEL-ME gone from the open tab' })
+  check(results, 'the open Schedules tab stops listing a cancelled handoff without a reload', gone === true, String(gone))
+  const fileAfter = await pollFor({ read: () => schedulesOf(profile), settled: (file) => !file?.scheduled?.some((entry) => entry.id === scheduled?.id), timeoutMs: 10_000, label: 'the schedules file follows' })
+  check(results, 'the schedules file no longer lists a cancelled handoff', !fileAfter?.scheduled?.some((entry) => entry.id === scheduled?.id), JSON.stringify(fileAfter?.scheduled))
+
+  // ── A second cancel is a duplicate, with no trace and no notification ──
+  const again = await cancel(scheduled?.id)
+  const afterAgain = await settledNotifications(profile, 'notifications settled after the second cancel')
+  check(results, 'a second cancel of the same id is a duplicate, and raises nothing', again?.status === 'duplicate' && afterAgain.length === quiet.length, JSON.stringify({ again, notes: afterAgain.slice(quiet.length).map((note) => note.body) }))
+
+  // ── A recurrence: an occurrence skipped, then the recurrence stopped with no confirmation ──
+  writeA('weekly.json', { target: basename(folders[1].path), title: 'CANCEL-RECUR', body: 'weekly review', repeat: '0 21 * * 3' })
+  await pollFor({ read: () => app.client.evaluate(`Boolean(document.querySelector(${JSON.stringify(proposalItem('CANCEL-RECUR'))}))`), settled: Boolean, timeoutMs: 20_000, label: 'the proposal listed' })
+  await pollFor({ read: () => app.client.evaluate(clickIn(proposalItem('CANCEL-RECUR'), 'intake.approve')), settled: Boolean, timeoutMs: 10_000, label: 'Approve clicked' })
+  const first = await pollFor({ read: () => app.client.evaluate(scheduledRow('CANCEL-RECUR')), settled: Boolean, timeoutMs: 15_000, label: 'the occurrence listed' })
+  const fileRecur = await pollFor({ read: () => schedulesOf(profile), settled: (file) => file?.recurrences?.length === 1 && file?.scheduled?.some((entry) => entry.recurrenceId), timeoutMs: 10_000, label: 'the recurrence in the schedules file' })
+  const occurrence = fileRecur?.scheduled?.find((entry) => entry.recurrenceId)
+  const recurrenceId = fileRecur?.recurrences?.[0]?.id
+  check(results, 'the schedules file lists the occurrence under its recurrence', occurrence?.recurrenceId === recurrenceId, JSON.stringify(fileRecur?.scheduled))
+  const skipped = await cancel(occurrence?.id)
+  const next = await pollFor({ read: () => app.client.evaluate(scheduledRow('CANCEL-RECUR')), settled: (row) => row !== null && row.at !== first.at, timeoutMs: 15_000, label: 'the next occurrence listed' })
+  check(results, 'a cancel of an occurrence by an agent skips it, and the next time is listed', skipped?.status === 'accepted' && next?.at === first.at + 7 * 24 * 3600_000, JSON.stringify({ skipped, was: first.at, now: next?.at }))
+  const stopped = await cancel(recurrenceId)
+  const stopGone = await pollFor({
+    read: () => app.client.evaluate(`!document.querySelector(${JSON.stringify(recurrenceItem('CANCEL-RECUR'))}) && !document.querySelector(${JSON.stringify(scheduledItem('CANCEL-RECUR'))})`),
+    settled: Boolean,
+    timeoutMs: 10_000,
+    label: 'the recurrence gone',
+  })
+  const confirmShown = await app.client.evaluate(`document.body.textContent.includes(${JSON.stringify(copy('intake.stopRepeatingConfirm'))})`)
+  check(results, 'an agent stops a recurrence with no confirmation on the desktop', stopped?.status === 'accepted' && stopGone === true && confirmShown === false, JSON.stringify({ stopped, stopGone, confirmShown }))
+
+  // ── A proposal declined ──
+  writeA('proposal.json', { target: basename(folders[1].path), title: 'CANCEL-PROP', body: 'maybe', repeat: '0 8 * * 1' })
+  const proposed = await pollFor({ read: () => receiptOf(profile, sessionA, 'proposal.json'), settled: Boolean, timeoutMs: 20_000, label: 'the proposal receipt' })
+  await pollFor({ read: () => app.client.evaluate(`Boolean(document.querySelector(${JSON.stringify(proposalItem('CANCEL-PROP'))}))`), settled: Boolean, timeoutMs: 20_000, label: 'CANCEL-PROP listed' })
+  const declined = await cancel(proposed?.id)
+  const propGone = await pollFor({ read: () => app.client.evaluate(`!document.querySelector(${JSON.stringify(proposalItem('CANCEL-PROP'))})`), settled: Boolean, timeoutMs: 10_000, label: 'the proposal gone' })
+  const badge = await pollFor({ read: () => app.client.evaluate(BADGE_TEXT), settled: (text) => text === '', timeoutMs: 10_000, label: 'the badge empty' })
+  check(results, 'an agent declines a proposal by the id its receipt gave, and the badge no longer counts it', proposed?.status === 'proposed' && declined?.status === 'accepted' && propGone === true && badge === '', JSON.stringify({ proposed, declined, badge }))
+
+  // ── The quiet record: every agent cancel listed with the cancelling folder, and no notification for any ──
+  const lines = await pollFor({ read: () => app.client.evaluate(AGENT_CANCEL_LINES), settled: (list) => (list?.length ?? 0) === 4, timeoutMs: 10_000, label: 'four agent-cancel lines' })
+  const folderB = basename(folders[2].path)
+  check(
+    results,
+    'the Schedules tab lists each agent cancel with the cancelling folder, newest first',
+    lines?.length === 4 && lines.every((line) => line.includes(folderB)) && lines[0].includes('CANCEL-PROP') && lines[1].includes('CANCEL-RECUR') && lines[3].includes('CANCEL-ME'),
+    JSON.stringify(lines),
+  )
+  const afterAll = await settledNotifications(profile, 'notifications settled after the cancels')
+  const cancelNotes = afterAll.slice(quiet.length).filter((note) => (note.title ?? '') === copy('intake.notify.cancelTitle'))
+  check(results, 'carried-out cancels raise no notification', cancelNotes.length === 0, JSON.stringify(afterAll.slice(quiet.length).map((note) => note.title)))
+
+  // ── An unknown id is refused, visibly ──
+  const refused = await cancel('no-such-id')
+  const afterRefusal = await settledNotifications(profile, 'notifications settled after the refusal')
+  const refusalNotes = afterRefusal.slice(afterAll.length).filter((note) => (note.title ?? '') === copy('intake.notify.cancelTitle'))
+  check(results, 'a cancel of an unknown id is rejected for good, with a notification', refused?.status === 'rejected' && refused?.code === 'CANCEL_NOT_FOUND' && refused?.permanent === true && refusalNotes.length === 1, JSON.stringify({ refused, notes: refusalNotes.map((note) => note.body) }))
+}
+
 /**
  * scheduled-handoff at start (tasks 10.2), one launch, one folder per case:
  * (a) a persisted pending handoff whose time passed while the app was closed opens after the window restored, and
@@ -5050,6 +5187,7 @@ const SECTIONS = [
   { name: 'runRecurring', run: runRecurring },
   { name: 'runRecurringStart', run: runRecurringStart },
   { name: 'runRecurringDamaged', run: runRecurringDamaged },
+  { name: 'runCancel', run: runCancel },
   { name: 'runChooseFolder', run: runChooseFolder },
   { name: 'runOpenedLifecycle', run: runOpenedLifecycle },
   { name: 'runLineage', run: runLineage },

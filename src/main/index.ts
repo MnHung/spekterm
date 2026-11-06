@@ -32,7 +32,7 @@ import {
   setRemoteWatched,
 } from './ipc/terminal'
 import { broadcastRemoteState, registerRemoteHandlers, requestRenderer } from './ipc/remote'
-import { notifyIntakeChanged, onIntakeChanged, onIntakeDismissed } from './intake-changes'
+import { dismissIntake, notifyIntakeChanged, onIntakeChanged, onIntakeDismissed } from './intake-changes'
 import { RecurrenceKeeper } from './recurrence-keeper'
 import { notificationTab } from './recurrence-kind'
 import { RecurrenceStore } from './recurrence-store'
@@ -63,11 +63,15 @@ import { electronNotifyBackend } from './intake-notify-electron'
 import { createStubBackend, stubNotifyRoot } from './intake-notify-stub'
 import { IntakeService } from './intake-service'
 import { IntakeSource, inboxRoot } from './intake-source'
-import { configureHandoff, liveSessions, receiptsDir, teammatesFile } from './handoff-outbox'
+import { configureHandoff, liveSessions, receiptsDir, schedulesFile, teammatesFile } from './handoff-outbox'
+import { agentCancels, HandoffCanceller } from './handoff-cancel'
+import { listView } from './intake-projection'
+import { bodyOf } from './intake-schema'
+import { schedulesContent, writeSchedulesFile } from './schedules-file'
 import { configureTeamIntro, configureTeammateReports, refreshIntros, reportKindOf, teamIntro } from './handoff-injection'
 import { configureTeammateHandoffs, refreshRelations } from './handoff-relations'
 import { anyWindowReceives, HandoffOpener, OPENER_INTERVAL_MS, whenAnnounced } from './handoff-opener'
-import { HandoffService, registerHandoffService } from './handoff-service'
+import { ENDED_SOURCE_ID, HandoffService, registerHandoffService } from './handoff-service'
 import { HandoffCompletion } from './handoff-completion'
 import { inTurnOf, observeWaits, openRequestsOf, pokeWait, refreshWait, subscribeWait } from './agent-wait'
 import { hasUnconfirmedSubmission, onPrefillChange } from './intake-prefill'
@@ -665,6 +669,7 @@ void app.whenReady().then(async () => {
     onNewReceiver: () => opener?.tick(),
     runNow: (adapter, id) => opener?.runNow(adapter, id) ?? false,
     recurrences: recurrenceKeeper,
+    agentCancels: () => agentCancels(intakeService.store.list(), recurrenceStore.available ? recurrenceStore.list() : [], Date.now()),
     // Created with the handoff producers below; the handlers only reach it later.
     teammates: {
       reportable: (record) => teammateReportable(record),
@@ -921,6 +926,33 @@ void app.whenReady().then(async () => {
   configureHandoff(app.getPath('userData'))
 
   /**
+   * The schedules file (`handoff-cancel`, design D6): what an agent can cancel, from the Schedules tab's own lists.
+   * Written now — `schedulesFile()` is empty before `configureHandoff` — and on every inbox change after.
+   */
+  const writeSchedules = (): void => {
+    const folders = store.list()
+    writeSchedulesFile(
+      schedulesFile(),
+      schedulesContent({
+        items: listView(intakeService.store.list(), routingStore.get(), new Set(folders.map((folder) => folder.id))),
+        recurrences: recurrenceKeeper.listing(),
+        recurrenceContent: (id) => {
+          const recurrence = recurrenceStore.get(id)
+          return recurrence
+            ? {
+                source: recurrence.intake.authored.originLabel,
+                body: bodyOf({ id: recurrence.id, ...recurrence.intake, receivedAt: recurrence.approvedAt }),
+              }
+            : undefined
+        },
+        folders: folders.map((folder) => ({ id: folder.id, name: folder.name })),
+      }),
+    )
+  }
+  writeSchedules()
+  onIntakeChanged(writeSchedules)
+
+  /**
    * Teammate handoffs (`teammate-handoff`): sending (`TeammateOutbox`), receiving (`TeammateInbox`) and the teammates
    * file, all fed by the team service's extension points. The team as they see it is read from the team service
    * each time, never kept.
@@ -1129,6 +1161,26 @@ void app.whenReady().then(async () => {
     for (const sessionId of sessionControl.pendingTargets()) if (!running.has(sessionId)) sessionControl.processEnded(sessionId)
   })
 
+  /**
+   * An agent's cancel (`handoff-cancel`): through the desktop's own ignore and Stop repeating, so the keeper and
+   * every open inbox hear of it. Any session may cancel (D4); its label marks what it cancelled (D5).
+   */
+  const canceller = new HandoffCanceller({
+    records: () => intakeService.store.list(),
+    listing: () => recurrenceKeeper.listing(),
+    recurrences: recurrenceStore,
+    dismiss: (adapter, id, by) => dismissIntake(intakeService.store, adapter, id, by),
+    stop: (id, by) => recurrenceKeeper.stop(id, by),
+    reject: (code, label, detail, context) => intakeService.reject(code, label, detail, context),
+    labelOf: (sessionId) => {
+      const session = sessionStore.view().find((entry) => entry.session.id === sessionId)?.session
+      if (!session) return ENDED_SOURCE_ID
+      const item = session.folderId === null ? 'Global' : (store.list().find((f) => f.id === session.folderId)?.name ?? '')
+      const title = preferredTitle(session)
+      return title ? `${item} · ${title}` : item
+    },
+  })
+
   const handoffService = new HandoffService({
     service: intakeService,
     sourceOf: (sessionId) => {
@@ -1157,6 +1209,7 @@ void app.whenReady().then(async () => {
     onDelivered: () => opener?.tick(),
     acceptReport: (sessionId, summary, identity) => completion.acceptReport(sessionId, summary, identity),
     control: (sourceId, kind, contents, identity, mtimeMs) => sessionControl.deliver(sourceId, kind, contents, identity, mtimeMs),
+    cancel: (sessionId, contents) => canceller.deliver(sessionId, contents),
     teammates: { read: (input) => teammateOutbox.read(input), hasRoom: () => teammateOutbox.hasRoom() },
   })
   /**

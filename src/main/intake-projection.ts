@@ -3,6 +3,7 @@ import { bodyOf, type IntakeVerified } from './intake-schema'
 import { recurrenceRoleOf, type RecurrenceRole } from './recurrence-kind'
 import { resolveRouting, type RoutingConfig } from './intake-routing'
 import type { IntakeRecord } from './intake-store'
+import type { RecurrenceShape, ScheduleShape } from '@shared/intake/scheduled'
 
 /**
  * 收件匣送往 renderer 的投影 —— **不 import electron**，於是測得到。
@@ -77,6 +78,23 @@ function recurrenceOf(verified: IntakeVerified, now: number): IntakeView['recurr
   return { ...base, next: times }
 }
 
+/**
+ * What a record is to the Schedules tab: its state, `scheduledAt` **only while it is scheduled** (pending and not
+ * fired, `scheduled-handoff` design D1), and its recurrence role. **One reading for every judge**: `project()` builds
+ * the views the tab filters with `isScheduled` / `isProposal`, and the cancel decision (`handoff-cancel` design D2)
+ * applies the same predicates to this — a second, hand-written test of the record's fields would drift from the tab's.
+ */
+export function scheduleShapeOf(record: Pick<IntakeRecord, 'state' | 'firedAt' | 'content'>): ScheduleShape & RecurrenceShape {
+  const verified = record.content?.verified
+  const scheduledAt = verified?.scheduledAt
+  const role = recurrenceRoleOf(verified)
+  return {
+    state: record.state,
+    ...(record.state === 'pending' && scheduledAt !== undefined && record.firedAt === undefined ? { scheduledAt } : {}),
+    ...(role !== undefined ? { recurrence: { role } } : {}),
+  }
+}
+
 export function project(
   record: IntakeRecord,
   routing: RoutingConfig,
@@ -103,13 +121,13 @@ export function project(
 
   const intake = { id: record.id, verified: content.verified, authored: content.authored, receivedAt: content.receivedAt }
   const body = bodyOf(intake)
-  const scheduledAt = content.verified.scheduledAt
+  const { scheduledAt } = scheduleShapeOf(record)
   const recurrence = recurrenceOf(content.verified, now)
   const withBody = {
     ...base,
     body,
     bodyLength: body.length,
-    ...(record.state === 'pending' && scheduledAt !== undefined && record.firedAt === undefined ? { scheduledAt } : {}),
+    ...(scheduledAt !== undefined ? { scheduledAt } : {}),
     ...(recurrence ? { recurrence } : {}),
     ...(content.verified.possiblyElsewhere === true ? { possiblyElsewhere: true as const } : {}),
   }

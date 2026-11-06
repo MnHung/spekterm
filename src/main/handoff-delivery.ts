@@ -164,10 +164,11 @@ export const MAX_REPORT_LENGTH = 4_000
  * 落點裡的一份投遞是哪一種東西。**種類欄位缺席 ⇒ 交接**（既有格式不變）。
  *
  * - `report` —— 完成報告（`handoff-completion`）。
+ * - `cancel` — a cancel of a scheduled item (`handoff-cancel`).
  * - 其餘值 —— 不認得，拒絕且可見。
  * - `malformed` —— 讀不成一個 JSON 物件：**不消費**，可能只是寫到一半（與交接同一條處置）。
  */
-export type OutboxKind = 'handoff' | 'report' | CommandKind | 'unknown' | 'malformed'
+export type OutboxKind = 'handoff' | 'report' | 'cancel' | CommandKind | 'unknown' | 'malformed'
 
 /** The agent's session commands (`agent-session-control`). */
 export type CommandKind = 'close' | 'hibernate' | 'rename'
@@ -189,6 +190,7 @@ export function outboxKindOf(contents: string): OutboxKind {
   const kind = (raw as Record<string, unknown>).kind
   if (kind === undefined) return 'handoff'
   if (kind === 'report') return 'report'
+  if (kind === 'cancel') return 'cancel'
   return typeof kind === 'string' && COMMAND_KINDS.includes(kind) ? (kind as CommandKind) : 'unknown'
 }
 
@@ -208,6 +210,17 @@ export function parseReport(contents: string): ReportResult {
   if (summary.trim() === '') return { ok: false, reason: 'EMPTY' }
   if (summary.length > MAX_REPORT_LENGTH) return { ok: false, reason: 'TOO_LONG', length: summary.length }
   return { ok: true, summary }
+}
+
+export type CancelResult = { ok: true; id: string } | { ok: false; reason: 'FIELD_TYPE'; field: 'id' }
+
+/**
+ * Reads a cancel (`handoff-cancel`, design D1). **Only `id` is read**: a `target`, a `title` or a claimed source has
+ * no effect, so nothing but an id the system gave out chooses what is cancelled.
+ */
+export function parseCancel(contents: string): CancelResult {
+  const raw = JSON.parse(contents) as Record<string, unknown>
+  return typeof raw.id === 'string' && raw.id !== '' ? { ok: true, id: raw.id } : { ok: false, reason: 'FIELD_TYPE', field: 'id' }
 }
 
 export interface SessionCommand {

@@ -321,6 +321,13 @@ export type IntakeRejection =
   | 'TEAMMATE_REPORT_STOPPED'
   /** The trace of reports for a teammate's handoff that did not reach its sender (`teammate-handoff-return` D8). */
   | 'TEAMMATE_REPORT_NOT_SENT'
+  /**
+   * A cancel whose id names nothing that can be cancelled (`handoff-cancel`): unknown, its opening began, not in the
+   * Schedules tab, or an ended recurrence. Permanent; the detail names the case.
+   */
+  | 'CANCEL_NOT_FOUND'
+  /** A cancel that may name a recurrence while the recurrences cannot be read or written. Temporary. */
+  | 'CANCEL_UNAVAILABLE'
   | 'MALFORMED'
   | 'MISSING_ID'
   | 'INVALID_ID'

@@ -3,7 +3,7 @@ import { HANDOFF_ADAPTER } from './handoff-delivery'
 import { resolveTarget, type TargetCandidate } from './handoff-target'
 import type { Intake } from './intake-schema'
 import type { IntakeService } from './intake-service'
-import type { IntakeRecord } from './intake-store'
+import type { CancelledBy, IntakeRecord } from './intake-store'
 import { isProposalRecord } from './recurrence-kind'
 import type { Recurrence, RecurrenceStore } from './recurrence-store'
 
@@ -256,12 +256,16 @@ export class RecurrenceKeeper {
     return { ok: true }
   }
 
-  /** The desktop's Stop repeating: a tombstone first, then its unopened occurrence removed. */
-  stop(recurrenceId: string): boolean {
+  /**
+   * The desktop's Stop repeating, and an agent's cancel (`handoff-cancel`): a tombstone first, then its unopened
+   * occurrence removed. `by` marks an agent's stop, in the same write as the tombstone. Throws when the store write
+   * fails.
+   */
+  stop(recurrenceId: string, by?: CancelledBy): boolean {
     const { recurrences } = this.#deps
     const recurrence = recurrences.get(recurrenceId)
     if (!recurrences.available || !recurrence || recurrence.stoppedAt !== undefined) return false
-    recurrences.put({ ...recurrence, stoppedAt: this.#now() })
+    recurrences.put({ ...recurrence, stoppedAt: this.#now(), ...(by ? { cancelledBy: by } : {}) })
     this.#ensure(recurrences.get(recurrenceId) as Recurrence)
     this.#deps.changed()
     return true

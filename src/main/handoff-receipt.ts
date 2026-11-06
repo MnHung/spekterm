@@ -44,6 +44,11 @@ export interface Receipt {
    * carrying it, never another delivery's that reused the file name.
    */
   ref?: string
+  /**
+   * `scheduled`, `proposed`, and `duplicate` of a known handoff: the item's id — a proposal's stays its recurrence's
+   * once approved. A cancel's receipt states the id it named. It is what a cancel names (`handoff-cancel`).
+   */
+  id?: string
   /** `sent`: the recipient's handle, as the members list spells it. */
   to?: string
   /** `sent`: the team server's id for the handoff. */
@@ -54,25 +59,29 @@ export interface Receipt {
 export const MAX_RECEIPTS = 100
 
 /** The codes whose detail is system-written (a field name, a rule, workspace paths) and helps the agent. */
-const DETAILED = new Set(['FIELD_TYPE', 'TOO_LONG', 'SCHEDULE_INVALID', 'REPEAT_INVALID', 'TARGET_AMBIGUOUS'])
+const DETAILED = new Set(['FIELD_TYPE', 'TOO_LONG', 'SCHEDULE_INVALID', 'REPEAT_INVALID', 'TARGET_AMBIGUOUS', 'CANCEL_NOT_FOUND'])
 
 export function receiptFor(file: string, outcome: SourceOutcome, now: number): Receipt {
   const base = { file: path.basename(file), writtenAt: new Date(now).toISOString() }
   if ('failed' in outcome) return { ...base, status: 'held', code: 'READ_FAILED', reason: receiptReason('READ_FAILED') }
   if (outcome.ok) {
-    if (outcome.duplicate) return { ...base, status: 'duplicate' }
+    const idOf = outcome.receiptId ?? outcome.record?.id
+    const withId = idOf !== undefined ? { id: idOf } : {}
+    if (outcome.duplicate) return { ...base, status: 'duplicate', ...withId }
     // A teammate handoff waits for the user (`teammate-handoff`); later steps rewrite this receipt by its `ref`.
     if (outcome.awaiting) return { ...base, status: 'awaiting-confirmation', ref: outcome.awaiting.ref }
     // A repeating handoff waits for the user's approval (`recurring-handoff`); the agent is not told later whether
     // it was given.
-    if (isProposalRecord(outcome.record)) return { ...base, status: 'proposed' }
+    if (isProposalRecord(outcome.record)) return { ...base, status: 'proposed', ...withId }
     const scheduledAt = outcome.record?.content?.verified.scheduledAt
-    if (scheduledAt !== undefined) return { ...base, status: 'scheduled', at: new Date(scheduledAt).toISOString() }
-    return { ...base, status: 'accepted' }
+    if (scheduledAt !== undefined) return { ...base, status: 'scheduled', at: new Date(scheduledAt).toISOString(), ...withId }
+    return { ...base, status: 'accepted', ...(outcome.receiptId !== undefined ? { id: outcome.receiptId } : {}) }
   }
   const code = outcome.code ?? 'MALFORMED'
   // A same-content resend changed nothing; it is not a refusal.
-  if (code === 'DUPLICATE' && !outcome.notify) return { ...base, status: 'duplicate' }
+  if (code === 'DUPLICATE' && !outcome.notify) {
+    return { ...base, status: 'duplicate', ...(outcome.receiptId !== undefined ? { id: outcome.receiptId } : {}) }
+  }
   const reason = DETAILED.has(code) && outcome.detail ? `${receiptReason(code)} (${outcome.detail})` : receiptReason(code)
   if (!outcome.consume) return { ...base, status: 'held', code, reason }
   return { ...base, status: 'rejected', code, reason, permanent: isPermanentRejection({ code, notify: outcome.notify }) }

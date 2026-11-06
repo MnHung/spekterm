@@ -51,6 +51,9 @@ with now. The **Schedules** tab lists everything planned, in three parts:
 - **Repeating**: each approved repeating handoff, with its next time or the reason it has none (an earlier
   time is still waiting in the inbox, or the inbox is full). **Stop repeating** ends it, after asking you
   first.
+- **Cancelled by an agent**: what an agent cancelled, skipped, declined or stopped in the last 7 days, with
+  the session that did it ([Handoffs](/docs/using/handoffs/#cancelling-or-changing-what-is-scheduled)). Only
+  a record: it has no buttons, sends no notification, and is not counted.
 
 A proposal waits for you, so it counts on the inbox entry and sends a notification. A scheduled handoff does
 neither until it opens. When a notification is only about proposals, opening the inbox from it shows the

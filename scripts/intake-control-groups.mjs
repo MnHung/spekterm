@@ -35,6 +35,25 @@ const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
  * 沒有指名的話，一個「因為別的理由紅了」的 mutation 會被當成通過 —— 而那正是這支腳本要防的。
  */
 export const MUTATIONS = [
+  // ── handoff-cancel ──
+  {
+    name: 'cancel-skips-change-signal',
+    section: 'runCancel',
+    file: 'src/main/index.ts',
+    from: `    dismiss: (adapter, id, by) => dismissIntake(intakeService.store, adapter, id, by),`,
+    to: `    dismiss: (adapter, id, by) => intakeService.store.setState(adapter, id, 'dismissed', undefined, by),`,
+    expectRed: 'the open Schedules tab stops listing a cancelled handoff without a reload',
+    why: '**A cancel written straight to the store**: neither the open inbox nor the recurrence keeper hears of it, so the tab keeps the item and a skipped occurrence has no next one.',
+  },
+  {
+    name: 'second-cancel-refused',
+    section: 'runCancel',
+    file: 'src/main/handoff-cancel.ts',
+    from: `    if (handoff.state === 'dismissed') return { kind: 'duplicate' }`,
+    to: ``,
+    expectRed: 'a second cancel of the same id is a duplicate, and raises nothing',
+    why: '**A repeated cancel reported as a failure**: the item will not open, yet the user gets a refusal and a notification for it.',
+  },
   // ── recurring-handoff ──
   {
     name: 'proposal-auto-opens',

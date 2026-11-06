@@ -776,6 +776,13 @@
     "proposalsLabel": "待核准",
     "proposalItemLabel": "待核准的週期交接：{{title}}",
     "recurrencesLabel": "週期",
+    "agentCancelsLabel": "被 agent 取消",
+    "agentCancel": {
+      "cancelled": "「{{title}}」被 {{source}} 的 agent 取消了",
+      "skipped": "「{{title}}」有一次被 {{source}} 的 agent 跳過了",
+      "declined": "提案「{{title}}」被 {{source}} 的 agent 婉拒了",
+      "stopped": "「{{title}}」不再重複：{{source}} 的 agent 停止了它"
+    },
     "recurrenceItemLabel": "週期交接：{{title}}",
     "repeats": "重複 {{repeat}}",
     "repeatNext": "接下來：{{times}}",
@@ -831,7 +838,9 @@
       "SEND_UNCERTAIN": "在你離開團隊之前可能已經送給隊友了",
       "TEAMMATE_UNREADABLE": "收到一則這個版本的 spekterm 讀不了的隊友交接",
       "TEAMMATE_REPORT_STOPPED": "agent 對隊友交接的回報沒有送出：這件交接已停止回報",
-      "TEAMMATE_REPORT_NOT_SENT": "隊友沒有收到這件交接的回報"
+      "TEAMMATE_REPORT_NOT_SENT": "隊友沒有收到這件交接的回報",
+      "CANCEL_NOT_FOUND": "它不在排程中，或已經開始了",
+      "CANCEL_UNAVAILABLE": "重複交接的資料讀不到"
     },
     "rules": {
       "label": "Routing 規則",
@@ -862,6 +871,8 @@
       "outgoingSingle": "一個 agent 想把交接送給 {{name}}。打開它來送出或捨棄。",
       "outgoingMerged_other": "{{count}} 則要交給隊友的交接在等你。",
       "commandFailure": "一個 session 指令沒有執行：{{reason}}",
+      "cancelTitle": "取消排程的交接",
+      "cancelFailure": "agent 沒能取消一則排程的交接：{{reason}}",
       "sentTitle": "你寄出的交接",
       "sentDone": "{{name}} 完成了「{{what}}」：{{text}}",
       "sentDeclined": "{{name}} 婉拒了「{{what}}」。",
