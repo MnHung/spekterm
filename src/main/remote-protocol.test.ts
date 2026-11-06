@@ -12,7 +12,7 @@ import type { RemoteConnection } from './remote-server'
 
 function connection(): RemoteConnection & { frames: Record<string, unknown>[] } {
   const frames: Record<string, unknown>[] = []
-  return { id: 7, deviceId: 'd', send: (text) => void frames.push(JSON.parse(text)), isOpen: () => true, frames }
+  return { id: 7, deviceId: 'd', method: 'hello', relayed: false, extras: {}, send: (text) => void frames.push(JSON.parse(text)), isOpen: () => true, frames }
 }
 
 async function call(session: ReturnType<typeof openRemoteSession>, conn: ReturnType<typeof connection>, m: string, p = {}) {

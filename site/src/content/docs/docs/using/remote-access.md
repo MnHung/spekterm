@@ -1,12 +1,13 @@
 ---
 title: Remote access
-description: Reach spekterm from your phone, directly, with no relay. See your sessions, read and answer agents, attach photos and files, answer their prompts, start, rename, hibernate and close sessions, answer an agent that asks to close its own, and get told when an agent waits for you.
+description: Reach spekterm from your phone, directly — or, on a team, through your team's own server. See your sessions, read and answer agents, attach photos and files, answer their prompts, start, rename, hibernate and close sessions, answer an agent that asks to close its own, and get told when an agent waits for you.
 sidebar:
   order: 7
 ---
 
-Remote access lets the spekterm app on your phone reach spekterm on your computer **directly**: no account,
-no relay, no push service. From the phone you can:
+Remote access lets the spekterm app on your phone reach spekterm on your computer **directly**: no account, no
+push service. If you are on a team, your team's own server can also carry the connection when you are away (see
+[Through your team's server](#through-your-teams-server)). From the phone you can:
 
 - see every folder and session;
 - read an agent's conversation and reply to it, with photos and files attached, see what each tool call did, and open
@@ -162,7 +163,26 @@ to pair again when your computer's local address changes. Once it has connected 
 or the additional address), it has the new local address for next time.
 
 If none of the addresses reaches your computer (you are away from home, with no Tailscale and no port
-forward), the phone cannot connect, and it is told nothing.
+forward), the phone cannot connect, and it is told nothing — unless it can go through your team's server.
+
+## Through your team's server
+
+If you are on a [team](/docs/using/teams/) whose server offers it, **Settings → Team** has **Reach this desktop from
+your phones through the team server** (off until you turn it on; shown while remote access is on). With it on:
+
+- spekterm asks the server for a pass for each paired phone and gives it to that phone over its own connection. A
+  phone you pair later gets one too. Unpairing a phone, turning the switch off, resetting remote access or leaving the
+  team takes them back.
+- Away from your computer's network, the phone tries its direct addresses first, then asks the server. spekterm then
+  connects to the server it is a member of — never to an address from anywhere else — and the server joins the two.
+- The phone's connection is still encrypted all the way to your computer and checked against your computer's
+  certificate, so **the server cannot read or change it**. The server sees which phone connects, when, for how long,
+  from which address, and how many bytes cross.
+- **Pairing still happens only directly.** Through the server, a phone can only sign in with its own credential.
+- It does not reach your computer while spekterm is closed, and there is still no push service.
+
+The section says how many paired phones can connect this way. If remote access is off or the server stops offering
+it, the switch stays visible with the reason, so you can turn it off.
 
 ## Notifications
 

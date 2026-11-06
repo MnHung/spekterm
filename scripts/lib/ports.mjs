@@ -45,6 +45,8 @@ export const STUB_PORTS = {
   remoteListenerAlt: 18472,
   /** The stand-in team server (`probe-team.mjs`, `lib/stub-team-server.mjs`). */
   team: 18480,
+  /** The remote access listener of `probe-team.mjs`'s relay section (`phone-relay`), never 47615 for the same reason. */
+  teamRemoteListener: 18481,
 }
 
 /** 探針名 → 該支所有 debugging port（鍵名說明它是哪一次啟動）。 */

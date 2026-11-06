@@ -481,6 +481,11 @@ itself — a mailbox, a team directory, device credentials — and spekterm conn
 team (`team-membership`). The server's operator can read the handoffs (no end-to-end encryption in v1); the
 project runs no instance and has no paid tier.
 
+**2026-11: the team server can carry the phone, too — as a second path.** Direct access stays the default. For a
+desktop on a team, the user may let the team's own server relay a paired phone's connection when it is away from the
+desktop's network (`phone-relay`): the server splices the phone's TLS to the desktop's listener without reading it,
+pairing stays direct, and there is still no push — the relay does not reach a desktop whose spekterm is closed.
+
 The only income is sponsorship, which supports the maintainer personally and is not distributed based on
 contributions (see `CONTRIBUTING.md`).
 
@@ -799,7 +804,9 @@ session 脈絡裡送出的，彙整成一份跨數十天、跨數十個專案的
   - **Remote access** (`mobile-remote-bridge`) is off by default. When on, one module listens (TLS on all
     interfaces); a paired device has the user's power over agents — it can type into sessions — and nothing
     else (no files outside OpenSpec reads, no settings, no credentials). Devices pin a self-signed certificate
-    and hold their own revocable credential, stored only as a hash; the feature makes no outbound connection.
+    and hold their own revocable credential, stored only as a hash. It opens no connection for an event; with the relay
+    on (`phone-relay`), it dials only its own team server, only when a paired phone asks, and that server passes the
+    phone's TLS to the listener without reading it. Pairing is direct only.
 - **效能**：大目錄樹 lazy load；大檔案 Monaco 上限保護。
 
 ---

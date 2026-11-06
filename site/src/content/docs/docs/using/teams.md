@@ -64,6 +64,11 @@ to whom, and when). A decline reason or a completion report sent back is kept fo
 each handoff's record — who, to whom, when, its status — for 90 days after its last change, so your Sent list can be
 rebuilt on another device. See [Data and network](/docs/reference/data-and-network/).
 
+**Your phones, through the server.** If the server offers it, you can let your paired phones reach this computer
+through the server when they are away from its network. The server passes their encrypted connection on without
+reading it; it sees which phone connects, when, for how long and how much. Off until you turn it on in **Settings →
+Team**. See [Remote access](/docs/using/remote-access/#through-your-teams-server).
+
 Your device's credential is given once when you join and is kept in spekterm's secret file on your computer, next to
 the Slack credentials. spekterm never puts it in a terminal, an agent's environment, or any file it writes for an
 agent. The file is not encrypted: a program running as your user account — an agent with a shell included — can

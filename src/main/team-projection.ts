@@ -1,3 +1,4 @@
+import type { RelayView } from './relay-service'
 import type { TeamSnapshot } from './team-service'
 
 /**
@@ -25,9 +26,17 @@ export interface TeamView {
     members: { handle: string; displayName: string; you: boolean }[]
     membersFetchedAt?: number
   } | null
+  /** Reaching this desktop through the team server (`phone-relay`): counts and reasons only — no grant id or secret. */
+  relay?: {
+    on: boolean
+    available: boolean
+    blocked?: 'remote-off' | 'server'
+    phones: { withGrant: number; paired: number }
+    limitReached: boolean
+  }
 }
 
-export function projectTeam(snapshot: TeamSnapshot): TeamView {
+export function projectTeam(snapshot: TeamSnapshot, relay?: RelayView): TeamView {
   const m = snapshot.membership
   return {
     enabled: snapshot.enabled,
@@ -49,5 +58,16 @@ export function projectTeam(snapshot: TeamSnapshot): TeamView {
           ...(m.members ? { membersFetchedAt: m.members.fetchedAt } : {}),
         }
       : null,
+    ...(m && relay
+      ? {
+          relay: {
+            on: relay.on,
+            available: relay.available,
+            ...(relay.blocked ? { blocked: relay.blocked } : {}),
+            phones: { withGrant: relay.phones.withGrant, paired: relay.phones.paired },
+            limitReached: relay.limitReached,
+          },
+        }
+      : {}),
   }
 }

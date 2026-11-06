@@ -21,8 +21,17 @@ import type { RemoteStore } from './remote-store'
  * the only one allowed `https` and `ws` (`scripts/network-surface.test.mjs`). It knows nothing of sessions:
  * once a connection has authenticated, every request goes to the protocol layer through `openSession`.
  *
- * It accepts connections and makes none.
+ * It accepts connections and makes none. **A relayed connection** (`phone-relay`) is one more accepted connection:
+ * `team-connection.ts` dials the team server when a phone asks for a tunnel and hands the byte stream here
+ * (`acceptRelayed`), where it goes through the same TLS, upgrade, authentication, caps and pings — with three
+ * differences: it authenticates only as the phone its grant was made for, never pairs, and is throttled per grant.
  */
+
+/** A byte stream handed over by the relay (design D6/D7 of `phone-relay`). A type query: no `stream` import. */
+export type RelayedStream = import('node:stream').Duplex
+
+/** Where a connection came from: its address, or the relay grant (and that grant's phone, fixed at accept). */
+type Source = { kind: 'direct'; address: string } | { kind: 'relay'; grant: string; phone: string }
 
 export type ListenState =
   | { status: 'off' }
@@ -33,6 +42,12 @@ export type ListenState =
 export interface RemoteConnection {
   readonly id: number
   readonly deviceId: string
+  /** How it authenticated; a `pair` answer never carries the `hello`-only extras. */
+  readonly method: 'hello' | 'pair'
+  /** Whether it arrived through the team server's relay. */
+  readonly relayed: boolean
+  /** The extras the `hello` answer carried (`authExtras`); empty for `pair`. */
+  readonly extras: Record<string, unknown>
   send(frame: string): void
   /** Whether the socket can still be written to. */
   isOpen(): boolean
@@ -61,6 +76,11 @@ export interface RemoteServerOptions {
    * only when its operation is listed. Sent in the same answers as `addresses`.
    */
   operations?: () => string[]
+  /**
+   * Fields only the `hello` answer carries for this device (`phone-relay`: `relay`). Never in the `pair` answer: a
+   * phone that pairs has no grant yet.
+   */
+  authExtras?: (deviceId: string) => Record<string, unknown>
   pingIntervalMs?: number
   authTimeoutMs?: number
   failureDelayMs?: number
@@ -71,7 +91,10 @@ export interface RemoteServerOptions {
 interface Connection {
   id: number
   ws: WebSocket
+  /** The throttle key: the remote address, or `relay:<grant id>`. */
   address: string
+  /** For a relayed connection, the only device that may authenticate on it. */
+  relayPhone: string | null
   deviceId: string | null
   /** Refused and waiting out the failure delay: nothing more it sends is read. */
   refused: boolean
@@ -92,11 +115,30 @@ function normalizeAddress(address: string | undefined): string {
   return address.startsWith('::ffff:') ? address.slice(7) : address
 }
 
+/** The throttle key of a relay grant: its own namespace, never an address. */
+export function relayThrottleKey(grant: string): string {
+  return `relay:${grant}`
+}
+
+/** A relayed stream waiting for its WebSocket upgrade, with its own deadline (design D7). */
+interface PendingRelay {
+  stream: RelayedStream
+  grant: string
+  timer: NodeJS.Timeout
+}
+
 export class RemoteServer {
   readonly #options: Required<Omit<RemoteServerOptions, 'onChange'>> & Pick<RemoteServerOptions, 'onChange'>
   #state: ListenState = { status: 'off' }
   #server: Server | null = null
   #wss: WebSocketServer | null = null
+  /** Upgrades of relayed connections (`noServer`: fed by each tunnel's own non-listening TLS server). */
+  #relayWss: WebSocketServer | null = null
+  /** The listener's key and certificate, for each tunnel's TLS server. */
+  #tls: { key: string; cert: string } | null = null
+  /** Relayed streams not yet upgraded, and every relayed stream still open (closed at `#stop`). */
+  readonly #pendingRelays = new Set<PendingRelay>()
+  readonly #relayStreams = new Set<RelayedStream>()
   #pingTimer: NodeJS.Timeout | null = null
   /** What the running listener was started with, so `apply()` knows whether to restart. */
   #running: { port: number; fingerprint: string } | null = null
@@ -113,6 +155,7 @@ export class RemoteServer {
       maxUnauthenticated: 16,
       maxAuthenticated: 16,
       operations: () => [],
+      authExtras: () => ({}),
       ...options,
     }
   }
@@ -193,7 +236,7 @@ export class RemoteServer {
     server.requestTimeout = this.#options.authTimeoutMs
     server.on('tlsClientError', () => undefined)
     const wss = new WebSocketServer({ server, path: '/v1', maxPayload: MAX_PAYLOAD, perMessageDeflate: true })
-    wss.on('connection', (ws, request) => this.#accept(ws, normalizeAddress(request.socket.remoteAddress)))
+    wss.on('connection', (ws, request) => this.#accept(ws, { kind: 'direct', address: normalizeAddress(request.socket.remoteAddress) }))
     // It re-emits the listener's errors; a failure to listen is reported as the state below instead.
     wss.on('error', (error) => {
       if (this.#server === server) console.error(`[remote] websocket server error: ${String(error)}`)
@@ -223,6 +266,8 @@ export class RemoteServer {
     server.on('error', (error) => console.error(`[remote] listener error: ${String(error)}`))
     this.#server = server
     this.#wss = wss
+    this.#tls = { key, cert }
+    this.#relayWss = new WebSocketServer({ noServer: true, path: '/v1', maxPayload: MAX_PAYLOAD, perMessageDeflate: true })
     this.#running = { port, fingerprint }
     this.#state = outcome
     this.#pingTimer = setInterval(() => this.#ping(), this.#options.pingIntervalMs)
@@ -235,9 +280,19 @@ export class RemoteServer {
     this.#pingTimer = null
     const server = this.#server
     const wss = this.#wss
+    const relayWss = this.#relayWss
     this.#server = null
     this.#wss = null
+    this.#relayWss = null
+    this.#tls = null
     this.#running = null
+    // A relayed stream not yet upgraded is in no connection list: it is ended here, or it would outlive the stop.
+    for (const pending of [...this.#pendingRelays]) {
+      clearTimeout(pending.timer)
+      this.#pendingRelays.delete(pending)
+      pending.stream.destroy()
+    }
+    relayWss?.close()
     const connections = [...this.#connections]
     for (const connection of connections) connection.ws.close(CLOSE.off, 'remote access turned off')
     if (server) {
@@ -253,12 +308,69 @@ export class RemoteServer {
         }, this.#options.failureDelayMs).unref()
       })
     }
+    // `closeAllConnections()` reaches only the listening server's sockets; a relayed one is ended here.
+    for (const stream of [...this.#relayStreams]) stream.destroy()
     const wasOn = this.#state.status !== 'off'
     this.#state = { status: 'off' }
     if (wasOn) this.#changed()
   }
 
-  #accept(ws: WebSocket, address: string): void {
+  /**
+   * A relayed byte stream (`phone-relay`, design D7): served by a TLS server of its own that never listens, so the
+   * grant is known by construction (a relayed socket has no address, and its source stream is reachable only through
+   * Node's internal fields). **A server that never listens enforces none of the HTTP timeouts**, so the stream keeps
+   * its own deadline until it is upgraded. Returns whether it was taken; a refused stream is destroyed.
+   */
+  acceptRelayed(stream: RelayedStream, grant: string, phone: string): boolean {
+    const tlsIdentity = this.#tls
+    const relayWss = this.#relayWss
+    // `#server`, not `state()`: a stop clears `#server` at once and the state only after it awaited.
+    if (!this.#server || !tlsIdentity || !relayWss) {
+      stream.destroy()
+      return false
+    }
+    const key = relayThrottleKey(grant)
+    const tunnel = createServer({ key: tlsIdentity.key, cert: tlsIdentity.cert, minVersion: 'TLSv1.2' }, (_request, response) => {
+      response.writeHead(404).end()
+    })
+    tunnel.on('tlsClientError', () => undefined)
+    const pending: PendingRelay = {
+      stream,
+      grant,
+      timer: setTimeout(() => {
+        if (!this.#pendingRelays.delete(pending)) return
+        this.#options.throttle.fail(key)
+        stream.destroy()
+      }, this.#options.authTimeoutMs),
+    }
+    pending.timer.unref()
+    this.#pendingRelays.add(pending)
+    this.#relayStreams.add(stream)
+    stream.once('close', () => {
+      this.#relayStreams.delete(stream)
+      // Closed before its deadline (a phone dropping mid-handshake, the leg ending): not a failure.
+      if (this.#pendingRelays.delete(pending)) clearTimeout(pending.timer)
+    })
+    tunnel.on('upgrade', (request, socket, head) => {
+      if (!relayWss.shouldHandle(request)) {
+        socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n')
+        return
+      }
+      relayWss.handleUpgrade(request, socket, head, (ws) => {
+        if (this.#pendingRelays.delete(pending)) clearTimeout(pending.timer)
+        if (this.#relayWss !== relayWss) {
+          ws.terminate()
+          return
+        }
+        this.#accept(ws, { kind: 'relay', grant, phone })
+      })
+    })
+    tunnel.emit('connection', stream)
+    return true
+  }
+
+  #accept(ws: WebSocket, source: Source): void {
+    const address = source.kind === 'direct' ? source.address : relayThrottleKey(source.grant)
     ws.on('error', () => undefined)
     if (this.#options.throttle.blocked(address)) {
       ws.send(errorFrame(null, 'THROTTLED', 'too many failed attempts from this address; try again later'))
@@ -274,6 +386,7 @@ export class RemoteServer {
       id: this.#nextId++,
       ws,
       address,
+      relayPhone: source.kind === 'relay' ? source.phone : null,
       deviceId: null,
       refused: false,
       missedPings: 0,
@@ -342,17 +455,21 @@ export class RemoteServer {
     }
 
     let deviceId: string
-    let extra: Record<string, unknown> = {}
+    let extra: Record<string, unknown>
     if (frame.m === 'hello') {
       const device = typeof frame.p.deviceId === 'string' ? this.#options.store.device(frame.p.deviceId) : undefined
-      if (!device || !secretMatches(frame.p.deviceSecret, device.secretHash)) {
+      // Through the relay, only the grant's phone (fixed when the tunnel was accepted, never looked up now).
+      const allowed = connection.relayPhone === null || device?.id === connection.relayPhone
+      if (!device || !allowed || !secretMatches(frame.p.deviceSecret, device.secretHash)) {
         ws.send(errorFrame(frame.id, 'AUTH_FAILED', 'unknown device or wrong credential'))
         this.#refuse(connection, true)
         return
       }
       deviceId = device.id
+      extra = this.#options.authExtras(deviceId)
     } else {
-      if (!this.#options.pairing.consume(frame.p.code)) {
+      // Pairing happens only directly: through the relay the open code is not even looked at.
+      if (connection.relayPhone !== null || !this.#options.pairing.consume(frame.p.code)) {
         ws.send(errorFrame(frame.id, 'PAIRING_FAILED', 'the pairing code is not valid'))
         this.#refuse(connection, true)
         return
@@ -392,6 +509,9 @@ export class RemoteServer {
     const handle: RemoteConnection = {
       id: connection.id,
       deviceId,
+      method: frame.m === 'hello' ? 'hello' : 'pair',
+      relayed: connection.relayPhone !== null,
+      extras: frame.m === 'hello' ? extra : {},
       send: (text) => {
         if (ws.readyState === ws.OPEN) ws.send(text)
       },

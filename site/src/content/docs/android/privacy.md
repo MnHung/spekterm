@@ -3,21 +3,30 @@ title: spekterm for Android — Privacy policy
 description: What spekterm for Android sends, where it sends it, and what it keeps on your phone.
 ---
 
-Effective 2026-10-20.
+Effective 2026-11-06.
 
 spekterm for Android ("the app") is the companion app of spekterm, the desktop workbench. It is open source:
 [github.com/spekhq/spekterm-android](https://github.com/spekhq/spekterm-android). It is available on
 [Google Play](https://play.google.com/store/apps/details?id=com.spekterm.android).
 
-**The app sends nothing to its developer or to any third party.** It has no account, no server of its own, no analytics,
-no advertising and no crash reporting.
+**The app sends nothing to its developer.** It has no account, no server of its own, no analytics, no advertising, no
+crash reporting and no push service.
 
 ## Connections
 
-The app connects only to the computer running spekterm that you paired it with, or, while you pair, to the addresses in
-the pairing link or QR code you chose. It connects over your local network, Tailscale, or a port you forward. The
-connection is encrypted with TLS, and the app accepts only the certificate of the desktop you paired (its fingerprint
-comes from the pairing code), so no one in between can read it, including the app's developer.
+The app connects to the computer running spekterm that you paired it with, or, while you pair, to the addresses in
+the pairing link or QR code you chose. It connects directly — over your local network, Tailscale, or a port you forward —
+and that stays its first choice. The connection is encrypted with TLS, and the app accepts only the certificate of the
+desktop you paired (its fingerprint comes from the pairing code), so no one in between can read it, including the app's
+developer.
+
+**Through your team's server.** Only if your desktop is on a team and you turned on its setting to reach the desktop
+through the team server, the desktop gives the app a pass for that server, and the app can also reach the desktop through
+it when no direct address works. That server is spekterm-server run by your team, the one your desktop is a member of —
+not by the app's developer. The connection to your desktop stays encrypted end to end: inside it, the app still accepts
+only your desktop's certificate, so the team's server cannot read or change what passes. The team's server does see your
+phone's IP address, when it connects and for how long, how many bytes cross each way, and which pass it used; its logs
+record ids, durations and byte counts, not addresses or content. Pairing always happens directly.
 
 ## What goes to your desktop
 
@@ -36,7 +45,7 @@ sent.
 ## On the phone
 
 The pairing (the desktop's addresses, its certificate fingerprint and a credential protected by the phone's Android
-Keystore), a few preferences, and a connection log for troubleshooting stay on the phone. They are excluded from Android
+Keystore), the pass for your team's server if your desktop gave one (protected the same way), a few preferences, and a connection log for troubleshooting stay on the phone. They are excluded from Android
 backup and device transfer. The connection log holds connection events, the desktop's addresses and the outcomes of
 requests, not the text of messages, names or titles; it leaves the phone only if you share it yourself from Settings.
 Unpairing deletes the credential; uninstalling the app deletes everything it stored.

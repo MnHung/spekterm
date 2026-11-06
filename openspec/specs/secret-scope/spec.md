@@ -104,6 +104,13 @@ is written only by the user's join (`team-membership`). It SHALL therefore alway
 which satisfies the second rule for every value. No handoff, inbox delivery, agent outbox file or message from the
 server SHALL change it.
 
+**A relay grant (`phone-relay`) belongs to the phone it was made for.** Its secret is issued by the team server for
+that phone to present, so it SHALL be sent only to that phone, inside the remote access listener's authenticated
+connection of that phone (the `hello` answer and `relay.changed`), and never to another device, the renderer, a log
+or any other destination. The device secret SHALL go to the team server in `relay.accept` on a relay leg, as in
+`hello`, and only to the server of the stored membership. The address and pin given to the phone with a grant SHALL be
+the membership's own, never a value from an event or another input.
+
 #### Scenario: 端點非預設值時使用者看得到
 
 - **WHEN** 端點被設為非預設值
@@ -129,6 +136,18 @@ server SHALL change it.
 
 - **WHEN** the user pastes an invite whose server address is `ws://` or `https://`
 - **THEN** the invite is refused and no connection is made
+
+#### Scenario: A grant secret reaches only its phone
+
+- **WHEN** two phones are connected, the relay setting is on, and each holds a grant
+- **THEN** each phone's connection receives only its own grant's secret, and no frame to the other phone, no
+  renderer state and no log line contains it
+
+#### Scenario: The relay leg sends the device secret only to the membership's server
+
+- **WHEN** a tunnel is accepted
+- **THEN** `relay.accept` with the device secret is sent on a connection to the stored membership's server address,
+  after its certificate was checked, and to no other host
 
 ### Requirement: 機密不出現在診斷輸出
 

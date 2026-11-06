@@ -76,6 +76,9 @@ function defaultState() {
     syncPageSize: 100,
     /** The next `handoff.sync` is answered as a reset (`reset: true`, from 0). */
     syncReset: false,
+    /** The relay's grants for this device (`phone-relay`): id → name. Answered only when listed in `operations`. */
+    grants: new Map(),
+    nextGrant: 1,
   }
 }
 
@@ -183,6 +186,20 @@ export async function startStubTeamServer({ port }) {
         if (state.holdReceived) return 'held'
         return state.received?.(String(p.id)) ?? { ok: true, r: {} }
       }
+      case 'relay.grant': {
+        if (!state.operations.includes('relay.grant')) return { ok: false, e: { code: 'UNKNOWN_OPERATION', message: m } }
+        const id = `g_stub${state.nextGrant++}`
+        state.grants.set(id, String(p.name ?? ''))
+        return { ok: true, r: { grant: { id, name: String(p.name ?? ''), createdAt: Date.now() }, secret: `grant-secret-${id}` } }
+      }
+      case 'relay.grants':
+        if (!state.operations.includes('relay.grants')) return { ok: false, e: { code: 'UNKNOWN_OPERATION', message: m } }
+        return { ok: true, r: { grants: [...state.grants.entries()].map(([id, name]) => ({ id, name, createdAt: 0 })) } }
+      case 'relay.revoke':
+        if (!state.operations.includes('relay.revoke')) return { ok: false, e: { code: 'UNKNOWN_OPERATION', message: m } }
+        return { ok: true, r: { revoked: state.grants.delete(String(p.id)) } }
+      case 'relay.refuse':
+        return { ok: true, r: {} }
       case 'team.members':
         return { ok: true, r: { members: state.members.map((x) => ({ ...x, deviceCount: x.id === state.member.id ? state.deviceCount : 1 })) } }
       default:

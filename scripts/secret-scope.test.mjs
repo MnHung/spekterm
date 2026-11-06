@@ -87,12 +87,16 @@ const SECRET_FORBIDDEN = [
  * - `team-connection.ts` — it puts the team device secret into `hello` (`team-membership`), sent only to the server
  *   address of the membership it belongs to, over a connection whose certificate was verified. The join answer's
  *   secret is wrapped there and stored through `SecretStore.setSecret`, so no other team module reveals it.
+ * - `relay-grants.ts` — the relay grants (`phone-relay`): it reads the stored blob of grant secrets, made by the team
+ *   server for this desktop's phones, and gives each phone its own grant over that phone's authenticated remote
+ *   connection. It is the only module that holds a grant secret in plain text.
  */
 const REVEAL_ALLOWLIST = [
   SECRET_MODULE,
   join('src', 'main', 'slack-api.ts'),
   join('src', 'main', 'remote-store.ts'),
   join('src', 'main', 'team-connection.ts'),
+  join('src', 'main', 'relay-grants.ts'),
 ]
 
 /** `reveal()` 的方法名。 */

@@ -15,7 +15,10 @@ spekterm SHALL be able to belong to one team on one spekterm-server (protocol ve
 The feature SHALL be **off** until the user turns it on in Settings. While it is off, spekterm SHALL open no
 connection to any team server and SHALL send nothing to one. While it is on, spekterm SHALL hold **at most one**
 connection, to the server of the membership it holds, and only while it holds a device credential; with no
-membership it SHALL connect only to inspect or redeem an invite the user pasted, when the user asks.
+membership it SHALL connect only to inspect or redeem an invite the user pasted, when the user asks. **Relay legs**
+(`phone-relay`) are the one addition: while the relay setting is on, spekterm SHALL also open a connection to that same
+server's `/relay` path for each tunnel one of its paired phones asks for, and none otherwise. Legs neither replace
+nor are replaced by the one `/connect` connection, and SHALL NOT be opened while the feature is off.
 
 Turning the feature off SHALL close the connection and SHALL keep the membership and its credential, so turning it
 on again reconnects without a new invite. Turning it off SHALL NOT be presented as leaving the team.
@@ -30,6 +33,12 @@ on again reconnects without a new invite. Turning it off SHALL NOT be presented 
 - **WHEN** the device is connected to its team and the user turns the feature off, then on again
 - **THEN** the connection is closed while it is off, and once it is on again the device connects with the same
   credential and no invite is asked for
+
+#### Scenario: Relay legs open only for a phone's tunnel
+
+- **WHEN** the device is connected to its team with the relay setting on, and no phone asks for a tunnel
+- **THEN** spekterm holds exactly one connection to the team server; once a phone asks for a tunnel and it is
+  accepted, it holds one more, to the same server's `/relay`
 
 ### Requirement: An invite link is read strictly, and the server address comes only from the user's join
 
@@ -149,8 +158,8 @@ secret store's wrapper): the answer's frame, an error built from it, and every l
 
 The secret SHALL NOT reach the renderer, any child process's environment, a diagnostic output, or any file spekterm
 writes for an agent or a terminal (the handoff introduction, relations, receipts, context files, scrollback). It
-SHALL be sent only in a `hello` to the server address of the membership it belongs to, over a connection whose
-certificate was verified.
+SHALL be sent only in a `hello`, or in a `relay.accept` on a relay leg (`phone-relay`), to the server address of the
+membership it belongs to, over a connection whose certificate was verified.
 
 **Known gap, recorded and not claimed absent**: the secret store is a file owned by the user (`0600`), as the Slack
 tokens are. A process the user runs — an agent with a shell among them — can read it. spekterm never hands the
@@ -178,9 +187,16 @@ secret to an agent; it does not stop one that reads the user's files from findin
 - **WHEN** a join succeeds and, in another attempt, the join answer arrives on a connection that then fails
 - **THEN** no log line and no error message contains the device secret
 
+#### Scenario: The relay leg carries the credential only to the membership's server
+
+- **WHEN** a phone's tunnel is accepted
+- **THEN** the device secret is sent in `relay.accept` on a connection to the membership's server address whose
+  certificate was verified, and in no other frame of that leg
+
 ### Requirement: Nothing is sent before the server's certificate is verified
 
-Every connection to a team server SHALL be TLS, to `<server address>/connect`. **No application data SHALL be sent
+Every connection to a team server SHALL be TLS, to `<server address>/connect` or, for a relay leg (`phone-relay`), to
+`<server address>/relay`. **No application data SHALL be sent
 before the server's certificate is verified** — the WebSocket upgrade request included; only the TLS handshake
 itself precedes the check:
 
@@ -209,6 +225,11 @@ itself precedes the check:
 
 - **WHEN** the invite carries the fingerprint of the server's self-signed certificate
 - **THEN** the device joins and connects
+
+#### Scenario: A relay leg with a mismatched pin sends nothing
+
+- **WHEN** a tunnel is accepted and the server presents a certificate other than the pinned one on the relay leg
+- **THEN** the leg is closed before any application data, the upgrade request included, is sent
 
 ### Requirement: Whether to reconnect follows the protocol's codes
 

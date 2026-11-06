@@ -330,8 +330,11 @@ spekterm's documentation SHALL state, in a page about data and network:
   GitHub release it comes from;
 - that the app listens for connections only while the user has turned remote access on. At that time it
   listens on the configured port on every network interface, only paired devices can use the
-  connection, and the feature itself connects to nothing: a phone is told of events only over its own
-  connection;
+  connection, and a phone is told of events only over its own connection. **The relay** (`phone-relay`): only while
+  the user has also turned on reaching the desktop through the team server, the app connects to the team server it is
+  a member of when one of its paired phones asks for it, carrying that phone's encrypted connection to the desktop,
+  which the server cannot read; that the server learns which phone reaches the desktop, when, for how long and how
+  many bytes; and that the app opens no connection for an event;
 - which programs the app starts that make their own connections: the `claude` CLI; the `openspec` CLI,
   including that it sends anonymous usage statistics and how to turn them off in a way that works however
   spekterm is started; and the user's login shell at startup;
@@ -350,7 +353,9 @@ allow-list names this page.
 #### Scenario: The page states remote access
 
 - **WHEN** spekterm's data and network page of the built site is read in either language
-- **THEN** it states that the app listens only while remote access is on, that only paired devices can use the connection, and that remote access makes no outbound connection of its own
+- **THEN** it states that the app listens only while remote access is on, that only paired devices can use the
+  connection, and that remote access connects to nothing except, with the relay setting on, the team server when a
+  phone asks for it — with what that server can and cannot see
 
 #### Scenario: The page states the update check
 

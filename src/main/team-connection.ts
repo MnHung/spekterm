@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import tls from 'node:tls'
 
-import WebSocket from 'ws'
+import WebSocket, { createWebSocketStream } from 'ws'
 
 import type { Secret } from './secret-store'
 import { connectUrl } from './team-invite'
@@ -26,6 +26,18 @@ import { connectUrl } from './team-invite'
  * its close long after a newer one authenticated — read as a drop, it would reconnect a third time and make the
  * server close the current one with 4006. Every end decided here terminates, and the owner ignores events of a
  * connection it no longer holds (the generation in `team-service.ts`).
+ *
+ * ## Relay legs (`phone-relay`, design D6)
+ *
+ * `openRelayLeg` opens the desktop's side of a tunnel a phone asked for: the same check before anything is sent, to
+ * `<server>/relay` of the membership's own server (the caller passes the stored address; the event carries none),
+ * one `relay.accept`, then the leg's bytes as a stream for the remote access listener. Two wrappers on that stream:
+ *
+ * - **Every write is cut into messages of at most 64 KiB.** `createWebSocketStream` sends one message per write, and
+ *   the listener's TLS hands down a whole application write as one chunk; the relay ends a tunnel on a message over
+ *   256 KiB, so one large snapshot would end it on every reconnect.
+ * - **Its end terminates the WebSocket.** The stream's own `_final` calls `close()`, which waits for the relay's close
+ *   frame — 30 s when the relay is not reading.
  */
 
 /** The protocol versions this client speaks (`invite.inspect`, `join`, `hello`). */
@@ -40,6 +52,12 @@ export const PING_TIMEOUT_MS = 75_000
 export const MAX_OUTGOING_FRAME_BYTES = 256 * 1024
 /** What this client accepts; the protocol bounds only client frames. */
 export const MAX_INCOMING_FRAME_BYTES = 1024 * 1024
+/** A relay leg's messages: what this client sends, cut to this size (server design D4). */
+export const RELAY_CHUNK_BYTES = 64 * 1024
+/** What the relay passes at most in one message (its own limit). */
+export const RELAY_MAX_MESSAGE_BYTES = 256 * 1024
+/** From the call to `relay.accept`'s answer. */
+export const RELAY_ACCEPT_TIMEOUT_MS = 10_000
 
 export interface ErrorAnswer {
   code: string
@@ -96,7 +114,7 @@ function isIp(host: string): boolean {
 
 /** Opens the TLS socket and checks the certificate before anything else is written. */
 function openVerified(
-  options: ConnectionOptions,
+  options: Pick<ConnectionOptions, 'server' | 'fingerprint' | 'testing'>,
   signal: { aborted: boolean; socket?: tls.TLSSocket },
 ): Promise<tls.TLSSocket> {
   const { host, port } = hostOf(options.server)
@@ -319,4 +337,177 @@ export class TeamConnection {
     const withError = this.#preAuthError !== undefined && end.kind !== 'tls' && end.kind !== 'network' ? { ...end, preAuthError: this.#preAuthError } : end
     this.#options.onEnd(withError as ConnectionEnd)
   }
+}
+
+
+// ---- Relay legs (`phone-relay`) ----
+
+/** A leg's byte stream: what `remote-server.ts` takes as one more incoming connection. */
+export type RelayStream = ReturnType<typeof createWebSocketStream>
+
+/** How a leg ended: a close code, an error answer's code, or a local reason. */
+export type RelayLegEnd =
+  | { kind: 'closed'; code: number }
+  | { kind: 'refused'; code: string }
+  | { kind: 'tls'; pinMismatch: boolean; reason: string }
+  | { kind: 'network'; reason: string }
+  | { kind: 'timeout' }
+  | { kind: 'protocol'; reason: string }
+  | { kind: 'terminated' }
+
+export interface RelayLegOptions {
+  /** The stored membership's server address and pin — never anything from the event. */
+  server: string
+  fingerprint?: string
+  deviceId: string
+  secret: Secret
+  tunnel: string
+  /** Called once, however the leg ends. */
+  onEnd: (end: RelayLegEnd) => void
+  testing?: { ca?: string[]; acceptTimeoutMs?: number }
+}
+
+export interface RelayLeg {
+  stream: RelayStream
+  /** Ends the leg at once. */
+  terminate(): void
+}
+
+/** The relay URL of a server address: exactly `/relay`. */
+export function relayUrl(server: string): string {
+  return `${server.replace(/\/+$/, '')}/relay`
+}
+
+/**
+ * Wraps a WebSocket stream so each write leaves as messages of at most `chunk` bytes, in order, the callback after
+ * the last; and so its end terminates the WebSocket instead of waiting for a closing handshake. `_write` and `_final`
+ * are set per instance by `createWebSocketStream` (ws 8), so they are wrapped on the instance; `team-connection.test.ts`
+ * pins both behaviours against a stand-in relay.
+ */
+export function cutAndTerminate(stream: RelayStream, ws: WebSocket, chunk = RELAY_CHUNK_BYTES): RelayStream {
+  type Write = (chunk: Buffer, encoding: BufferEncoding, callback: (error?: Error | null) => void) => void
+  const target = stream as unknown as { _write: Write; _final: (callback: (error?: Error | null) => void) => void }
+  const send = target._write
+  target._write = function (data, encoding, callback) {
+    const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data as unknown as string, encoding)
+    let offset = 0
+    const next = (error?: Error | null): void => {
+      if (error) {
+        callback(error)
+        return
+      }
+      if (offset >= buffer.length) {
+        callback()
+        return
+      }
+      const piece = buffer.subarray(offset, offset + chunk)
+      offset += piece.length
+      send.call(stream, piece, encoding, next)
+    }
+    next()
+  }
+  target._final = function (callback) {
+    ws.terminate()
+    callback()
+  }
+  return stream
+}
+
+/**
+ * Opens the desktop's leg of a tunnel and sends `relay.accept`. Resolves with the leg's stream once the answer is ok;
+ * otherwise reports the end through `onEnd` (once) and rejects. **No frame is ever logged**: the accept carries the
+ * device secret.
+ */
+export function openRelayLeg(options: RelayLegOptions): Promise<RelayLeg> {
+  return new Promise((resolve, reject) => {
+    const abort: { aborted: boolean; socket?: tls.TLSSocket } = { aborted: false }
+    let ws: WebSocket | null = null
+    let ended = false
+    let accepted = false
+    const end = (how: RelayLegEnd): void => {
+      if (ended) return
+      ended = true
+      clearTimeout(timer)
+      abort.aborted = true
+      abort.socket?.destroy()
+      try {
+        ws?.terminate()
+      } catch {
+        // Already gone.
+      }
+      options.onEnd(how)
+      if (!accepted) reject(new Error(`relay leg ended: ${how.kind}`))
+    }
+    const timer = setTimeout(() => end({ kind: 'timeout' }), options.testing?.acceptTimeoutMs ?? RELAY_ACCEPT_TIMEOUT_MS)
+    timer.unref()
+
+    openVerified({ server: options.server, fingerprint: options.fingerprint, testing: options.testing }, abort).then(
+      (socket) => {
+        if (ended) {
+          socket.destroy()
+          return
+        }
+        const leg = new WebSocket(relayUrl(options.server), {
+          createConnection: () => socket,
+          maxPayload: RELAY_MAX_MESSAGE_BYTES,
+          perMessageDeflate: false,
+          followRedirects: false,
+        })
+        ws = leg
+        leg.on('error', () => end({ kind: 'network', reason: 'websocket error' }))
+        leg.on('close', (code) => end({ kind: 'closed', code }))
+        const onAnswer = (data: WebSocket.RawData, isBinary: boolean): void => {
+          // Nothing but the answer may come first.
+          if (isBinary) {
+            end({ kind: 'protocol', reason: 'binary before the answer' })
+            return
+          }
+          let frame: Record<string, unknown>
+          try {
+            frame = JSON.parse(data.toString()) as Record<string, unknown>
+          } catch {
+            end({ kind: 'protocol', reason: 'unreadable answer' })
+            return
+          }
+          if (frame.t !== 'res' || frame.id !== 1) {
+            end({ kind: 'protocol', reason: 'not the answer' })
+            return
+          }
+          leg.off('message', onAnswer)
+          if (frame.ok !== true) {
+            const e = (frame.e ?? {}) as { code?: unknown }
+            end({ kind: 'refused', code: typeof e.code === 'string' ? e.code : 'INTERNAL' })
+            return
+          }
+          clearTimeout(timer)
+          accepted = true
+          // The stream is built only now, so the answer's text frame is never read as tunnel bytes.
+          const stream = cutAndTerminate(createWebSocketStream(leg), leg)
+          stream.on('error', () => end({ kind: 'terminated' }))
+          leg.once('close', () => stream.destroy())
+          resolve({ stream, terminate: () => end({ kind: 'terminated' }) })
+        }
+        leg.on('message', onAnswer)
+        leg.once('open', () => {
+          leg.send(
+            JSON.stringify({
+              t: 'req',
+              id: 1,
+              m: 'relay.accept',
+              p: { protocol: PROTOCOL_VERSIONS, deviceId: options.deviceId, deviceSecret: options.secret.reveal(), tunnel: options.tunnel },
+            }),
+          )
+        })
+      },
+      (error: Error & { pinMismatch?: boolean; aborted?: boolean; code?: string }) => {
+        if (error.aborted) return
+        const tlsFailure = error.pinMismatch === true || (typeof error.code === 'string' && /CERT|SSL|TLS|SELF_SIGNED|VERIFY/.test(error.code))
+        end(
+          tlsFailure
+            ? { kind: 'tls', pinMismatch: error.pinMismatch === true, reason: error.code ?? error.message }
+            : { kind: 'network', reason: error.code ?? error.message },
+        )
+      },
+    )
+  })
 }

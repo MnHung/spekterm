@@ -30,7 +30,8 @@ const API_ALLOW = [
   // Slack's Socket Mode, only after the user saved an app-level token.
   { file: 'src/main/slack-realtime.ts', api: 'WebSocket' },
   // The team server (`team-membership`), only while the Team feature is on and the device joined — or to inspect and
-  // redeem an invite the user pasted. One connection, to the address from that invite.
+  // redeem an invite the user pasted. One connection, to the address from that invite; with the relay on
+  // (`phone-relay`), also one leg to that same server's `/relay` per tunnel a paired phone asks for.
   { file: 'src/main/team-connection.ts', api: 'WebSocket' },
   // The app's own page from the dev server (development only; production uses `loadFile`).
   { file: 'src/main/index.ts', api: 'loadURL' },
@@ -75,7 +76,8 @@ const MODULE_ALLOW = new Set([
 /**
  * `{ file, module }` — a module allowed in one file only. The remote access listener is the only place a
  * server is created (`remote-access`; `scripts/server-source.test.mjs`): `https` for TLS and `ws` for the
- * WebSocket server. It accepts connections and makes none; the data and network page says so.
+ * WebSocket server — the listening one, and one that never listens per relay tunnel (`phone-relay`). It makes no
+ * connection; a relay leg is dialed by `team-connection.ts`. The data and network page says so.
  */
 const MODULE_ALLOW_FILES = [
   { file: 'src/main/remote-server.ts', module: 'https' },
@@ -84,8 +86,8 @@ const MODULE_ALLOW_FILES = [
   // through Electron's `net`. It never installs (`update-install.ts` does).
   { file: 'src/main/update-installer.ts', module: 'electron-updater' },
   // The team server's connection (`team-membership`): `tls` to open the socket and verify the certificate before
-  // anything is sent, then the `ws` client over that socket. A client: it creates no server
-  // (`scripts/server-source.test.mjs`).
+  // anything is sent, then the `ws` client over that socket — and, the same way, the relay legs (`phone-relay`). A
+  // client: it creates no server (`scripts/server-source.test.mjs`).
   { file: 'src/main/team-connection.ts', module: 'tls' },
   { file: 'src/main/team-connection.ts', module: 'ws' },
 ]

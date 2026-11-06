@@ -166,6 +166,7 @@ function Joined({ view, onPasteNew }: { view: TeamView; onPasteNew: () => void }
       </dl>
 
       <DeviceName name={m.device} connected={connected} offered={m.operations.includes('device.rename')} />
+      <Relay view={view} />
       <Members view={view} />
 
       {view.status === 'stopped' && view.reason === 'PIN_MISMATCH' ? (
@@ -175,6 +176,41 @@ function Joined({ view, onPasteNew }: { view: TeamView; onPasteNew: () => void }
       ) : null}
 
       <Leave view={view} />
+    </div>
+  )
+}
+
+/**
+ * Reaching this desktop from its phones through the team server (`phone-relay`, design D1): shown when the server
+ * offers it and remote access is on, and always while on, so it can be turned off.
+ */
+function Relay({ view }: { view: TeamView }): React.JSX.Element | null {
+  const { t } = useTranslation()
+  const relay = view.relay
+  if (!relay || (!relay.on && !relay.available)) return null
+  return (
+    <div className="mt-3">
+      <label className="flex items-center gap-2">
+        <input
+          type="checkbox"
+          aria-label={t('team.relay.enable')}
+          checked={relay.on}
+          onChange={(event) => void window.workspace.team.setRelay(event.target.checked)}
+        />
+        <span className="text-sm text-ink">{t('team.relay.enable')}</span>
+      </label>
+      <p className={HINT_CLASS}>{t('team.relay.statement')}</p>
+      {relay.on ? (
+        <p role="status" aria-label={t('team.relay.enable')} className={relay.blocked || relay.limitReached ? 'mt-1 text-xs text-danger' : 'mt-1 text-xs text-ink'}>
+          {relay.blocked === 'remote-off'
+            ? t('team.relay.blockedRemoteOff')
+            : relay.blocked === 'server'
+              ? t('team.relay.blockedServer')
+              : relay.limitReached
+                ? t('team.relay.limit', { withGrant: relay.phones.withGrant, paired: relay.phones.paired })
+                : t('team.relay.phones', { withGrant: relay.phones.withGrant, paired: relay.phones.paired })}
+        </p>
+      ) : null}
     </div>
   )
 }

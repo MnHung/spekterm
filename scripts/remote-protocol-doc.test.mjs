@@ -72,3 +72,23 @@ test('control: an operation documented but not accepted fails and names it', () 
   const doc = documentedOperations(`${readFileSync(DOC, 'utf8')}\n### \`fs.writeFile\`\n`)
   assert.deepEqual(difference(server, doc).unknown, ['fs.writeFile'])
 })
+
+/** The relay's part of the contract (`phone-relay`): what the Android app builds its relay path on. */
+export function relayStatements(doc) {
+  return {
+    field: /`relay`: this phone's relay grant/.test(doc) && /"url": string, "fp"\?: string, "grant": string, "secret": string/.test(doc),
+    absent: /\*\*Absent means this phone has no grant: discard a stored one\.\*\*/.test(doc),
+    event: /- `relay\.changed`: `\{ "relay": Relay \| null \}`/.test(doc) && /`null` means no grant/.test(doc),
+    noPair: /accepts `hello` only\. `pair` is answered `PAIRING_FAILED`/.test(doc),
+    throttle: /throttled per grant instead of per address/.test(doc),
+  }
+}
+
+test('the protocol document states the relay field and event', () => {
+  const statements = relayStatements(readFileSync(DOC, 'utf8'))
+  assert.deepEqual(Object.entries(statements).filter(([, ok]) => !ok).map(([name]) => name), [])
+})
+
+test('control: a document without the relay statements fails each check', () => {
+  assert.deepEqual(Object.values(relayStatements('# nothing about the relay')), [false, false, false, false, false])
+})

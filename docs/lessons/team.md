@@ -117,3 +117,55 @@ system's trust store and cannot connect. In the documented Docker setup the cont
 - **Anchored control groups follow the exact source text.** Changing `ticketFor`'s gate and `createSession`'s
   `addProvisional` line broke two `scripts/intake-control-groups.mjs` anchors (`scripts/control-groups-source.test.mjs`
   caught it); re-anchoring them is only half the job — run them, and see them turn red.
+
+## 10. The phone relay (`phone-relay`): what failed silently, or would have
+
+- **A relay leg is a WebSocket turned into a byte stream, and two of `createWebSocketStream`'s defaults are wrong for
+  it.** It sends one message per `_write`, and a TLS socket on top hands down a whole application write as one chunk:
+  a 900 KiB message is one 900 KiB message, and the relay ends the tunnel on anything over 256 KiB (1009). Cut every
+  write into ≤ 64 KiB (measured: with the cut a 900 KiB message crossed each way with the largest relayed message
+  65,536 bytes; without it, 1009). And its `_final` calls `close()`, which calls back only when the peer's close frame
+  arrives — 30 s when the relay stopped reading. Both are set **per instance** in ws 8, so `cutAndTerminate` wraps them
+  on the instance; `team-connection-relay.test.ts` pins both with controls that turn red. Its `_destroy` terminates the
+  WebSocket unless the WebSocket already errored (`terminateOnDestroy` starts true) — the first design said the
+  opposite.
+- **A type-only `import type { Duplex } from 'node:stream'` counts as an import** for the network-surface scan, and
+  `stream` is not allowed there. Type a stream as `ReturnType<typeof createWebSocketStream>` or the
+  `import('node:stream').Duplex` type query.
+- **The listener learns a relayed connection's grant by giving each tunnel its own `https.Server` that never listens**:
+  a relayed `TLSSocket` has no `remoteAddress` (measured `undefined`) and reaches its source stream only through Node's
+  internal fields. **A server that never listens enforces no HTTP timeouts** — Node tracks connections for
+  `headersTimeout` / `requestTimeout` only from `listening`, and `closeAllConnections()` reaches only a listening server
+  (review measurement: a relayed stream that finished TLS and sent nothing was still open after 6 s with a 1 s
+  `headersTimeout`; after `listen(0)`, closed at 1.2 s). So `acceptRelayed` keeps its own deadline until the upgrade,
+  `#stop` ends pending relayed streams itself, and a stream handed over during a stop is refused by `#server === null`,
+  not by `state()` (which changes only after the stop awaited).
+- **The grant's phone is fixed when the tunnel is accepted, never looked up at `hello`.** The Android app treats
+  `AUTH_FAILED` as "unpaired" and drops its credential; a lookup at `hello` time would answer the right phone
+  `AUTH_FAILED` whenever the user turned the relay off during the tunnel's handshake.
+- **Grant secrets wrapped in `Secret` and serialized with `JSON.stringify` are written as `[redacted]`**, and after a
+  restart the phone would get `[redacted]`, be refused, and never be given a new grant (the same id is on both sides).
+  `relay-grants.ts` keeps plain records private and reads them in two places; a round-trip test pins it.
+- **A `relay.grant` answer can arrive after the world changed.** The round re-reads the membership, the setting and the
+  paired phones after every await: a late grant for a phone no longer wanted is written as `revoke` and revoked in the
+  same round. The first test of it was green on the mutation that skips the re-check — `relayFor` hides the grant
+  anyway — and only an assertion on the request order (revoked before the next listing) told them apart.
+- **`stream.duplexPair` is not a stand-in for a relay leg**: a pair end is not destroyed with its peer, so a TLS socket
+  over it never closes and a WebSocket on top waits in CLOSING forever. The production shape (two WebSocket legs
+  spliced) closes in tens of milliseconds; `relay.testkit.ts` is that shape.
+- **Against the real server** (spekterm-server 0.4.0, `scripts/relay-live-check.ts`, 2026-11-06): join, grant, a phone
+  through `/relay` with the outer connection pinned to the server and the inner one to the listener, `hello` answered
+  with the grant, a 1 MiB message from the listener and a 900 KiB one from the phone crossing whole — 12/12.
+- **The listener's keepalive through a slow relay** (`--slow`, the server capped at 16 KiB/s per direction, three
+  minutes per case, 2026-11-06): terminal output at ≈ 8 KiB/s stayed up; at ≈ 64 KiB/s the relayed connection was
+  closed after 79 s (1006, missed pings) and a direct one through a 16 KiB/s TCP proxy after 160 s (the two throttles
+  differ: the server's token bucket and the script's proxy, kernel buffers on one hop versus two); a reconnect that
+  receives a 1 MiB snapshot then ≈ 8 KiB/s was closed after 74 s. The cause is design D9's: the listener sends every
+  frame at once and never looks at `bufferedAmount`, so its ping waits behind whatever the link has not carried yet,
+  and two missed pings (≈ 40 s late) end the connection. At the server's default cap (512 KiB/s) a 1 MiB snapshot takes
+  about two seconds. The keepalive was left as it is (the user's decision); backpressure on the listener's output is issue
+  #101.
+- **A phone gets a grant only over a connection it already has** (server design D11), so a relay turned off and on
+  again while the phone is away leaves it with no grant until its next direct connection — dogfooding with the Android
+  app's debug relay-only switch showed exactly that (a new grant created, no tunnel asked for, until one direct
+  connection). It is the design, not a fault; a phone that cannot use the relay should say why.

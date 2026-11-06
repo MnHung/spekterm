@@ -6,8 +6,16 @@ operations listed here and the ones the server accepts differ.
 
 Remote access is off by default. While the user has it on, spekterm listens on a TCP port (default 47615) on
 every network interface. The client connects directly — over the same LAN, Tailscale, or a router port forward.
-**Nothing sits in between, and spekterm makes no connection of its own**: a client learns of events only while
-it is connected.
+**Nothing reads the connection in between**: a client learns of events only while it is connected, and spekterm opens
+no connection to tell it of one.
+
+**The relay, a second path.** When the desktop is on a team (spekterm-server 0.4.0 or later, relaying on) and the user
+turned on "Reach this desktop from your phones through the team server", the desktop gives each paired phone a relay
+grant (section 4, `relay`). Away from the desktop's network, the phone can then ask the team server for a tunnel; the
+desktop dials that server and the server splices the two connections, passing the phone's TLS to the desktop without
+reading it (spekterm-server `docs/protocol.md` section 13). Inside the tunnel, everything in this document applies as on
+a direct connection, the certificate pin included — with the differences in section 4. Direct access stays the first
+choice.
 
 ## 1. Pairing link
 
@@ -41,7 +49,9 @@ it first: it is how a desktop whose address changed stays reachable without pair
 - **On Android with OkHttp, check the pin in both the `X509TrustManager` and the `HostnameVerifier`.** The
   default verifier fails a certificate with no SAN for every address; an "accept everything" verifier is the
   pattern Google Play's security scanning flags. Make both compare the leaf to the pin and reject otherwise.
-- Do not send anything — above all the credential or the pairing code — before the pin is checked.
+- Do not send anything — above all the credential or the pairing code — before the pin is checked. Through the relay
+the same holds for the inner TLS to the desktop; the outer connection to the team server is checked by that server's
+own rules (its `fp`, or the system's trust store and host name).
 - Frames are UTF-8 JSON text. A frame over 1 MiB closes the connection, with no error answer. The desktop keeps
   its answers to the `openspec.*` operations within the same 1 MiB (section 5); other answers, such as a
   `conversation.watch` history, are not bounded by it.
@@ -72,7 +82,7 @@ Stable strings; branch on them, show `message` only as a detail.
 | `NOT_AUTHENTICATED` | An operation before `hello` or `pair`. |
 | `AUTH_FAILED` | Unknown device or wrong credential. |
 | `PAIRING_FAILED` | The pairing code is not valid (used, expired, or its view closed). |
-| `THROTTLED` | Too many failed attempts from this address; refused for 60 seconds. |
+| `THROTTLED` | Too many failed attempts from this address, or through this relay grant; refused for 60 seconds. |
 | `TOO_MANY_CONNECTIONS` | The authenticated-connection cap (16) is reached. |
 | `NOT_FOUND` | No such session, item, change, spec, or folder — or no running process for it. |
 | `NO_WINDOW` | The desktop has no window (macOS after closing it); session actions cannot be carried out. |
@@ -115,12 +125,20 @@ The first frame must be `hello` or `pair`, within **10 seconds** of the TLS hand
 failed attempt. Ten failures from one address within 60 seconds refuse that address for 60 seconds; other
 addresses are unaffected. A refused connection is closed one second after the answer.
 
+**A connection through the relay** (section 1's second path):
+
+- accepts `hello` only. `pair` is answered `PAIRING_FAILED` and closed with 4003: pairing happens only directly.
+- authenticates only the phone its grant was made for. Another device's credential through that grant is answered
+  `AUTH_FAILED`.
+- is throttled per grant instead of per address: ten failures through one grant within 60 seconds refuse that grant
+  for 60 seconds (`THROTTLED`, 4030); other grants and direct addresses are unaffected.
+
 Both carry `protocol`: the versions the client supports, e.g. `[1]`. The answer's `r.protocol` is the one
 chosen. This document is version 1.
 
 ### `hello`
 
-`p`: `{ "protocol": [1], "deviceId": "…", "deviceSecret": "…" }` → `r`: `{ "protocol": 1, "server": { "name", "version" }, "addresses": [string], "operations": [string] }`
+`p`: `{ "protocol": [1], "deviceId": "…", "deviceSecret": "…" }` → `r`: `{ "protocol": 1, "server": { "name", "version" }, "addresses": [string], "operations": [string], "relay"?: Relay }`
 
 `addresses`: where the desktop may be reached now, built the same way as the pairing link's `a` list (its
 non-loopback interface addresses, IPv4 first, then IPv6 other than link-local, then the user's additional
@@ -131,6 +149,20 @@ has not authenticated.
 operation is listed: an older desktop does not have `sessions.rename`, `sessions.hibernate`, `sessions.close`,
 `attachments.put`, `conversation.answer`, `openspec.watch`, `sessions.submitPrefill`, `files.read`, `images.read` or `conversation.setModel`, and answers them `UNKNOWN_OPERATION`. Protocol version 1 grows only by new fields,
 operations, event values and error codes (section 9, obligation 7).
+
+`relay`: this phone's relay grant, present only when the desktop holds one for this device:
+`{ "url": string, "fp"?: string, "grant": string, "secret": string }`.
+
+| Field | Meaning |
+|---|---|
+| `url` | The team server's address as the desktop's membership holds it: `wss://host` or `wss://host:port`, no path. Open `<url>/relay`. |
+| `fp` | Present only when the membership pins the team server's certificate: SHA-256 of its leaf (DER), 64 upper-case hex digits; compare case-insensitively. Without it, check the team server's certificate against the system's trust store and the host name. |
+| `grant` | The grant id: 1–64 characters of `A`–`Z`, `a`–`z`, `0`–`9`, `_`, `-`. Opaque. |
+| `secret` | The grant secret. Store it in protected storage, as the device credential. |
+
+**Absent means this phone has no grant: discard a stored one.** It is never in the `pair` answer — the desktop asks the
+team server for the grant after pairing, and the phone receives it by `relay.changed` (section 6). Not an operation:
+`operations` does not list it. How the phone uses it is spekterm-server `docs/protocol.md` section 13.
 
 ### `pair`
 
@@ -785,6 +817,11 @@ current value, never a difference:
 - `addresses.changed`: `{ "addresses": [string] }`, the same list as in the `hello` answer, sent when it changes
   while you are connected (checked every few seconds). There is no operation for it: on reconnecting, the
   `hello` answer carries the current list.
+- `relay.changed`: `{ "relay": Relay | null }`, sent **only to the connections of the device it concerns**, when the
+  value its `hello` answer would carry changes: a grant appears, is replaced, or goes away. `null` means no grant:
+  discard a stored one. The desktop sends `null` when the user turns the relay or the Team feature off, unpairs the
+  phone, or leaves the team; turning the Team feature on again sends the grant again. On reconnecting, the `hello`
+  answer carries the current value.
 
 ## 7. Attention events and resuming
 
@@ -891,3 +928,6 @@ open (on Android, a foreground service), and reconnect with backoff when the net
     tell the user before sending that the conversation's cache is lost and the choice becomes the agent's default;
     never send a bare `/model` or `/effort`; hold the reply box until `conversation.status`'s `model` or the entry for
     `r.text` shows the switch, and after a few seconds say it may be waiting at the desktop.
+21. **Keep a relay grant only as the desktop last stated it.** Store `relay` in protected storage; discard it when a
+    `hello` answer has none or `relay.changed` says `null`; replace it when either carries another. Never pair through
+    the relay, and use a grant only with the credential of the device it was given to.

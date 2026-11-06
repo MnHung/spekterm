@@ -36,6 +36,11 @@ export interface Membership {
   members?: { list: TeamMember[]; fetchedAt: number }
   /** A `device.leave` was sent and not yet seen through (design D6). */
   leaving?: true
+  /**
+   * Reach this desktop from its phones through the team server (`phone-relay`, design D1). Absent = off. It lives on
+   * the membership, so leaving the team or a revocation drops it and a new join starts off.
+   */
+  relay?: true
 }
 
 /** A stop that outlives a restart: its reason, the spekterm version that stopped, whether the user was notified. */
@@ -55,6 +60,7 @@ export interface TeamState {
 
 export type MembershipPatch = Partial<Pick<Membership, 'device' | 'operations' | 'members' | 'member' | 'team'>> & {
   leaving?: boolean
+  relay?: boolean
 }
 
 const EMPTY: TeamState = { enabled: false, membership: null }
@@ -108,6 +114,8 @@ function parseMembership(raw: unknown): Membership | null | 'invalid' {
     operations: [...m.operations],
     ...(members ? { members } : {}),
     ...(m.leaving === true ? { leaving: true as const } : {}),
+    // Anything but `true` reads as off: a damaged value never turns the relay on.
+    ...(m.relay === true ? { relay: true as const } : {}),
   }
 }
 
@@ -199,7 +207,7 @@ export class TeamStore {
     const current = this.#state.membership
     if (!current) return
     // Field by field, not a spread: a cast that sneaks `server` into the patch must not reach the file.
-    const { leaving } = patch
+    const { leaving, relay } = patch
     const next: Membership = structuredClone(current)
     if (patch.device) next.device = structuredClone(patch.device)
     if (patch.operations) next.operations = [...patch.operations]
@@ -208,6 +216,8 @@ export class TeamStore {
     if (patch.team) next.team = structuredClone(patch.team)
     if (leaving === true) next.leaving = true
     if (leaving === false) delete next.leaving
+    if (relay === true) next.relay = true
+    if (relay === false) delete next.relay
     this.#commit({ ...this.#state, membership: next })
   }
 

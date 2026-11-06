@@ -4,7 +4,7 @@ import { eventFrame } from './remote-frames'
 import type { RemoteOutput } from './remote-output'
 import { AddressThrottle, PairingCodes } from './remote-pairing'
 import { AUTH_OPERATIONS, openRemoteSession, operationNames, type RemoteHost } from './remote-protocol'
-import { type ListenState, type RemoteConnection, RemoteServer } from './remote-server'
+import { type ListenState, type RelayedStream, type RemoteConnection, RemoteServer, relayThrottleKey } from './remote-server'
 import type { ProjectedDevice, RemoteStore, ResetReason } from './remote-store'
 import type { SessionEnd } from './terminal'
 
@@ -133,6 +133,15 @@ export class RemoteService {
   #lastAddresses = ''
   /** A running `openspec.changed` timer per folder. */
   readonly #openspecTimers = new Map<string, NodeJS.Timeout>()
+  /**
+   * The `relay` value each connection was last told (`phone-relay`, design D4), as JSON; `null` = none. Set from the
+   * `hello` answer when the session opens (a pairing connection: none), updated with each `relay.changed`.
+   */
+  readonly #relayBaselines = new Map<number, string>()
+  /** Where a device's `relay` value comes from (`RelayService.relayFor`); none until the relay is wired. */
+  #relayProvider: ((deviceId: string) => unknown | null) | null = null
+  /** Told when the paired devices or remote access's switch changed (the relay's inputs). */
+  readonly #relayInputListeners = new Set<() => void>()
 
   constructor(deps: RemoteServiceDeps) {
     this.#deps = deps
@@ -146,16 +155,25 @@ export class RemoteService {
       serverInfo: deps.serverInfo,
       addresses: () => this.currentAddresses(),
       operations: () => operationNames().filter((name) => !(AUTH_OPERATIONS as readonly string[]).includes(name)),
+      authExtras: (deviceId) => {
+        const relay = this.#relayProvider?.(deviceId) ?? null
+        return relay ? { relay } : {}
+      },
       ...deps.serverTimings,
       openSession: (connection) => {
         const handle = openRemoteSession(deps.host, connection)
         this.#sessions.set(connection.id, { connection, handle })
+        // Absent and `null` are the same "none" (design D4).
+        this.#relayBaselines.set(connection.id, connection.method === 'hello' ? JSON.stringify(connection.extras.relay ?? null) : 'null')
         this.#syncReconcile()
+        // A pairing is a new device: the relay may want a grant for it.
+        if (connection.method === 'pair') this.#relayInputsChanged()
         return {
           onRequest: handle.onRequest,
           dispose: () => {
             handle.dispose()
             this.#sessions.delete(connection.id)
+            this.#relayBaselines.delete(connection.id)
             this.#syncReconcile()
           },
         }
@@ -175,6 +193,7 @@ export class RemoteService {
     }
     await this.server.apply()
     this.#changed()
+    this.#relayInputsChanged()
   }
 
   async setEnabled(enabled: boolean): Promise<void> {
@@ -225,6 +244,7 @@ export class RemoteService {
     this.#deps.store.removeDevice(deviceId)
     this.server.revoke(deviceId)
     this.#changed()
+    this.#relayInputsChanged()
   }
 
   /** A new certificate, every device revoked, and the attention log starts over. */
@@ -236,6 +256,68 @@ export class RemoteService {
     this.#pairingOpen = false
     await this.server.apply()
     this.#changed()
+    this.#relayInputsChanged()
+  }
+
+  // ---- The relay (`phone-relay`) ----
+
+  /** Where each device's `relay` value comes from. */
+  setRelayProvider(provider: (deviceId: string) => unknown | null): void {
+    this.#relayProvider = provider
+  }
+
+  /** The paired devices changed, or remote access was turned on or off. */
+  onRelayInputs(listener: () => void): () => void {
+    this.#relayInputListeners.add(listener)
+    return () => this.#relayInputListeners.delete(listener)
+  }
+
+  #relayInputsChanged(): void {
+    for (const listener of this.#relayInputListeners) {
+      try {
+        listener()
+      } catch (error) {
+        console.error(`[remote] relay listener failed: ${String(error)}`)
+      }
+    }
+  }
+
+  /** The paired devices, by id and name. */
+  pairedDevices(): { id: string; name: string }[] {
+    return this.#deps.store.projectDevices().map(({ id, name }) => ({ id, name }))
+  }
+
+  /** Remote access is on and its listener is listening. */
+  listening(): boolean {
+    return this.#deps.store.get().enabled && this.server.state().status === 'listening'
+  }
+
+  enabled(): boolean {
+    return this.#deps.store.get().enabled
+  }
+
+  /** Whether failures through this grant have it refused now. */
+  relayThrottled(grant: string): boolean {
+    return this.throttle.blocked(relayThrottleKey(grant))
+  }
+
+  acceptRelayed(stream: RelayedStream, grant: string, phone: string): boolean {
+    return this.server.acceptRelayed(stream, grant, phone)
+  }
+
+  /**
+   * Tells this device's connections its current `relay` value, each only when it differs from what that connection
+   * was last told (design D4). No device given: every connected device.
+   */
+  relayChanged(deviceId?: string): void {
+    for (const { connection } of this.#sessions.values()) {
+      if (deviceId !== undefined && connection.deviceId !== deviceId) continue
+      const relay = this.#relayProvider?.(connection.deviceId) ?? null
+      const text = JSON.stringify(relay)
+      if (this.#relayBaselines.get(connection.id) === text) continue
+      this.#relayBaselines.set(connection.id, text)
+      connection.send(eventFrame('relay.changed', { relay }))
+    }
   }
 
   dismissResetNotice(): void {

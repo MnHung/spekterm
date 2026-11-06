@@ -1172,6 +1172,14 @@
     "membersFetched": "as of {{when}}",
     "you": "you",
     "renameOffline": "Renaming this device needs the connection.",
+    "relay": {
+      "enable": "Reach this desktop from your phones through the team server",
+      "statement": "Away from this computer's network, your paired phones can connect through the team's server. The server passes the encrypted connection on without reading it; it sees which phone connects, when, and how much. This computer connects to the server only when a phone asks. Pairing still happens only directly.",
+      "phones": "{{withGrant}} of {{paired}} paired phones can connect through the server.",
+      "limit": "{{withGrant}} of {{paired}} paired phones can connect through the server: the server allows no more for this device.",
+      "blockedRemoteOff": "Remote access is off, so no phone can connect.",
+      "blockedServer": "The team server no longer offers this, so no phone can connect through it."
+    },
     "renameNotOffered": "This server does not offer renaming.",
     "renameRefused": "The server refused this name.",
     "leave": "Leave team",

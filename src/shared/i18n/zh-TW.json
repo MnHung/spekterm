@@ -1144,6 +1144,14 @@
     "membersFetched": "取得於 {{when}}",
     "you": "你",
     "renameOffline": "要連線才能改裝置名稱。",
+    "relay": {
+      "enable": "讓手機經團隊伺服器連到這台電腦",
+      "statement": "離開這台電腦所在的網路時，已配對的手機可以經團隊的伺服器連進來。伺服器只轉送加密過的連線、看不到內容；它看得到是哪支手機、什麼時候、傳了多少。只有在手機要求時，這台電腦才會連到伺服器。配對仍然只能直連。",
+      "phones": "{{paired}} 支已配對的手機中，有 {{withGrant}} 支可以經伺服器連進來。",
+      "limit": "{{paired}} 支已配對的手機中，有 {{withGrant}} 支可以經伺服器連進來：伺服器不再為這台裝置發更多通行證。",
+      "blockedRemoteOff": "遠端存取關著，所以沒有手機連得進來。",
+      "blockedServer": "團隊伺服器已不再提供這項功能，手機無法經它連進來。"
+    },
     "renameNotOffered": "這台 server 不提供改名。",
     "renameRefused": "server 不接受這個名稱。",
     "leave": "離開團隊",

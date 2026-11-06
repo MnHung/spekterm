@@ -46,6 +46,13 @@ export interface TestServer {
   received: number[]
   frames: { m: string; p: Record<string, unknown> }[]
   sockets: WebSocket[]
+  /**
+   * The server side of each `/relay` connection (`phone-relay`), in order. Its first text frame goes to the handler
+   * like any request; after an ok answer it carries binary messages, at most 256 KiB each (over it: 1009), as
+   * spekterm-server's relay does. `relayMessages` records each binary message's size per leg.
+   */
+  relayLegs: WebSocket[]
+  relayMessages: number[][]
   setHandler(handler: Handler): void
   close(): Promise<void>
 }
@@ -55,6 +62,8 @@ export async function startTestServer(cert: TestCert, handler: Handler): Promise
   const received: number[] = []
   const frames: TestServer['frames'] = []
   const sockets: WebSocket[] = []
+  const relayLegs: WebSocket[] = []
+  const relayMessages: number[][] = []
   const server = https.createServer({ key: cert.keyPem, cert: cert.certPem })
   server.on('secureConnection', (tlsSocket) => {
     const index = received.push(0) - 1
@@ -62,7 +71,33 @@ export async function startTestServer(cert: TestCert, handler: Handler): Promise
       received[index] += chunk.length
     })
   })
-  const wss = new WebSocketServer({ server, path: '/connect' })
+  const wss = new WebSocketServer({ noServer: true })
+  const relayWss = new WebSocketServer({ noServer: true, maxPayload: 256 * 1024 })
+  server.on('upgrade', (request, socket, head) => {
+    const path = new URL(request.url ?? '/', 'https://localhost').pathname
+    if (path === '/connect') wss.handleUpgrade(request, socket, head, (ws) => wss.emit('connection', ws, request))
+    else if (path === '/relay') relayWss.handleUpgrade(request, socket, head, (ws) => relayWss.emit('connection', ws, request))
+    else socket.destroy()
+  })
+  relayWss.on('connection', (socket) => {
+    const index = relayLegs.push(socket) - 1
+    relayMessages.push([])
+    socket.on('error', () => undefined)
+    let answered = false
+    socket.on('message', (data, isBinary) => {
+      if (isBinary) {
+        relayMessages[index].push((data as Buffer).length)
+        return
+      }
+      if (answered) return
+      answered = true
+      const frame = JSON.parse(data.toString()) as { id: number; m: string; p?: Record<string, unknown> }
+      frames.push({ m: frame.m, p: frame.p ?? {} })
+      const answer = current(frame.m, frame.p ?? {}, socket)
+      if (answer === 'silent') return
+      socket.send(JSON.stringify({ t: 'res', id: frame.id, ...answer }))
+    })
+  })
   wss.on('connection', (socket) => {
     sockets.push(socket)
     socket.on('message', (data) => {
@@ -80,13 +115,17 @@ export async function startTestServer(cert: TestCert, handler: Handler): Promise
     received,
     frames,
     sockets,
+    relayLegs,
+    relayMessages,
     setHandler(next) {
       current = next
     },
     close: () =>
       new Promise<void>((resolve) => {
         for (const socket of wss.clients) socket.terminate()
+        for (const socket of relayWss.clients) socket.terminate()
         wss.close()
+        relayWss.close()
         server.closeAllConnections()
         server.close(() => resolve())
       }),

@@ -44,7 +44,8 @@
       "GitHub",
       "Check for updates automatically",
       "team server",
-      "Its operator can read everything"
+      "Its operator can read everything",
+      "the server cannot read or change it"
     ],
     "zh-TW": [
       "Slack",
@@ -55,7 +56,8 @@
       "login shell",
       "遠端存取",
       "團隊 server",
-      "它的管理者讀得到經過它的所有內容"
+      "它的管理者讀得到經過它的所有內容",
+      "伺服器讀不到、也改不了內容"
     ]
   },
   "forbiddenPhrases": [

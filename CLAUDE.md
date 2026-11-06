@@ -128,13 +128,20 @@ OpenSpec 結構的側欄，讓使用者不必另外開 IDE 就能一邊駕駛 ag
 - **Remote access** (`mobile-remote-bridge`) — **off by default**. When the user turns it on, a companion
   Android app (its own repository, built against `docs/remote-protocol.md`) reaches spekterm **directly**:
   TLS WebSocket on one port, all interfaces, a self-signed certificate the phone pins, per-device credentials
-  stored as hashes. **No relay, no push service, no outbound connection**: the phone learns of attention
-  events only over its own connection, and a short in-memory log replays what it missed. Three rules that fail
-  silently if forgotten:
+  stored as hashes. **No push service, and no connection opened for an event**: the phone learns of attention
+  events only over its own connection, and a short in-memory log replays what it missed. **The relay**
+  (`phone-relay`, off by default, Settings → Team): for a desktop on a team, each paired phone gets a grant for the team
+  server, and when a phone asks, `team-connection.ts` dials **the membership's own server** (`/relay`) and hands the
+  byte stream to `remote-server.ts` as one more incoming connection — the phone's TLS still ends at the listener, the
+  server only splices. A relayed connection authenticates only as its grant's phone (fixed when the tunnel is accepted,
+  because the Android app unpairs on `AUTH_FAILED`), never pairs, and is throttled per grant. Grants live in
+  `relay-grants.ts`, the only module holding a grant secret in plain text. Three rules that fail silently if forgotten:
   - **`src/main/remote-server.ts` is the only module that may create a server or import `https`**, and
     `team-connection.ts` the only other one that imports `ws` — as a client (`scripts/server-source.test.mjs`,
     file-scoped entries in `scripts/network-surface.test.mjs`). `probe:core`
-    runs on a throwaway profile because the real one may have remote access on.
+    runs on a throwaway profile because the real one may have remote access on. The relay added no import: the
+    listener serves each tunnel with **its own `https.Server` that never listens** — and such a server enforces none of
+    the HTTP timeouts, so `acceptRelayed` keeps its own deadline until the upgrade (`docs/lessons/team.md`).
   - **The renderer stays the authority on sessions**: a device's create, wake, rename, hibernate, close, keep and accept
     are requests to it (`workspace:remote:request`), carried out **quietly** — no selection change, no keyboard
     focus, and no focused-session change except the one a close of the displayed session forces
@@ -176,7 +183,8 @@ OpenSpec 結構的側欄，讓使用者不必另外開 IDE 就能一邊駕駛 ag
 - **Teams** (`team-membership`) — **off by default**. Settings → Team joins a self-hosted spekterm-server (its own
   repository, contract in its `docs/protocol.md`) from an invite link; a device credential kept in the secret store
   (`team.deviceSecret`, readable by the user's processes like the Slack tokens — the user's decision) goes only to
-  that server, in `hello`. Three rules that fail silently if forgotten (`docs/lessons/team.md`):
+  that server, in `hello` (and in `relay.accept` on a relay leg). Three rules that fail silently if forgotten
+  (`docs/lessons/team.md`):
   - **Verify, then hand the socket to `ws`**: `team-connection.ts` opens TLS itself and builds the `ws` client over
     the verified socket, so no application data precedes the pin check. It is the only team module that touches the
     network and the only one that reveals the secret.

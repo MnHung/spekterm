@@ -112,6 +112,7 @@ import { TeammateSent } from './teammate-sent'
 import { handoffIdOfIntake, TEAMMATE_ADAPTER, TeammateInbox, teammateIntakeId } from './teammate-inbox'
 import { writeTeammatesFile } from './teammates-file'
 import { TeamStore } from './team-store'
+import { RelayService } from './relay-service'
 
 const currentDir = dirname(fileURLToPath(import.meta.url))
 
@@ -569,8 +570,9 @@ void app.whenReady().then(async () => {
   })
   // Being on a team (`team-membership`): off by default; connects only while on and joined. Its notifications have a
   // backend of their own (a backend holds one activation handler), the probes' stub under the same gate.
+  const teamStore = new TeamStore(join(app.getPath('userData'), 'team.json'))
   const teamService = new TeamService({
-    store: new TeamStore(join(app.getPath('userData'), 'team.json')),
+    store: teamStore,
     secrets: secretStore,
     appVersion: app.getVersion(),
     notifyStop: createTeamNotifier({
@@ -584,7 +586,6 @@ void app.whenReady().then(async () => {
         }),
     }),
   })
-  registerTeamHandlers(teamService)
   teamService.start()
   powerMonitor.on('resume', () => teamService.resume())
   app.on('will-quit', () => teamService.dispose())
@@ -843,6 +844,13 @@ void app.whenReady().then(async () => {
     }),
   })
   registerRemoteHandlers(remoteService)
+  // Reaching this desktop from its phones through the team server (`phone-relay`): off by default. Started here,
+  // before the listener (`remoteService.apply()` below), so the first `hello` already carries a phone's grant — an
+  // answer without it would make the phone discard it. The Team section's IPC is registered with it.
+  const relayService = new RelayService({ team: teamService, teamStore, secrets: secretStore, remote: remoteService })
+  relayService.start()
+  registerTeamHandlers(teamService, relayService)
+  app.on('will-quit', () => relayService.dispose())
   remoteStore.subscribe(() => {
     if (remoteStore.get().enabled || !remoteOpenSpec) return
     void remoteOpenSpec.dispose()

@@ -70,7 +70,9 @@ in the inbox.
 ## Team
 
 Being on a team: the switch, the invite link and joining, and once joined the team, your handle, this device's
-name (editable while connected), the server, the members, the connection's state, Reconnect, and Leave team. If
+name (editable while connected), whether your phones may reach this computer through the team server (shown when the
+server offers it and remote access is on, with how many phones can), the server, the members, the connection's state,
+Reconnect, and Leave team. If
 the connection stopped for a reason you need to deal with, the section is marked in the list. See
 [Teams](/docs/using/teams/).
 

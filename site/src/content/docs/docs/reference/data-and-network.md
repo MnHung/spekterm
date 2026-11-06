@@ -46,9 +46,17 @@ When you turn on **remote access**, spekterm **listens** for connections on one 
 it) on every network interface, so the [spekterm app on your phone](/docs/getting-started/phone/) can reach it over your LAN, Tailscale, or
 a port you forward. Only devices you paired can use the connection. Each one connects over TLS to the
 certificate it checked when pairing, and authenticates with its own credential, which you can revoke.
-**Remote access makes no connection of its own**: it only answers your devices, and your phone learns of
-events only while it is connected. No push service, relay, or server run by the project is involved. While
-remote access is off, nothing listens. See [Remote access](/docs/using/remote-access/).
+Your phone learns of events only while it is connected, and spekterm never opens a connection to tell it of one: no
+push service or server run by the project is involved. While remote access is off, nothing listens. See
+[Remote access](/docs/using/remote-access/).
+
+**Through your team's server (off unless you turn it on).** If you are on a team and turn on **Reach this desktop
+from your phones through the team server** (Settings → Team), spekterm gives each paired phone a pass for your team's
+server. When one of your phones asks for it, spekterm connects to **that same server** — the one you joined, never
+another — and the server joins the two connections. What crosses is your phone's encrypted connection to your
+computer, checked against your computer's certificate as on a direct connection: **the server cannot read or change
+it**. The server does see which phone reaches your computer, when, for how long, from which address, and how many bytes
+cross each way. Pairing still happens only directly. See [Remote access](/docs/using/remote-access/#through-your-teams-server).
 
 ## Programs spekterm starts, which connect on their own
 

@@ -25,10 +25,12 @@ phone is a window onto them. So:
 
 - **spekterm must be running on your computer.** When it is closed (or the computer is asleep), the phone
   cannot connect, and it has nothing to show.
-- **The phone must be able to reach your computer**: on the same network, over Tailscale, or through a port
-  you forward. See [Networks](/docs/using/remote-access/#networks).
-- **There is no server in between.** No account, no relay, no push service: the phone connects straight to
-  your computer, and notifications arrive over that same connection.
+- **The phone must be able to reach your computer**: on the same network, over Tailscale, through a port
+  you forward, or — if you are on a team and turned it on — through your team's own server. See
+  [Networks](/docs/using/remote-access/#networks).
+- **No account, no push service.** The phone connects to your computer, and notifications arrive over that same
+  connection. Even through your team's server, the connection is encrypted to your computer and the server cannot
+  read it.
 
 ## What you can do from the phone
 

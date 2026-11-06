@@ -23,6 +23,7 @@ import { runSections } from './lib/sections.mjs'
 import { seedLanguage } from './lib/probe-language.mjs'
 import { SETTINGS_DIALOG, clickSelector, openSettings } from './lib/settings.mjs'
 import { STUB_DEVICE_SECRET, startStubTeamServer } from './lib/stub-team-server.mjs'
+import { pairRemote } from './lib/remote-client.mjs'
 import { makeStubAgent } from './lib/stub-agent.mjs'
 
 const PORT = PROBE_PORTS.team.main
@@ -1004,6 +1005,95 @@ async function runNoWayBack(_mode, context) {
   })
 }
 
+// ---- The relay switch (`phone-relay`) ----
+
+const RELAY_OPERATIONS = ['relay.grant', 'relay.grants', 'relay.revoke', 'relay.refuse']
+const relaySwitch = field('team.relay.enable')
+const hasRelaySwitch = (app) => app.client.evaluate(`Boolean(document.querySelector(${JSON.stringify(relaySwitch)}))`)
+const workspaceCall = (app, expression) => app.client.evaluate(`${expression}.then((v) => JSON.stringify(v ?? null))`, { awaitPromise: true }).then((json) => JSON.parse(String(json)))
+
+async function setRemote(app, on) {
+  if (on) await workspaceCall(app, `window.workspace.remote.setPort(${STUB_PORTS.teamRemoteListener})`)
+  await workspaceCall(app, `window.workspace.remote.setEnabled(${on})`)
+  await pollFor({
+    read: () => workspaceCall(app, 'window.workspace.remote.state()'),
+    settled: (state) => state.enabled === on && (on ? state.listen.status === 'listening' : true),
+    timeoutMs: 10_000,
+    label: `remote access ${on ? 'on' : 'off'}`,
+  })
+}
+
+async function awaitSwitch(app, shown, what) {
+  return pollFor({ read: () => hasRelaySwitch(app), settled: (value) => value === shown, timeoutMs: 10_000, label: what })
+}
+
+async function runRelaySwitch(_mode, context) {
+  await withRig(context, async (app, stub, profile) => {
+    // A server without the relay: no switch, whatever remote access is.
+    await joinMember(app, stub)
+    await awaitStatus(app, 'connected', 'connected')
+    await setRemote(app, true)
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    check(results, 'a server without the relay shows no relay switch', !(await hasRelaySwitch(app)), (await sectionText(app)).slice(0, 200))
+
+    // The server lists the relay from the next hello on.
+    stub.state.operations = [...stub.state.operations, ...RELAY_OPERATIONS]
+    await setRemote(app, false)
+    await workspaceCall(app, 'window.workspace.team.reconnect()')
+    await awaitStatus(app, 'connected', 'connected again')
+    await pollFor({ read: () => teamView(app), settled: (v) => v.membership?.operations.includes('relay.grant'), timeoutMs: 10_000, label: 'operations list the relay' })
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    check(results, 'with remote access off and the relay off, no relay switch', !(await hasRelaySwitch(app)), '')
+    await setRemote(app, true)
+    const shown = await awaitSwitch(app, true, 'the relay switch appears')
+    check(results, 'with the server offering it and remote access on, the relay switch is shown, off', shown && !(await teamView(app)).relay?.on && stub.count('relay.grant') === 0, `${JSON.stringify((await teamView(app)).relay)} grants asked ${stub.count('relay.grant')}`)
+
+    // One paired phone; turning the relay on asks for one grant named after it.
+    const state = await workspaceCall(app, 'window.workspace.remote.state()')
+    const pairing = await workspaceCall(app, 'window.workspace.remote.startPairing()')
+    const code = new URL(pairing.link).searchParams.get('c')
+    const phone = await pairRemote({ port: STUB_PORTS.teamRemoteListener, fingerprint: state.fingerprint }, { code, deviceName: 'Probe Pixel' })
+    check(results, 'a phone pairs directly', phone.response.ok === true, JSON.stringify(phone.response).slice(0, 160))
+    phone.client.close()
+    await clickSelector(app.client, relaySwitch, 'the relay switch')
+    const granted = await pollFor({ read: () => [...stub.state.grants.values()], settled: (names) => names.length === 1, timeoutMs: 10_000, label: 'one grant requested' })
+    check(results, 'turning the relay on asks the server for one grant, named after the phone', JSON.stringify(granted) === JSON.stringify(['Probe Pixel']), JSON.stringify(granted))
+    const line = await awaitText(app, copy('team.relay.phones', { withGrant: 1, paired: 1 }), 'the phone count')
+    check(results, 'the section says how many phones can connect through the server', line.includes(copy('team.relay.phones', { withGrant: 1, paired: 1 })), '')
+    const ipc = JSON.stringify(await teamView(app))
+    const grantSecret = `grant-secret-${[...stub.state.grants.keys()][0]}`
+    check(results, 'the renderer’s team state carries no grant id or secret', !ipc.includes(grantSecret) && !ipc.includes([...stub.state.grants.keys()][0]), ipc.slice(0, 200))
+    check(results, 'the grant secret is in the secret store', readFileSync(join(profile, 'secrets.json'), 'utf8').includes(grantSecret), '')
+    check(results, 'the membership file holds no grant secret', !readFileSync(join(profile, 'team.json'), 'utf8').includes(grantSecret), '')
+
+    // Remote access off: the switch stays, with the reason; nothing revoked.
+    await setRemote(app, false)
+    const reason = await awaitText(app, copy('team.relay.blockedRemoteOff'), 'the remote-access reason line')
+    check(results, 'with the relay on and remote access off, the switch stays with the reason', (await hasRelaySwitch(app)) && reason.includes(copy('team.relay.blockedRemoteOff')), '')
+    check(results, 'turning remote access off revokes nothing', stub.count('relay.revoke') === 0 && stub.state.grants.size === 1, `revokes ${stub.count('relay.revoke')}`)
+
+    // The relay off: the grant is revoked.
+    await setRemote(app, true)
+    await clickSelector(app.client, relaySwitch, 'the relay switch')
+    await pollFor({ read: () => stub.state.grants.size, settled: (n) => n === 0, timeoutMs: 10_000, label: 'the grant revoked' })
+    check(results, 'turning the relay off revokes the grant', stub.count('relay.revoke') >= 1 && stub.state.grants.size === 0, `revokes ${stub.count('relay.revoke')}`)
+
+    // On again, then leave and join again: the relay starts off. Left through the same IPC as the section's Leave
+    // (the button and its confirmation are `runLeave`'s); what is checked here is the setting after a new join.
+    await clickSelector(app.client, relaySwitch, 'the relay switch')
+    await pollFor({ read: () => teamView(app), settled: (v) => v.relay?.on === true, timeoutMs: 10_000, label: 'relay on again' })
+    stub.state.deviceCount = 2
+    const left = await workspaceCall(app, 'window.workspace.team.leave()')
+    check(results, 'leaving succeeds', left?.ok === true, JSON.stringify(left))
+    await awaitStatus(app, 'unjoined', 'left')
+    await joinMember(app, stub)
+    await awaitStatus(app, 'connected', 'joined again')
+    const again = await pollFor({ read: () => teamView(app), settled: (v) => v.relay !== undefined, timeoutMs: 10_000, label: 'relay view after joining again' })
+    check(results, 'after leaving and joining again the relay is off', again.relay?.on === false, JSON.stringify(again.relay))
+    await setRemote(app, false)
+  })
+}
+
 const SECTIONS = [
   { name: 'runOffAndInvalidLinks', run: runOffAndInvalidLinks },
   { name: 'runJoinMember', run: runJoinMember },
@@ -1022,6 +1112,7 @@ const SECTIONS = [
   { name: 'runSentList', run: runSentList },
   { name: 'runReportBack', run: runReportBack },
   { name: 'runNoWayBack', run: runNoWayBack },
+  { name: 'runRelaySwitch', run: runRelaySwitch },
 ]
 
 const outcome = await runSections({

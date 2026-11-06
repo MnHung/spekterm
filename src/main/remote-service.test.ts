@@ -287,3 +287,52 @@ test('the session list is re-sent on each signal that can change a listed fill (
   intake.emit('')
   assert.equal(sent.length, 3, 'unsubscribed')
 })
+
+// ---- The relay's value (`phone-relay`, design D4) ----
+
+test('relay: only the hello answer carries it, only to its device, per-connection baselines, absent and null alike', async () => {
+  const r = await rig()
+  try {
+    await r.service.setEnabled(true)
+    const values = new Map<string, unknown>()
+    r.service.setRelayProvider((deviceId) => values.get(deviceId) ?? null)
+    const a = await pairedClient(r)
+    assert.equal(a.paired.response.r.relay, undefined, 'the pair answer never carries it')
+    const credA = { deviceId: a.paired.response.r.deviceId, deviceSecret: a.paired.response.r.deviceSecret }
+    a.paired.client.close()
+    await a.paired.client.closed
+    const b = await pairedClient(r)
+    const credB = { deviceId: b.paired.response.r.deviceId, deviceSecret: b.paired.response.r.deviceSecret }
+
+    // The pairing connection's baseline is "none": telling it nothing changed sends nothing.
+    r.service.relayChanged()
+    assert.equal(b.paired.client.eventsOf('relay.changed').length, 0, 'absent and null are the same none')
+
+    const grant = { url: 'wss://team.example.com', grant: 'g_1', secret: 's_1' }
+    values.set(credA.deviceId, grant)
+    const helloA = await helloRemote(a.target, credA)
+    assert.deepEqual(helloA.response.r.relay, grant, 'the hello answer carries it')
+    r.service.relayChanged(credA.deviceId)
+    assert.equal(helloA.client.eventsOf('relay.changed').length, 0, 'the hello answer already told it')
+
+    values.delete(credA.deviceId)
+    r.service.relayChanged()
+    const gone = await helloA.client.waitEvent('relay.changed', { timeoutMs: 2000 })
+    assert.deepEqual(gone?.d, { relay: null })
+    values.set(credA.deviceId, grant)
+    r.service.relayChanged()
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    assert.deepEqual(
+      helloA.client.eventsOf('relay.changed').map((e: { d: unknown }) => e.d),
+      [{ relay: null }, { relay: grant }],
+      'a change and its undoing are both sent (control: a per-device baseline set only by events swallows one)',
+    )
+    assert.equal(b.paired.client.eventsOf('relay.changed').length, 0, 'another device is told nothing')
+
+    const helloB = await helloRemote(b.target, credB)
+    assert.equal(helloB.response.r.relay, undefined, 'no grant: no field')
+    for (const client of [helloA.client, helloB.client, b.paired.client]) client.close()
+  } finally {
+    await r.done()
+  }
+})

@@ -28,3 +28,11 @@ test('control: a field added to the snapshot does not reach the projection', () 
   const extended = { ...SNAPSHOT, membership: { ...SNAPSHOT.membership!, deviceSecret: 'PLAINTEXT' } } as unknown as TeamSnapshot
   assert.doesNotMatch(JSON.stringify(projectTeam(extended)), /PLAINTEXT/)
 })
+
+test('the relay part carries counts and reasons only, and only with a membership (phone-relay)', () => {
+  const relay = { on: true, available: false, blocked: 'remote-off' as const, phones: { withGrant: 1, paired: 2 }, limitReached: false }
+  const view = projectTeam(SNAPSHOT, { ...relay, grant: 'g_SECRET', secret: 'PLAINTEXT' } as typeof relay)
+  assert.deepEqual(view.relay, relay)
+  assert.doesNotMatch(JSON.stringify(view), /g_SECRET|PLAINTEXT/)
+  assert.equal(projectTeam({ ...SNAPSHOT, membership: null }, relay).relay, undefined)
+})

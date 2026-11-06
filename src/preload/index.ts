@@ -788,6 +788,8 @@ const workspaceApi = {
   team: {
     get: (): Promise<TeamView> => ipcRenderer.invoke('workspace:team:get'),
     setEnabled: (enabled: boolean): Promise<TeamView> => ipcRenderer.invoke('workspace:team:setEnabled', enabled),
+    /** Reach this desktop from its phones through the team server (`phone-relay`). */
+    setRelay: (on: boolean): Promise<TeamView> => ipcRenderer.invoke('workspace:team:setRelay', on),
     inspect: (link: string): Promise<InspectView> => ipcRenderer.invoke('workspace:team:inspect', link),
     join: (input: { link: string; deviceName: string; handle?: string; displayName?: string }): Promise<JoinResult> =>
       ipcRenderer.invoke('workspace:team:join', input),

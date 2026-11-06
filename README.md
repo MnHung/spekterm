@@ -33,8 +33,9 @@ agent writes to disk.
   and timeline, worktrees included.
 - **Conversation view, inbox, and handoffs** — read an agent as messages; Slack mentions become inbox
   items; agents can hand work to another repository.
-- **Remote access** (off by default) — a paired phone reaches spekterm directly, with no relay: sessions,
-  conversations, the inbox, and a notice when an agent waits for you. The Android app is in development; the
+- **Remote access** (off by default) — a paired phone reaches spekterm directly, or, on a team that turned it on,
+  through the team's own server, which cannot read the connection: sessions, conversations, the inbox, and a notice
+  when an agent waits for you. No push service. The Android app is in development; the
   protocol is in [`docs/remote-protocol.md`](docs/remote-protocol.md).
 - **Teams** (off by default) — join a self-hosted [spekterm-server](https://github.com/spekhq/spekterm-server) your
   team runs, with an invite link. The server's operator can read what passes through it.
