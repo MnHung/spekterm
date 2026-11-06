@@ -131,3 +131,33 @@ describe('createWatcher 的輪詢判定依據', () => {
     assert.equal(usePollingOf(watcher), false)
   })
 })
+
+describe('createWatcher passes the ignored predicate through', () => {
+  it('an ignored subtree is neither watched nor reported, the rest is', async () => {
+    const skipped = path.join(base, 'skipped')
+    fs.mkdirSync(path.join(skipped, 'deep'), { recursive: true })
+    fs.writeFileSync(path.join(skipped, 'deep', 'a.md'), 'a')
+    fs.writeFileSync(path.join(base, 'kept.md'), 'k')
+
+    const seen: string[] = []
+    watcher = createWatcher({
+      target: base,
+      label: base,
+      ignored: (p) => !path.relative(skipped, p).startsWith('..'),
+    })
+    watcher.on('all', (_event, p) => seen.push(path.relative(base, p)))
+    await new Promise<void>((resolve) => watcher?.on('ready', () => resolve()))
+
+    assert.equal(Object.keys(watcher.getWatched()).some((dir) => dir.startsWith(skipped)), false)
+
+    fs.appendFileSync(path.join(skipped, 'deep', 'a.md'), 'x')
+    fs.appendFileSync(path.join(base, 'kept.md'), 'x')
+    const deadline = Date.now() + 3000
+    while (!seen.includes('kept.md') && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200))
+
+    assert.deepEqual(seen, ['kept.md'])
+  })
+})

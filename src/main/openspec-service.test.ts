@@ -24,6 +24,14 @@ const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
 /** chokidar 的初次掃描是非同步的；改檔案之前必須讓它完成，否則事件不會來。 */
 const READY_MS = 300
 
+/**
+ * Lets the fixture's own writes settle before a watch starts. On macOS a directory watch can report files written
+ * a moment before it started (FSEvents delivers them late), which reaches an assertion of an exact notification
+ * list as an extra `'f1'`. Measured: the unchanged code receives such events too; whether one lands inside a test's
+ * window depends on how long the watch takes to start. Linux (CI) does not need it.
+ */
+const settleFixture = (): Promise<void> => delay(400)
+
 function lookup(folders: Partial<WorkspaceFolder>[]): FolderLookup {
   return { list: () => folders as WorkspaceFolder[] }
 }
@@ -360,6 +368,98 @@ describe('OpenSpecService 的快取與失效', () => {
     await delay(300)
 
     assert.deepEqual(changed, [], '已釋放的 folder 不該再推送事件')
+  })
+})
+
+/**
+ * openspec-watch-skip-archive: the contents of an archived change are not watched; `changes/archive/` is, shallowly.
+ * Each test lets the fixture settle first (`settleFixture`) because each asserts an exact notification list.
+ */
+describe('OpenSpecService and archived changes', () => {
+  const archive = (...parts: string[]): string => path.join(repo, 'openspec', 'changes', 'archive', ...parts)
+
+  async function waitForNotice(): Promise<void> {
+    const deadline = Date.now() + 3000
+    while (changed.length === 0 && Date.now() < deadline) await delay(20)
+    await delay(100)
+  }
+
+  async function watching(): Promise<void> {
+    await settleFixture()
+    await create().getChanges('f1')
+    await delay(READY_MS)
+  }
+
+  it('archiving a change notifies once its directory moves into the archive', async () => {
+    await watching()
+    fs.renameSync(
+      path.join(repo, 'openspec', 'changes', 'add-oauth'),
+      archive('2026-02-02-add-oauth'),
+    )
+    await waitForNotice()
+    // Two watchers see it (the tree the directory leaving changes/, the archive one it arriving); the debounce
+    // usually merges them, not always.
+    assert.ok(changed.length >= 1 && changed.every((id) => id === 'f1'), `got ${JSON.stringify(changed)}`)
+  })
+
+  it('an archived change directory arriving on its own notifies', async () => {
+    await watching()
+    write('openspec/changes/archive/2026-03-03-pulled/proposal.md', '# pulled\n')
+    await waitForNotice()
+    assert.deepEqual(changed, ['f1'], 'nothing left changes/, so only the archive watcher can see this')
+  })
+
+  it('an edit inside an archived change does not notify', async () => {
+    await watching()
+    fs.appendFileSync(archive('2026-01-01-old-change', 'proposal.md'), 'edited\n')
+    await delay(READY_MS + 200)
+    assert.deepEqual(changed, [])
+  })
+
+  it('an archive directory created after the watch started is followed', async () => {
+    fs.rmSync(archive(), { recursive: true })
+    await watching()
+
+    write('openspec/changes/archive/2026-04-04-first/proposal.md', '# first\n')
+    await waitForNotice()
+    assert.deepEqual(changed, ['f1'], 'the archive directory appearing is a change')
+
+    // No structure is read in between: only the rebuild on the archive's own event can see the second one.
+    changed.length = 0
+    await delay(READY_MS)
+    write('openspec/changes/archive/2026-04-05-second/proposal.md', '# second\n')
+    await waitForNotice()
+    assert.deepEqual(changed, ['f1'], 'a later archived change is seen too')
+  })
+
+  it('an archive directory removed and created again is followed', async () => {
+    await watching()
+
+    fs.rmSync(archive(), { recursive: true })
+    await waitForNotice()
+    write('openspec/changes/archive/2026-05-05-again/proposal.md', '# again\n')
+    await delay(READY_MS)
+
+    changed.length = 0
+    write('openspec/changes/archive/2026-05-06-after/proposal.md', '# after\n')
+    await waitForNotice()
+    assert.deepEqual(changed, ['f1'])
+  })
+
+  it('a changes directory created after the watch started is followed', async () => {
+    fs.rmSync(path.join(repo, 'openspec', 'changes'), { recursive: true })
+    await watching()
+
+    write('openspec/changes/archive/2026-06-06-first/proposal.md', '# first\n')
+    await waitForNotice()
+    assert.deepEqual(changed, ['f1'], 'changes/ appearing is seen by the tree watcher')
+
+    // No structure is read in between.
+    changed.length = 0
+    await delay(READY_MS)
+    write('openspec/changes/archive/2026-06-07-second/proposal.md', '# second\n')
+    await waitForNotice()
+    assert.deepEqual(changed, ['f1'])
   })
 })
 
@@ -815,6 +915,33 @@ describe('OpenSpecService 的 worktree 監看層', () => {
     fs.writeFileSync(path.join(gone, 'openspec', 'b.md'), '# 不該再被看見\n')
     await delay(READY_MS)
     assert.deepEqual(changed, [], '已離開清單的工作目錄不該再推送通知')
+  })
+
+  it("a departed worktree's archive is no longer watched", async () => {
+    makeGitDir()
+    const gone = path.join(base, 'wt-gone')
+    fs.mkdirSync(path.join(gone, 'openspec', 'changes', 'archive'), { recursive: true })
+    await settleFixture()
+
+    let present = true
+    const svc = create(okFolder(), {
+      scan: async () => (present ? result([wt(repo, true), wt(gone)]) : result([wt(repo, true)])),
+    })
+    await svc.getChanges('f1')
+    await delay(READY_MS)
+    // The control: while listed, its archive is watched (and this invalidates the cache, so the next read scans).
+    fs.mkdirSync(path.join(gone, 'openspec', 'changes', 'archive', '2026-07-06-listed'))
+    await delay(READY_MS)
+    assert.deepEqual(changed, ['f1'], 'a listed worktree has its archive watched')
+
+    present = false
+    await svc.getChanges('f1')
+    await delay(READY_MS)
+    changed.length = 0
+
+    fs.mkdirSync(path.join(gone, 'openspec', 'changes', 'archive', '2026-07-07-late'))
+    await delay(READY_MS + 200)
+    assert.deepEqual(changed, [], 'its archive watcher must close with its tree watcher')
   })
 })
 

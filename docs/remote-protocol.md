@@ -796,8 +796,10 @@ working tree of its repository, such as an agent writing a `tasks.md` — this c
   the connection; watch again after reconnecting.
 - The answer comes once the desktop has started watching every working tree of the folder. **Watch, then read**: a
   change between a read and a later watch is not announced.
-- At most one event per folder per second; every change is followed by one within about a second. Read again on
-  every event: a working tree created later is watched from the next read.
+- At most one event per folder per second; every change is followed by one within about a second, except an edit
+  inside a change that is already archived, which is announced only with the next other change. An archived change
+  appearing or disappearing is announced. Read again on every event: a working tree created later is watched from
+  the next read.
 - A folder removed from the workspace sends no further event.
 
 ### `attention.watch`

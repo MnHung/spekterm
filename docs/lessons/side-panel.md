@@ -155,6 +155,12 @@ resets to 0), so restoring returns the reader exactly where they were.
   再掃描」直接打架，解法是分兩層。基礎層要 `depth: 0` 且只理會 `addDir`／`unlinkDir`：實測在
   worktree 裡跑一次 `git commit` 會產生 3 個檔案事件，不收窄的話每次 commit 都重跑一次聚合掃描
   （約 175ms）。
+- **The contents of archived changes are not watched** (`openspec-watch-skip-archive`). They only accumulate, and
+  watching them cost one descriptor per file per worktree on macOS (a few large repositories with 28 worktrees
+  reached about 28,000 and the main process then failed to spawn `git`). `changes/archive` itself is watched at
+  depth 0 by a watcher that exists only while the directory does; **never create a chokidar watcher on a missing
+  path** — it reports the directory appearing and nothing after, and closing one around that moment left a native
+  watch open (design D2 of that change). An edit inside an archived change is seen only at the next change seen.
 - **`isWithin` 是純字面比較**，而這裡第一次拿兩個獨立來源的絕對路徑相比（`workspace.json` vs
   `git worktree list`）。**兩端目前都是 realpath**，所以比得起來。**若 workspace 的路徑正規化改變，
   每一個 change 的「跳到檔案」會同時靜默消失。**

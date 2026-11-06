@@ -22,7 +22,8 @@ defines.
   the status bar.
 - **Spec deltas** marks each requirement as added, modified, removed, or renamed, and highlights the
   `WHEN` / `THEN` keywords of scenarios.
-- Everything updates as files change on disk. When the agent checks off a task, the tab shows it.
+- Everything updates as files change on disk. When the agent checks off a task, the tab shows it. The exception is
+  an edit inside a change that is already archived: it shows the next time anything else changes.
 
 With focus in the change view, `Ctrl+Tab` / `Ctrl+Shift+Tab` move between artifact tabs. The arrow keys,
 `Page Up` / `Page Down`, `Home`, `End`, and `Space` scroll the content.

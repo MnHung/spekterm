@@ -45,13 +45,14 @@ import { type FSWatcher, watch as chokidarWatch } from 'chokidar'
  * 一個 watcher 服務 N 個動態增減的子目標，需要另一條路徑。`pollingRoot` 因此是**可省略**的：
  * 省略即以 `target` 判定。
  *
- * 目前的建立點（七個，服務單一目標的六個 ＋ 服務多目標的一個）：
+ * 目前的建立點（八個，服務單一目標的七個 ＋ 服務多目標的一個）：
  *
  * | 建立點 | 監看什麼 | `pollingRoot` |
  * |---|---|---|
  * | `branch-service` | folder 根（等 `.git` 出現） | 省略 |
  * | `branch-service` | gitdir 底下的 `HEAD` | 省略 |
- * | `openspec-service` | repo 的 `openspec/` | 省略 |
+ * | `openspec-service` | repo 的 `openspec/`（不含封存的 change 的內容） | 省略 |
+ * | `openspec-service` | `openspec/changes/archive`（depth 0） | 省略 |
  * | `transcript-follow-service` | transcript 所在目錄 | 省略 |
  * | `transcript-follow-service` | transcript 檔本身 | 省略 |
  * | `intake-source` | 投遞落點 | 省略 |
@@ -93,6 +94,12 @@ export interface CreateWatcherOptions {
   label: string
   depth?: number
   alwaysStat?: boolean
+  /**
+   * Paths for which this predicate returns true are neither watched nor reported, and an ignored directory is not
+   * descended into. It receives absolute paths. A watcher whose target holds a subtree that only grows and is not
+   * edited (OpenSpec's archived changes) uses it so the watch cost does not grow with that subtree.
+   */
+  ignored?: (path: string) => boolean
 }
 
 export function createWatcher({
@@ -101,6 +108,7 @@ export function createWatcher({
   label,
   depth,
   alwaysStat,
+  ignored,
 }: CreateWatcherOptions): FSWatcher {
   const usePolling = shouldUsePolling(pollingRoot ?? target)
   const interval = pollingInterval()
@@ -111,6 +119,7 @@ export function createWatcher({
     chokidarWatch(target, {
       ...(depth === undefined ? {} : { depth }),
       ...(alwaysStat === undefined ? {} : { alwaysStat }),
+      ...(ignored === undefined ? {} : { ignored: (p: string) => ignored(p) }),
       // **不開放給呼叫端** —— 這是檔案系統邊界的一部分，不是偏好。chokidar 的預設是 `true`，
       // folder 內一個指向邊界外的 symlink 被展開時，watcher 會跟著走出去，把邊界外的檔名經事件
       // 推給 renderer；`listDir` 守住的邊界會從這道側門漏掉（Phase 2 實測）。

@@ -15,7 +15,7 @@ sidebar:
 
 - **Task** 分頁顯示進度，以及依標題分組的各個 task。進度數字也會出現在狀態列上。
 - **Spec delta** 分頁標出每條 requirement 是新增、修改、移除還是改名，並把 scenario 的 `WHEN` / `THEN` 關鍵字標亮。
-- 磁碟上的檔案一變，這裡就跟著更新。agent 把一個 task 打勾，分頁上就會看到。
+- 磁碟上的檔案一變，這裡就跟著更新。agent 把一個 task 打勾，分頁上就會看到。唯一的例外是修改一個已經封存的 change：要等到下次有別的東西變動時才會顯示。
 
 焦點在這個檢視裡時，`Ctrl+Tab` / `Ctrl+Shift+Tab` 在 artifact 分頁之間切換；方向鍵、`Page Up` / `Page Down`、`Home`、`End` 與 `Space` 則捲動內容。
 

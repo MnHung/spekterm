@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import path from 'node:path'
 import {
@@ -204,11 +205,35 @@ export interface ChangeDetailView {
 /** agent 的一次操作會寫入數個檔案（proposal + design + specs/*.md + tasks），不合批就會讓側欄連續重載。 */
 const DEFAULT_DEBOUNCE_MS = 150
 
+/**
+ * The watchers of one `openspec/` (openspec-watch-skip-archive, design D1 and D2).
+ *
+ * `tree` watches the whole directory **except the contents of `changes/archive`**: archived changes only
+ * accumulate, and watching each of their files made the cost grow with a repository's history times its worktrees
+ * (on macOS one descriptor per file). `archive` watches `changes/archive` at depth 0, so an archived change
+ * directory added or removed is still seen; an edit inside one is not, by design.
+ *
+ * **`archive` exists only while its directory does, and `tree` decides when**: `tree` still sees the archive
+ * directory itself appear and go away. A chokidar watcher created on a missing directory reports it appearing and
+ * then nothing inside it, reports nothing at all when the parent is missing too, and closing one around that
+ * transition was measured to leave a native watch open — so no watcher is ever created on a missing path here.
+ */
+interface OpenSpecDirWatch {
+  /** `<openspec>/changes/archive`. */
+  archiveDir: string
+  tree: FSWatcher
+  archive: FSWatcher | null
+  /** Set when closed, so a late event cannot start a watcher no one will close. */
+  closed: boolean
+}
+
 interface FolderWatch {
-  /** 基礎層：folder 自己的 `openspec/`，以及工作目錄清單（`<commonDir>/worktrees/`）。 */
+  /** 基礎層的工作目錄清單（`<commonDir>/worktrees/`）。 */
   watchers: FSWatcher[]
+  /** 基礎層：folder 自己的 `openspec/`。 */
+  own: OpenSpecDirWatch | null
   /** 第二層：每個**其他**工作目錄的 `openspec/`，以其絕對路徑為 key。 */
-  worktreeWatchers: Map<string, FSWatcher>
+  worktreeWatchers: Map<string, OpenSpecDirWatch>
   /** 已監看的工作目錄清單目錄（`<commonDir>/worktrees/`）—— 去重，避免重複建立。 */
   worktreeListTargets: Set<string>
   timer: NodeJS.Timeout | null
@@ -701,9 +726,11 @@ export class OpenSpecService {
     if (!watch) return
     this.#watches.delete(folderId)
     if (watch.timer) clearTimeout(watch.timer)
-    await Promise.all(
-      [...watch.watchers, ...watch.worktreeWatchers.values()].map((watcher) => watcher.close()),
-    )
+    const dirWatches = [...(watch.own ? [watch.own] : []), ...watch.worktreeWatchers.values()]
+    await Promise.all([
+      ...watch.watchers.map((watcher) => watcher.close()),
+      ...dirWatches.map((dirWatch) => this.#closeOpenSpecDir(dirWatch)),
+    ])
   }
 
   async dispose(): Promise<void> {
@@ -802,13 +829,14 @@ export class OpenSpecService {
 
     const watch: FolderWatch = {
       watchers: [],
+      own: null,
       worktreeWatchers: new Map(),
       worktreeListTargets: new Set(),
       timer: null,
     }
     this.#watches.set(folderId, watch)
 
-    watch.watchers.push(this.#watch(folderId, path.join(root, 'openspec')))
+    watch.own = this.#watchOpenSpecDir(folderId, path.join(root, 'openspec'))
     this.#watchWorktreeList(folderId, root)
   }
 
@@ -855,16 +883,65 @@ export class OpenSpecService {
 
     const wanted = new Set(worktrees.map((wt) => wt.path).filter((wtPath) => wtPath !== root))
 
-    for (const [wtPath, watcher] of watch.worktreeWatchers) {
+    for (const [wtPath, dirWatch] of watch.worktreeWatchers) {
       if (wanted.has(wtPath)) continue
       watch.worktreeWatchers.delete(wtPath)
-      void watcher.close()
+      void this.#closeOpenSpecDir(dirWatch)
     }
 
     for (const wtPath of wanted) {
       if (watch.worktreeWatchers.has(wtPath)) continue
-      watch.worktreeWatchers.set(wtPath, this.#watch(folderId, path.join(wtPath, 'openspec')))
+      watch.worktreeWatchers.set(wtPath, this.#watchOpenSpecDir(folderId, path.join(wtPath, 'openspec')))
     }
+  }
+
+  /** The watchers of one `openspec/` (see `OpenSpecDirWatch`). */
+  #watchOpenSpecDir(folderId: string, openspecDir: string): OpenSpecDirWatch {
+    const archiveDir = path.join(openspecDir, 'changes', 'archive')
+    const dirWatch: OpenSpecDirWatch = {
+      archiveDir,
+      // Containment by `isWithin` (path.relative), never a prefix comparison: `archive-notes` is not inside.
+      // The archive directory itself is not ignored: its appearing and going away drive `archive`.
+      tree: this.#watch(folderId, openspecDir, {
+        ignored: (p) => p !== archiveDir && isWithin(archiveDir, p),
+      }),
+      archive: null,
+      closed: false,
+    }
+
+    dirWatch.tree.on('all', (event, p) => {
+      if (p !== archiveDir) return
+      if (event === 'addDir') this.#openArchiveWatch(folderId, dirWatch)
+      if (event === 'unlinkDir') this.#closeArchiveWatch(dirWatch)
+    })
+    // Before `ready` the initial scan reports nothing (`ignoreInitial`), so an archive directory created between
+    // this check and the end of that scan is caught by the second check.
+    if (existsSync(archiveDir)) this.#openArchiveWatch(folderId, dirWatch)
+    dirWatch.tree.once('ready', () => {
+      if (existsSync(archiveDir)) this.#openArchiveWatch(folderId, dirWatch)
+    })
+    return dirWatch
+  }
+
+  #openArchiveWatch(folderId: string, dirWatch: OpenSpecDirWatch): void {
+    if (dirWatch.closed || dirWatch.archive) return
+    dirWatch.archive = this.#watch(folderId, dirWatch.archiveDir, {
+      depth: 0,
+      events: ['addDir', 'unlinkDir'],
+    })
+  }
+
+  #closeArchiveWatch(dirWatch: OpenSpecDirWatch): void {
+    const archive = dirWatch.archive
+    dirWatch.archive = null
+    void archive?.close()
+  }
+
+  async #closeOpenSpecDir(dirWatch: OpenSpecDirWatch): Promise<void> {
+    dirWatch.closed = true
+    const archive = dirWatch.archive
+    dirWatch.archive = null
+    await Promise.all([dirWatch.tree.close(), archive?.close()])
   }
 
   /**
@@ -878,7 +955,7 @@ export class OpenSpecService {
   #watch(
     folderId: string,
     target: string,
-    options?: { depth?: number; events?: string[] },
+    options?: { depth?: number; events?: string[]; ignored?: (path: string) => boolean },
   ): FSWatcher {
     // 這裡是一個 watcher 對一個目標（同一個 folder 底下有多個：`openspec/`、工作目錄清單、
     // 每個工作目錄的 `openspec/`）：輪詢判定靠預設（即 `target` 自己），識別標籤同樣用 `target`。
@@ -886,6 +963,7 @@ export class OpenSpecService {
       target,
       label: target,
       ...(options?.depth === undefined ? {} : { depth: options.depth }),
+      ...(options?.ignored === undefined ? {} : { ignored: options.ignored }),
     })
 
     const events = options?.events
