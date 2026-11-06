@@ -55,8 +55,9 @@ nothing inside it; when `changes/` is missing too, it reports nothing at all. So
 - at every scan, while the archive directory did not exist when the watcher was created. That covers `changes/`
   appearing later: the tree watcher sees `changes/` appear, the cache is invalidated, the next scan rebuilds.
 
-A rebuild closes the old watcher and creates a new one in the same slot, so release and dispose close whichever is
-current.
+A rebuild closes the old watcher and creates a new one in the same slot. Every path that closes an `openspec/`'s
+watcher today closes both of its watchers, whichever archive watcher is current: a worktree leaving the list,
+`releaseFolder`, and `dispose`.
 
 ## Risks / Trade-offs
 

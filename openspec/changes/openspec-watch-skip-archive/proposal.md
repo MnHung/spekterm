@@ -22,7 +22,8 @@ fallback if the full watch proved too costly (`openspec-side-panel` design, Risk
   the folder's OpenSpec structure count as changed, also when it arrives without an active change leaving
   `changes/` (a pull, a checkout).
 - An edit inside an existing archived change is not seen until the next change that is seen. **This is a known,
-  accepted gap**, not an oversight.
+  accepted gap**, not an oversight. The website's side panel page (both languages) and the `openspec.watch` section
+  of `docs/remote-protocol.md` say so.
 
 ## Capabilities
 
@@ -34,10 +35,14 @@ None.
 
 - `openspec-data-access`: the cache-and-watch requirement says which part of each `openspec/` is watched and that
   archived change contents are not.
+- `worktree-aggregation`: its watch requirement points at that statement instead of implying every file of every
+  worktree's `openspec/` is watched.
 
 ## Impact
 
 - `src/main/openspec-service.ts` (how each `openspec/` is watched), `src/main/watcher.ts` (an `ignored` predicate
   passed through to chokidar).
 - Both `OpenSpecService` instances benefit: the side panel's and the remote one's.
-- No IPC, DTO, renderer, or dependency change.
+- No IPC message, DTO, renderer, or dependency change. The `openspec.watch` event of the remote protocol keeps its
+  shape; its "every change is followed by one" gains the archived-content exception, which a client that reads again
+  on each event needs no change for.

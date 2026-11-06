@@ -33,7 +33,7 @@ scan that something else causes. This gap is accepted, not overlooked.
 
 #### Scenario: agent 改動 change 後側欄資料更新
 
-- **WHEN** 某個 folder 的 `openspec/changes/` 下有檔案被外部程式改動
+- **WHEN** 某個 folder 的 `openspec/changes/` 下有檔案被外部程式改動 (outside an archived change)
 - **THEN** renderer 收到該 folder 的 OpenSpec 結構已變更的通知，且後續請求取得的是改動後的內容
 
 #### Scenario: 連續變更合併為單次通知
@@ -48,7 +48,7 @@ scan that something else causes. This gap is accepted, not overlooked.
 
 #### Scenario: linked worktree 中的變更觸發更新
 
-- **WHEN** 某個 linked worktree 的 `openspec/` 下有檔案被外部程式改動
+- **WHEN** 某個 linked worktree 的 `openspec/` 下有檔案被外部程式改動 (outside an archived change)
 - **THEN** renderer 收到該 folder 的 OpenSpec 結構已變更的通知
 
 #### Scenario: Archiving a change triggers an update
