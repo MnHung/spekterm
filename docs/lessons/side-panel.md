@@ -158,9 +158,9 @@ resets to 0), so restoring returns the reader exactly where they were.
 - **The contents of archived changes are not watched** (`openspec-watch-skip-archive`). They only accumulate, and
   watching them cost one descriptor per file per worktree on macOS (a few large repositories with 28 worktrees
   reached about 28,000 and the main process then failed to spawn `git`). `changes/archive` itself is watched at
-  depth 0 by a watcher that exists only while the directory does; **never create a chokidar watcher on a missing
-  path** — it reports the directory appearing and nothing after, and closing one around that moment left a native
-  watch open (design D2 of that change). An edit inside an archived change is seen only at the next change seen.
+  depth 0 by a watcher that exists only while the directory does, because **a chokidar watcher created on a missing
+  path** reports the directory appearing and nothing after, and closing one around that moment left a native watch
+  open (design D2 of that change). The tree watcher on a worktree's missing `openspec/` has that limit too (older). An edit inside an archived change is seen only at the next change seen.
 - **`isWithin` 是純字面比較**，而這裡第一次拿兩個獨立來源的絕對路徑相比（`workspace.json` vs
   `git worktree list`）。**兩端目前都是 realpath**，所以比得起來。**若 workspace 的路徑正規化改變，
   每一個 change 的「跳到檔案」會同時靜默消失。**

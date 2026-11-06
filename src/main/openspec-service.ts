@@ -216,7 +216,8 @@ const DEFAULT_DEBOUNCE_MS = 150
  * **`archive` exists only while its directory does, and `tree` decides when**: `tree` still sees the archive
  * directory itself appear and go away. A chokidar watcher created on a missing directory reports it appearing and
  * then nothing inside it, reports nothing at all when the parent is missing too, and closing one around that
- * transition was measured to leave a native watch open — so no watcher is ever created on a missing path here.
+ * transition was measured to leave a native watch open — so the archive watcher is not created on a missing path
+ * (design D2 names the one race in which it still ends up on one).
  */
 interface OpenSpecDirWatch {
   /** `<openspec>/changes/archive`. */

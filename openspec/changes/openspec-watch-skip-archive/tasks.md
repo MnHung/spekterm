@@ -38,3 +38,10 @@ Spec gate (one Claude reviewer, single track):
 - [S5] only one of D2's rebuild triggers had a control → fix: task 1.2 names a test and a control per trigger (D2 later redesigned during implementation, see design D2 Rejected; controls follow it)
 - [S6] task 2.2 told to stay unchecked, which blocks archive → fix: assigned to a maintainer on Linux
 - Gate: converged — every finding ruled (six spec/plan text fixes, no new mechanism), regrounded against the files.
+
+Implementation gate (one Claude reviewer, whole branch):
+- [I1] archive removed during the tree watcher's first walk leaves the archive watcher on a missing path, later archived changes unannounced → note: tolerable (any other change seen rescans; trigger is a removal in the first walk); design Risks
+- [I2] lesson and comment claimed no watcher is created on a missing path → fix: doc wording scoped to the archive watcher
+- [I3] design said the debounce always merges the double sighting → fix: design wording
+- [I4] `p !== archiveDir` compares a `path.join` path with chokidar's forward-slash path on Windows → note: Windows not shipped; design Risks
+- Gate: converged — every finding ruled (two doc fixes, two notes, no code change), regrounded against the files.

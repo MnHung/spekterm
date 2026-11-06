@@ -30,7 +30,8 @@ panel shows (a change archived, an archived change added or removed) still inval
 
 Measured events: archiving a change is seen twice (the tree watcher's `unlinkDir` of `changes/<slug>` and the
 archive watcher's `addDir`); an archived change directory added on its own is seen by the archive watcher; an edit
-inside an archived change is seen by neither. The debounce makes the double sighting one notification.
+inside an archived change is seen by neither. The debounce usually merges the double sighting into one
+notification; when the two straddle it there are two, which is harmless.
 
 Containment in the `ignored` predicate uses `path.relative`, never a prefix comparison (CLAUDE.md, file system
 boundary).
@@ -70,3 +71,9 @@ directory was missing. It ran into the native watch left open above, and it adde
 - [An archived change added between the archive directory appearing and its watcher being ready is missed until
   the next change that is seen] → same class as the risk above; the directory appearing is itself a change seen, so
   the side panel reads again then.
+- [`changes/archive` removed during the tree watcher's initial walk (found by the implementation review): the tree
+  watcher never tracked it, so no `unlinkDir` closes the archive watcher, which stays on the missing path; archived
+  changes added afterwards are not announced until the folder is released] → accepted: every other change seen
+  still rescans and shows them, and the trigger is removing the whole archive within the first walk.
+- [Windows: chokidar hands paths with forward slashes, so comparing them to the `path.join` form of the archive
+  directory would not match] → not shipped on Windows; to revisit with the Windows artifact.
