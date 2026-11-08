@@ -45,3 +45,9 @@ Implementation gate (one Claude reviewer, whole branch):
 - [I3] design said the debounce always merges the double sighting → fix: design wording
 - [I4] `p !== archiveDir` compares a `path.join` path with chokidar's forward-slash path on Windows → note: Windows not shipped; design Risks
 - Gate: converged — every finding ruled (two doc fixes, two notes, no code change), regrounded against the files.
+
+Rebase gate (onto 0.4.0, `bca92fb`; one Claude reviewer, whole branch):
+- Conflict in `scripts/scenario-coverage.test.mjs` only (both sides appended to `COVERED_CHANGES` and the table) → kept both; range-diff: added lines unchanged
+- [R1] an archived change arriving on its own can be read before git has written all its files, and nothing re-reads them → note: tolerable (the change list is right, the contents heal at the next seen change or a restart)
+- [R2] `watcher.ts` creation-point table still omits the worktree-list watcher, so "八個" is one short → note: comment only, the miss predates this change
+- Gate: converged — every finding ruled (two notes, no code change), regrounded against the files; macOS unit failures in the watcher-timing tests match `origin/master`, Linux CI is the carrier.
