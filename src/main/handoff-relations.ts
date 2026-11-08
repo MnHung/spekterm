@@ -213,6 +213,24 @@ function descendantTree(
   return build(selfId)
 }
 
+/**
+ * The fixed names a relations file lists: the parent (a closed parent has none), each sibling, and every session in
+ * the descendant tree, at every depth (`agent-session-wake` D1). The wake's reach is this set, so "listed in the
+ * relations file" and "may be woken" are one computation.
+ */
+export function relativeNamesOf(relations: Relations | null): Set<string> {
+  const names = new Set<string>()
+  if (!relations) return names
+  const add = (entry: RelatedSession): void => {
+    if (entry.name) names.add(entry.name)
+    for (const child of entry.children ?? []) add(child)
+  }
+  if (relations.parent && !('closed' in relations.parent)) add(relations.parent)
+  for (const sibling of relations.siblings) add(sibling)
+  for (const child of relations.children) add(child)
+  return names
+}
+
 /** 最近一次寫出的內容 —— 只寫有變的檔。 */
 const written = new Map<string, string>()
 

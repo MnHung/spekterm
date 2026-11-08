@@ -584,6 +584,20 @@ describe('session commands (agent-session-control)', () => {
     assert.equal(h.store.list().length, 0, 'a command is not an inbox item')
   })
 
+  test('a wake goes to the control too (agent-session-wake)', async () => {
+    const kinds: string[] = []
+    const h = harness({
+      control: (_source, kind) => {
+        kinds.push(kind)
+        return { ok: true, consume: true, notify: false }
+      },
+    })
+    const file = h.file('s1', 'w.json', { kind: 'wake', target: 'beta-1a2b' })
+    await h.handoff.deliverFile(fs.readFileSync(file, 'utf8'), file, { mtimeMs: 42, size: 1 })
+    assert.deepEqual(kinds, ['wake'])
+    assert.equal(h.store.list().length, 0, 'a wake is not an inbox item')
+  })
+
   test('without a control, the command kinds are refused as an unknown kind', async () => {
     const h = harness()
     const file = h.file('s1', 'c.json', { kind: 'hibernate' })

@@ -171,9 +171,9 @@ export const MAX_REPORT_LENGTH = 4_000
 export type OutboxKind = 'handoff' | 'report' | 'cancel' | CommandKind | 'unknown' | 'malformed'
 
 /** The agent's session commands (`agent-session-control`). */
-export type CommandKind = 'close' | 'hibernate' | 'rename'
+export type CommandKind = 'close' | 'hibernate' | 'rename' | 'wake'
 
-const COMMAND_KINDS: readonly string[] = ['close', 'hibernate', 'rename'] satisfies CommandKind[]
+const COMMAND_KINDS: readonly string[] = ['close', 'hibernate', 'rename', 'wake'] satisfies CommandKind[]
 
 export function isCommandKind(kind: OutboxKind): kind is CommandKind {
   return COMMAND_KINDS.includes(kind)
@@ -227,7 +227,7 @@ export interface SessionCommand {
   kind: CommandKind
   /** A fixed name, or absent for the agent's own session. */
   target?: string
-  /** Rename only: flattened to one line, possibly empty (hands naming back). */
+  /** Rename only: flattened to one line, possibly empty (hands naming back). A wake reads only `target`. */
   name?: string
 }
 

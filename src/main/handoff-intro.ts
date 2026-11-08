@@ -234,20 +234,19 @@ function teammateLines(teammates: string | undefined): string[] {
 function commandLines(hasRelations: boolean): string[] {
   return [
     '',
-    'You can also ask spekterm to close, hibernate or rename a session: write one of these into your outbox, by the same rules:',
+    'You can also ask spekterm to close, hibernate, rename or wake a session: write one of these into your outbox, by the same rules:',
     '  {"kind": "close"}',
     '  {"kind": "hibernate"}',
     '  {"kind": "rename", "name": "<new label>"}',
+    '  {"kind": "wake", "target": "<name>"}',
     hasRelations
-      ? 'With no "target" it acts on your own session. Add "target": "<name>" to act on a session you handed off, or one they handed off: use a name from the "children" tree of your relations file.'
-      : 'With no "target" it acts on your own session. Add "target": "<name>" to act on a session you handed off, or one they handed off, by its name.',
-    'Your parent, your siblings and any other session are refused.',
-    'Close ends the session and removes it. Hibernate ends its process but keeps it, dormant, until the user wakes it.',
-    'Both wait until the target finishes its current turn, so make a command on your own session your last action.',
-    'Closing your own session does not close it: once your reply ends, the user is offered to close or keep it, and it stays open until they choose.',
-    'If the user types into the target before a command is carried out, it is dropped. Close and hibernate of a running session need agent event reporting to be on.',
+      ? 'With no "target" a command acts on your own session. "target": "<name>" takes a name from your relations file: close, hibernate and rename only one in your "children" tree; wake also your parent and siblings.'
+      : 'With no "target" a command acts on your own session. Add "target": "<name>" to close, hibernate, rename or wake a session you handed off, or one they handed off, by its name. Any other session is refused.',
+    'Close removes the session. Hibernate ends its process but keeps it, dormant. Wake starts a dormant one at once, without asking the user.',
+    "Close and hibernate wait for the target's turn to end (so make one on yourself your last action), are dropped if the user types into it first, and need agent event reporting on for a running target.",
+    'Closing your own session only offers the user to close or keep it, once your reply ends.',
     `Rename takes effect at once and changes only the label. "name" is at most ${MAX_FIELD_LENGTH} characters, on one line; an empty name gives naming back to the terminal title. No name used for messaging changes.`,
-    'A command\'s receipt says it was accepted, not that it was carried out. For a session you handed off, your relations file shows the result: a closed one is gone, a hibernated one has "running": false, a renamed one shows the new "title".',
+    'A receipt says a command was accepted, not that it was carried out. Your relations file shows the result: a closed session is gone, a hibernated one has "running": false, a renamed one the new "title".',
   ]
 }
 
@@ -307,7 +306,8 @@ function peerLines(name: string | undefined, relations: string | undefined): str
           `  ${relations}`,
           'It is kept up to date, including sessions created after you started. If another session here handed this one off, it has a parent.',
           "To contact one, use Claude Code's own session messaging (ListAgents / SendMessage), addressed by the name in that file; spekterm does not carry the message.",
-          'A session listed with "running": false has no process now: it still exists but cannot receive messages. It was hibernated, or spekterm has not started it again yet after a restart; it comes back when the user wakes it or spekterm starts it again, and you must not try to wake it yourself.',
+          'A session listed with "running": false has no process now: it still exists but cannot receive messages. It was hibernated, or spekterm has not started it again yet after a restart. To reach it, wake it; message it once it is "running": true and its name shows in ListAgents.',
+          'Do not wake a parent only to report: a report needs no running parent. Not running a minute after an accepted wake: it was put back to sleep; ask the user before waking it again.',
           'A message can also go unanswered - if you need a reply, ask for one.',
           'Each child and sibling also has a "state" (working, waiting, done, or idle) and, once it has reported finishing its work, a "summary".',
           'Children nest: a child lists the sessions it handed off under its own "children", at every depth. A descendant marked "parentGone": true lost its direct parent (closed, or its repo left the workspace) and is listed under its nearest ancestor that still exists.',

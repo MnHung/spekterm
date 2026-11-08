@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
 import type { CommandKind } from './handoff-delivery'
+import { relationsOf, relativeNamesOf } from './handoff-relations'
 import type { IntakeRejection } from './intake-schema'
 import type { DeliverOutcome, FailureContext } from './intake-service'
 import type { HostAction } from './remote-protocol'
@@ -83,6 +84,19 @@ function harness() {
       requests.push(action)
       return answer(action)
     },
+    // The real wiring's shape: the relations file's own names. A session that does not exist is one whose folder left
+    // the workspace — its record stays, so the chain still links through it, as for a closed intermediate.
+    relativeNames: (sourceId) =>
+      relativeNamesOf(
+        relationsOf(sourceId, {
+          view: [...sessions.values()].map(({ session, exists }) => ({
+            session: exists ? session : { ...session, folderId: 'gone' },
+            provisional: false,
+          })),
+          folders: [{ id: 'f1', name: 'alpha' }],
+          running,
+        }),
+      ),
     describe: (id) => (sessions.get(id)?.exists ? `alpha · ${sessions.get(id)?.session.peerName}` : null),
     reject: (code, _label, detail, failure): DeliverOutcome => {
       rejects.push({ code, failure })
@@ -542,5 +556,125 @@ describe('offers are one record, announced on every change (remote-close-offer D
     await flush()
     assert.equal(h.control.isOffered(C), true)
     assert.equal(h.announced(), 1)
+  })
+})
+
+describe('wake (agent-session-wake)', () => {
+  const woken = (h: ReturnType<typeof harness>) =>
+    h.requests.filter((r) => r.kind === 'wake').map((r) => (r as { sessionId: string }).sessionId)
+
+  it('a child wakes its dormant parent, at once, with agent events off', async () => {
+    const h = harness()
+    h.running.delete(P)
+    h.setEvents(false)
+    h.deliver(C, 'wake', { target: 'alpha-p' })
+    await flush()
+    assert.deepEqual(woken(h), [P])
+    assert.deepEqual(h.rejects, [])
+    // Nothing waits on a turn, and no end is announced.
+    assert.deepEqual(h.control.pendingTargets(), [])
+    assert.equal(h.expected.size, 0)
+  })
+
+  it('a sibling is woken, also after the parent is gone', async () => {
+    const h = harness()
+    h.running.delete(C2)
+    h.deliver(C, 'wake', { target: 'alpha-c2' })
+    await flush()
+    assert.deepEqual(woken(h), [C2])
+
+    const g = harness()
+    g.running.delete(C2)
+    g.running.delete(P)
+    g.add(rec(P, 'alpha-p'), false)
+    g.deliver(C, 'wake', { target: 'alpha-c2' })
+    await flush()
+    assert.deepEqual(woken(g), [C2])
+  })
+
+  it('a dormant grandchild is woken through a closed intermediate', async () => {
+    const h = harness()
+    h.running.delete(G)
+    h.running.delete(C)
+    h.add(rec(C, 'alpha-c', P), false)
+    h.deliver(P, 'wake', { target: 'alpha-g' })
+    await flush()
+    assert.deepEqual(woken(h), [G])
+  })
+
+  it("a sibling's child and an unrelated session are refused; an unknown name is not found", async () => {
+    const K = '10000000-0000-4000-8000-000000000006'
+    const h = harness()
+    h.add(rec(K, 'alpha-k', C2))
+    h.running.delete(K)
+    h.running.delete(X)
+    h.deliver(C, 'wake', { target: 'alpha-k' })
+    h.deliver(C, 'wake', { target: 'alpha-x' })
+    h.deliver(C, 'wake', { target: 'alpha-nobody' })
+    await flush()
+    assert.deepEqual(woken(h), [])
+    assert.deepEqual(
+      h.rejects.map((r) => r.code),
+      ['CONTROL_NOT_ALLOWED', 'CONTROL_NOT_ALLOWED', 'CONTROL_TARGET_NOT_FOUND'],
+    )
+  })
+
+  it('a running target, an omitted target and the own name change nothing and report nothing', async () => {
+    const h = harness()
+    h.deliver(C, 'wake', { target: 'alpha-p' })
+    h.deliver(C, 'wake')
+    h.deliver(C, 'wake', { target: 'alpha-c' })
+    await flush()
+    assert.deepEqual(h.requests, [])
+    assert.deepEqual(h.rejects, [])
+  })
+
+  it('a wake from a source that no longer exists is dropped silently', async () => {
+    const h = harness()
+    h.running.delete(P)
+    h.running.delete(C)
+    h.add(rec(C, 'alpha-c', P), false)
+    h.deliver(C, 'wake', { target: 'alpha-p' })
+    await flush()
+    assert.deepEqual(h.requests, [])
+    assert.deepEqual(h.rejects, [])
+  })
+
+  it('yields to a later start or end of the target, and to a new run (D4)', async () => {
+    const h = harness()
+    h.running.delete(P)
+    h.lastChange.set(P, 6_000)
+    h.deliver(C, 'wake', { target: 'alpha-p' }, 5_000)
+    h.setRunStart(7_000)
+    h.lastChange.delete(P)
+    h.deliver(C, 'wake', { target: 'alpha-p' }, 6_500)
+    await flush()
+    assert.deepEqual(h.requests, [])
+    assert.deepEqual(h.rejects, [])
+  })
+
+  it('is decided again after the gate: a target started meanwhile is left alone', async () => {
+    const h = harness()
+    h.running.delete(P)
+    let release: (value: GateResult) => void = () => undefined
+    h.setGate(() => new Promise<GateResult>((resolve) => (release = resolve)))
+    h.deliver(C, 'wake', { target: 'alpha-p' })
+    h.running.add(P)
+    release('ready')
+    await flush()
+    assert.deepEqual(h.requests, [])
+  })
+
+  it("a failed wake is reported, and leaves another command's expected end in place", async () => {
+    const h = harness()
+    h.running.delete(P)
+    h.expected.add(P)
+    h.setAnswer(() => ({ ok: false, code: 'CREATE_FAILED', message: 'spawn failed' }))
+    h.deliver(C, 'wake', { target: 'alpha-p' })
+    await flush()
+    await flush()
+    assert.deepEqual(woken(h), [P])
+    assert.deepEqual(h.rejects.map((r) => r.code), ['CONTROL_FAILED'])
+    assert.ok(h.expected.has(P), 'the expected end of another command survives a failed wake')
   })
 })

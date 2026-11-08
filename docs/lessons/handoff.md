@@ -493,8 +493,9 @@ What was done, and why each choice:
 ## Session commands: "in a turn", the chain, and what yields (`agent-session-control`)
 
 An agent can close, hibernate or rename its own session and its descendants by writing `{"kind": "close" |
-"hibernate" | "rename", ...}` into its drop point (`src/main/session-control.ts`). Four things fail silently if
-forgotten.
+"hibernate" | "rename", ...}` into its drop point (`src/main/session-control.ts`), and wake a dormant session its
+relations file lists (`"wake"`, `agent-session-wake`). Four things fail silently if forgotten, and the wake adds
+three (at the end of this section).
 
 ### "In a turn" is not the wait state
 
@@ -588,6 +589,20 @@ it leaves the window:
   a window would stall every handoff and report behind it. Requests run asynchronously behind a per-window restore
   gate (`restore-gate.ts`, bounded at 60 s). A failure after the file was consumed reports both halves itself:
   `reject` and, for a permanent code, `reportFailure`.
+
+### The wake: one reach, one bookkeeping, one consequence (`agent-session-wake`)
+
+- **The wake's reach is the relations file's own names** (`relativeNamesOf(relationsOf(...))`), injected into
+  `SessionControl` as `relativeNames`. A shared "reach" predicate used by both the relations file and the wake was
+  rejected in review: a parity test between two users of one function cannot be made to fail by a control group —
+  widening the predicate widens both sides. Taking the file's output makes "listed" and "may be woken" one
+  computation.
+- **A failed wake must not call `cancelCommandEnd`.** That call ran for every kind but rename; a wake announces no
+  end, so on failure it would clear the expected end of a close or hibernate in progress on the same target, and
+  that end would count as the user's process change. Only close and hibernate take it back now.
+- **A wake's own start is a process change**, so a close or hibernate of the same target written before the wake
+  took effect yields to it (the staleness rule is unchanged). Accepted rather than special-cased: only a descendant
+  can be both woken and closed by one agent, and only by writing both within moments.
 
 ## 16. The introduction's size limit: past 10,000 characters the agent keeps only the first 2 KB (`scheduled-handoff`)
 

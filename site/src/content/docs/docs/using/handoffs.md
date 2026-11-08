@@ -137,8 +137,10 @@ by the same parent can coordinate. spekterm keeps each agent's list of relatives
 siblings, and its children together with the sessions they handed off, at every depth. Claude Code delivers
 the messages.
 
-A hibernated or dormant session has no process and cannot receive messages until you wake it, or, after a
-restart, until spekterm starts it again. Agents are told this, and told not to wake sessions themselves.
+A hibernated or dormant session has no process and cannot receive messages until it is woken: by you, by
+spekterm after a restart, or by an agent that needs to reach it. An agent can wake any session in its list of
+relatives (see below), and is told to message it once it is running, not to wake a parent only to report that it
+is done, and to ask you before waking a session again that went back to sleep.
 
 Giving each session a fixed name has a side effect: Claude Code shows that name as the terminal title. To
 see a task name on the tab instead, rename the tab. Your name takes priority.
@@ -164,13 +166,17 @@ those sessions handed off in turn. Ask in plain words:
 - **Typing into that session cancels a waiting close or hibernate**, because you have taken it back.
   Hibernating, closing, or waking it yourself does the same. A waiting command is also dropped when
   spekterm quits.
-- An agent can act only on its own subtree. If you ask it to close its parent, a sibling, or an unrelated
-  session, the command is refused, and you see the refusal as a notification and an entry in the inbox.
+- An agent can close, hibernate, or rename only its own subtree. If you ask it to close its parent, a sibling, or
+  an unrelated session, the command is refused, and you see the refusal as a notification and an entry in the inbox.
+- **An agent can also wake a dormant session in its list of relatives**: its parent, its siblings, and the sessions
+  it handed off. The session starts at once, without asking you, and resumes its conversation; one that is already
+  running is left alone. This is how an agent reaches a relative you hibernated. Waking a session the agent is not
+  related to is refused like any other command.
 - Nothing moves on screen: the rail selection and your keyboard focus stay where they are.
 
 The agent's receipt for a command (see below) says whether the command was accepted or refused, not whether
-it was carried out. For a session it handed off, the agent can see the outcome in its list of relatives:
-gone, not running, or renamed.
+it was carried out. The agent can see the outcome in its list of relatives: gone, not running, running again, or
+renamed.
 
 ## Handing work to a teammate
 

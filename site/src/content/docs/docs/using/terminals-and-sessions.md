@@ -122,7 +122,8 @@ On Linux, closing the window quits spekterm. On macOS, spekterm behaves like Ter
 
 A session you only use now and then does not need a running process. **Hibernate** it to end its process
 and leave it dormant in place. It stays dormant, across restarts too, until you press **Wake** (or `Enter`
-while it has focus).
+while it has focus), or until a related agent wakes it to reach it
+([Handoffs](/docs/using/handoffs/#asking-an-agent-to-close-hibernate-or-rename-sessions)).
 
 - **By hand:** press `Ctrl+Shift+H`, or choose **Hibernate** in the menu of its tab or rail row.
 - **Automatically:** a session idle for 24 hours is hibernated. Change the time, or turn this off, under

@@ -426,7 +426,7 @@ rule existed has no such information, and its sessions SHALL be restored dormant
 upgrading starts nothing, as before.
 
 **Every other restored session — one that was dormant when the processes were ended — SHALL start its pty only
-when the user explicitly wakes it.** That is a session the user or the idle policy hibernated, and a restored
+when the user explicitly wakes it, or when an agent's wake command reaches it (see `agent-session-control`).** That is a session the user or the idle policy hibernated, and a restored
 session that was never woken. Displaying a dormant session — selecting its rail item, switching to it with the
 keyboard, clicking its tab — SHALL NOT start it. This holds for every dormant session, whether it was restored
 or hibernated (see `session-hibernation`).
@@ -589,3 +589,10 @@ which sessions to keep running, and hibernation already records the sessions tha
 
 - **WHEN** 使用者重新開啟應用程式、未喚醒某個休眠 session、再次關閉並重新開啟應用程式
 - **THEN** 該 session 仍然存在且仍為休眠
+
+#### Scenario: An agent's wake starts a dormant session without displaying it
+
+- **WHEN** the user hibernated session P, P's child C is running and displayed with the keyboard focus in its
+  terminal, and the agent in C writes a wake command targeting P's name
+- **THEN** P has started a pty, and the rail selection, the displayed session and the keyboard focus are what they
+  were before

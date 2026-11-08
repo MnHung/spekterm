@@ -173,7 +173,7 @@ export function receiptReason(code: IntakeRejection | 'READ_FAILED'): string {
     case 'CONTROL_TARGET_NOT_FOUND':
       return 'The command named no existing session.'
     case 'CONTROL_NOT_ALLOWED':
-      return 'The command named a session that is neither yours nor one you handed off.'
+      return 'The command named a session it may not act on: close, hibernate and rename reach only your own session and the ones you handed off; wake also reaches your parent and siblings.'
     case 'CONTROL_FAILED':
       return 'The session could not be acted on.'
     case 'CONTROL_NO_WINDOW':

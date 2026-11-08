@@ -12,8 +12,8 @@ import { CANARY_WINDOW_MS, type CanaryVerdict, type LaunchState, startAtLaunch }
  * （app 關掉時 pty 就沒了），喚醒它們只是讓一堆 claude 閒置著搶 CPU。**懶惰嚴格地更好**。
  *
  * Since `session-hibernation` a running session can also go back to `dormant` (by the user's hand or
- * after a period of idleness), and a dormant session starts **only on an explicit wake** — displaying
- * it does not. There is one dormant state: a hibernated session is exactly a restored one.
+ * after a period of idleness), and a dormant session starts **only on an explicit wake** — the user's, a
+ * paired device's, or an agent's wake command (`agent-session-wake`) — displaying it does not. There is one dormant state: a hibernated session is exactly a restored one.
  *
  * **The one exception** (`restore-running-sessions`): a restored session that had a running process when
  * its ptys were last ended starts again on its own, right after the restore (`startAtLaunch`). The lazy rule
@@ -153,7 +153,7 @@ export interface SessionsApi {
    * 喚醒一個休眠的 session（＝為它 spawn pty）。
    *
    * **Called on the user's explicit wake** (the dormant screen's Wake button, or `Enter` on it), a paired
-   * device's wake, and the start at launch of a session that was running (`launch`) — displaying a dormant
+   * device's wake, an agent's wake command (`agent-session-wake`, through the same request), and the start at launch of a session that was running (`launch`) — displaying a dormant
    * session does not start it (`session-persistence`). So nothing calls this on re-render, and a failed wake
    * can be retried by pressing Wake again.
    *

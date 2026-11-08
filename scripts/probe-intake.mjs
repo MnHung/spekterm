@@ -5051,6 +5051,73 @@ async function runSessionControl(_mode, _modeConfig, context) {
   await sleep(3_000)
   check(results, 'a keystroke into the target drops its waiting close: it survives its turn end', alive(E) && recordOf(E) !== null, `alive=${alive(E)} record=${recordOf(E) !== null}`)
 
+  // ── agent-session-wake: a child wakes its parent the user hibernated, and a sibling, quietly; a session its
+  // relations file does not list (G, a sibling's child) is refused ──
+  // Display E and put the keyboard in its terminal: absolute states to hold, so "unchanged" cannot pass for nothing.
+  const E_FOCUSED = `(() => {
+    const row = [...document.querySelectorAll('aside li > div[role="button"]')].find((el) => (el.textContent ?? '').includes('CTL-E'))
+    row?.click()
+    const stage = document.querySelector('[aria-label="${copy('stage.terminal')}"]')
+    const screen = stage ? [...stage.querySelectorAll('.xterm')].find((el) => el.getBoundingClientRect().width > 0) : null
+    screen?.querySelector('textarea')?.focus()
+    const tab = document.querySelector('[aria-label="${copy('sessions.tabs')}"] [role="tab"][aria-selected="true"]')?.textContent ?? ''
+    return tab.includes('CTL-E') && Boolean(screen && screen.contains(document.activeElement))
+  })()`
+  const STAGE_STATE = `(() => ({
+    selection: ${RAIL_SELECTION},
+    tab: document.querySelector('[aria-label="${copy('sessions.tabs')}"] [role="tab"][aria-selected="true"]')?.textContent ?? null,
+    // In the displayed terminal, not merely in some terminal: a hidden session's view is mounted too.
+    focusInTerminal: (document.activeElement?.closest('.xterm')?.getBoundingClientRect().width ?? 0) > 0,
+  }))()`
+  await pollFor({ read: () => app.client.evaluate(E_FOCUSED), settled: Boolean, timeoutMs: 15_000, label: "E displayed, keyboard in its terminal" }).catch(() => false)
+  const stageBefore = await app.client.evaluate(STAGE_STATE)
+  // The user hibernates P (the desktop's own hibernate).
+  await app.client.evaluate(`window.workspace.terminal.hibernate(${JSON.stringify(parentId)})`)
+  const pAsleep = await pollFor({ read: () => !alive(P) && recordOf(P) !== null, settled: Boolean, timeoutMs: 20_000, label: 'P hibernated by the user' }).catch(() => false)
+  check(results, 'precondition: the user hibernated P, and D is dormant', pAsleep && !alive(D) && recordOf(D) !== null, `P alive=${alive(P)} D alive=${alive(D)}`)
+  // A wake written after P's process ended (D4): a wake written before it would be dropped.
+  await sleep(500)
+  command(E, { kind: 'wake', target: P?.peerName })
+  const pAwake = await pollFor({ read: () => alive(P), settled: Boolean, timeoutMs: 30_000, label: 'P woken by E' }).catch(() => false)
+  const eSeesP = await pollFor({
+    read: () => relationsOf(profile, E.id)?.parent ?? null,
+    settled: (parent) => parent?.running === true,
+    timeoutMs: 15_000,
+    label: "E's relations list P running",
+  }).catch(() => relationsOf(profile, E.id)?.parent ?? null)
+  const stageAfter = await app.client.evaluate(STAGE_STATE)
+  check(
+    results,
+    "a child wakes its parent the user hibernated: P runs again, its record kept, and the child's relations file lists it running",
+    pAwake === true && recordOf(P) !== null && eSeesP?.running === true,
+    `alive=${alive(P)} record=${recordOf(P) !== null} relations=${JSON.stringify(eSeesP)}`,
+  )
+  check(
+    results,
+    "an agent's wake takes nothing from the user: the rail selection, the displayed session and the keyboard stay where they were",
+    String(stageBefore?.tab ?? '').includes('CTL-E') && stageBefore?.focusInTerminal === true &&
+      stageAfter?.selection === stageBefore?.selection && stageAfter?.tab === stageBefore?.tab && stageAfter?.focusInTerminal === true,
+    `before=${JSON.stringify(stageBefore)} after=${JSON.stringify(stageAfter)}`,
+  )
+  command(E, { kind: 'wake', target: D.peerName })
+  const dAwake = await pollFor({ read: () => alive(D), settled: Boolean, timeoutMs: 30_000, label: 'D woken by its sibling E' }).catch(() => false)
+  check(results, 'a sibling is woken', dAwake === true && recordOf(D) !== null, `alive=${alive(D)} record=${recordOf(D) !== null}`)
+  const wakeNotesBefore = notifications(profile).length
+  command(E, { kind: 'wake', target: G.peerName })
+  const wakeRefusal = await pollFor({
+    read: () => notifications(profile).slice(wakeNotesBefore),
+    settled: (list) => list.some((entry) => JSON.stringify(entry).includes(copy('intake.notify.commandTitle'))),
+    timeoutMs: 20_000,
+    label: "the refusal of a wake on a sibling's child",
+  }).catch(() => [])
+  await sleep(1_000)
+  check(
+    results,
+    "a wake on a session the relations file does not list (a sibling's child) is refused: it stays dormant, and a notification names a session command",
+    !alive(G) && recordOf(G) !== null && wakeRefusal.some((entry) => JSON.stringify(entry).includes(copy('intake.notify.commandTitle'))),
+    `G alive=${alive(G)} notes=${JSON.stringify(wakeRefusal.map((n) => n.title))}`,
+  )
+
   // ── an agent closes itself: offered when its turn ends, closed only by the user (D12) ──
   const offerLabel = label('sessions.closeOffer.label')
   const OFFER = `(() => {
@@ -5212,4 +5279,4 @@ const outcome = await runSections({
   },
 })
 
-process.exit(outcome ? 0 : 1)
+process.exit(outcome.ok ? 0 : 1)

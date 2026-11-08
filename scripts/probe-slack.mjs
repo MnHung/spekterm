@@ -841,4 +841,4 @@ const outcome = await runSections({
   },
 })
 
-process.exit(outcome ? 0 : 1)
+process.exit(outcome.ok ? 0 : 1)

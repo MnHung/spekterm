@@ -30,7 +30,8 @@ OpenSpec 結構的側欄，讓使用者不必另外開 IDE 就能一邊駕駛 ag
     續接、shell 於最後 cwd 重生並重播畫面）、休眠喚醒、終端偏好（字型／size／行高／GPU 開關）。
   **Hibernation** (`session-hibernation`): a running session can go back to dormant — by hand
   (`Ctrl+Shift+H`, tab or rail menu) or after an idle threshold (default 24 h, Settings) — and
-  **every dormant session starts only on an explicit Wake**, never on display. Hibernation is a
+  **every dormant session starts only on an explicit Wake** (the user's, a paired device's, or an agent's wake
+  command), never on display. Hibernation is a
   per-session `dispose`, not a `kill`: the record, drop point and lineage stay. The shell idle test and
   why are in `docs/lessons/terminal.md`.
   **The one exception** (`restore-running-sessions`): a session that was running when its ptys were last
@@ -97,6 +98,10 @@ OpenSpec 結構的側欄，讓使用者不必另外開 IDE 就能一邊駕駛 ag
   with Close / Keep, the content readable underneath. **The main process owns the offer** and a paired phone sees
   and answers it (`remote-close-offer`): any new way to answer it must reach `SessionControl`, not only the card. "In a turn" is **not** the wait state's `ready` (see
   `docs/lessons/handoff.md`, "Session commands").
+  **An agent can wake a dormant session its relations file lists** — parent, siblings, descendants
+  (`agent-session-wake`, `kind: "wake"`): at once, quietly, with no confirmation (the user's decision), so it can then
+  message it. **Its reach is the relations file's own output** (`relativeNamesOf`), never a second derivation of
+  "who is a sibling".
 - **Settings** (`settings-sections`) — one dialog with sections (General, Terminal, Agents & sessions,
   Integrations, Team, Remote access, About) and **one save model: a change applies when it is made** (a choice at
   once, a typed value on Enter or blur, Esc restores). The only exceptions are a Slack token and the remote port,

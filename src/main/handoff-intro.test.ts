@@ -198,12 +198,16 @@ test('告知的內容給出「內容太長時怎麼辦」的做法', () => {
     assert.match(text, /SendMessage/)
     assert.match(text, /"running": false has no process now: it still exists but cannot receive messages/)
   })
-  test('relations: a relative listed as not running has no process now, may be hibernated or not yet started again after a restart, returns when the user wakes it or spekterm starts it again, and is not woken by the agent (session-hibernation, restore-running-sessions)', () => {
-    // Control: the old sentence ("is hibernated … spekterm will not start it for you") fails the first two.
+  test('relations: a relative listed as not running has no process now, may be hibernated or not yet started again after a restart, and can be woken to reach it (session-hibernation, agent-session-wake)', () => {
+    // Control: the old sentence ("is hibernated … spekterm will not start it for you") fails the first one.
     assert.match(text, /hibernated, or spekterm has not started it again yet after a restart/)
-    assert.match(text, /comes back when the user wakes it or spekterm starts it again/)
     assert.doesNotMatch(text, /will not\s+start it/)
-    assert.match(text, /must not try to wake it/)
+    // The prohibition is gone, replaced by the wake and when the woken session can be messaged.
+    assert.doesNotMatch(text, /must not try to wake/)
+    assert.match(text, /To reach it, wake it/)
+    assert.match(text, /once it is "running": true and its name shows in ListAgents/)
+    assert.match(text, /Do not wake a parent only to report/)
+    assert.match(text, /ask the user before waking it again/)
   })
   test('名字與關係：沒有名字與關係檔時不出現那一段', () => {
     assert.ok(!introText({ folders: [], outbox: '/o' }).includes('SendMessage'))
@@ -257,18 +261,20 @@ test('the session commands (agent-session-control)', async (t) => {
     assert.ok(text.includes('{"kind": "close"}'))
     assert.ok(text.includes('{"kind": "hibernate"}'))
     assert.ok(text.includes('{"kind": "rename", "name": "<new label>"}'))
-    assert.match(text, /With no "target" it acts on your own session/)
+    assert.ok(text.includes('{"kind": "wake", "target": "<name>"}'))
+    assert.match(text, /With no "target" a command acts on your own session/)
   })
 
   await t.test('states the end-of-turn rule, the keystroke cancel, the events requirement and the missing reply', () => {
     const text = introText({ ...base, relations: '/r.json', name: 'alpha-1a2b' })
-    assert.match(text, /wait until the target finishes its current turn/)
-    assert.match(text, /Closing your own session does not close it: once your reply ends, the user is offered to close\s+or keep it/)
-    assert.match(text, /If the user types into the target before a command is\s+carried out, it is dropped/)
-    assert.match(text, /need agent event reporting to be on/)
-    assert.match(text, /receipt says it was accepted, not that it was carried out/)
-    assert.match(text, /a closed one is gone, a hibernated one has "running": false/)
-    assert.match(text, /"children" tree of your relations file/)
+    assert.match(text, /wait for the target's turn to end/)
+    assert.match(text, /Closing your own session only offers the user to close or keep it/)
+    assert.match(text, /dropped if the user types into it first/)
+    assert.match(text, /need agent event reporting on/)
+    assert.match(text, /receipt says a command was accepted, not that it was carried out/)
+    assert.match(text, /a closed session is gone, a hibernated one has "running": false/)
+    assert.match(text, /close, hibernate and rename only one in your "children" tree; wake also your parent and siblings/)
+    assert.match(text, /Wake starts a dormant one at once, without asking the user/)
   })
 
   await t.test('the name limit it states is the one applied', () => {
@@ -296,7 +302,7 @@ test('every constraint is stated (scheduled-handoff D10)', async (t) => {
     ['a half-written file is read and rejected', /half-written \.json file (will be|is) read and rejected/],
     ['names match exactly and case-insensitively', /exactly \(case-insensitive\)/],
     ['partial or fuzzy matches are rejected', /Partial or fuzzy matches are rejected/],
-    ['a command on a parent, a sibling or any other session is refused', /parent,\s+(your )?siblings and any other session are refused/],
+    ['close, hibernate and rename reach only the children tree; wake also the parent and siblings', /close, hibernate and rename only one in your "children" tree; wake also your parent and siblings/],
     ['rename: one line', /on one\s+line/],
     ['rename: an empty name gives naming back', /empty name gives naming back/],
     ['rename: no messaging name changes', /No name used for messaging changes/],

@@ -77,7 +77,7 @@ agent 從 spekterm 隨時更新的一個檔案（`schedules.json`，在 agent �
 
 spekterm 裡的每個 `claude` session 都以固定的名字執行，名字由它的 rail 項目加上一段短碼組成，例如 `web-app-3f9a`。這個名字跨重啟、跨喚醒都不變。agent 透過這些名字使用 Claude Code 自己的本機 session 訊息功能：子 session 可以告訴母 session 它做完了，同一個母 session 交接出去的兄弟 session 也能互相協調。spekterm 會隨時更新每個 agent 的親屬清單：它的母 session、兄弟 session，以及子 session 和子 session 再交接出去的 session（一路往下）。訊息本身由 Claude Code 傳遞。
 
-休眠中的 session 沒有行程，在你喚醒它（或重啟後 spekterm 重新啟動它）之前收不到訊息。agent 會被告知這一點，也會被告知不能自己去喚醒 session。
+休眠中的 session 沒有行程，在被喚醒之前收不到訊息：由你喚醒、重啟後由 spekterm 重新啟動，或由需要聯絡它的 agent 喚醒。agent 可以喚醒親屬清單裡的任何 session（見下方），並會被告知：等它在執行了再傳訊息、不要只為了回報做完就喚醒母 session，而一個又回到休眠的 session，要先問過你才能再喚醒。
 
 給每個 session 固定的名字有一個副作用：Claude Code 會把這個名字顯示成終端機標題。想在分頁上看到任務名稱，就替分頁重新命名，你取的名字會優先。
 
@@ -93,10 +93,11 @@ agent 可以關閉、休眠或改名自己的 session，以及它交接出去的
 - **關閉和休眠會等那個 session 這一輪結束才執行。** 還在工作的交接 session 會在停下來時才關，不會在中途被切斷。重新命名則立刻生效。
 - **agent 不會自己把自己的 session 關掉。** 它要求關閉時，會先把回覆講完。接著 session 上會出現 **agent 要求關閉這個 session**，附 **關閉** 與 **保留**。底下的回覆照樣看得到、捲得動，你按 **關閉** 之前什麼都不會關。在那個 session 裡打字，就等於選了保留。已配對的手機上也會出現同一個提議，也能回應（[遠端存取](/zh-tw/docs/using/remote-access/)），在任一邊回應，兩邊都算數。
 - **在那個 session 裡打字，會取消等待中的關閉或休眠**，因為你已經把它拿回來了。你自己休眠、關閉或喚醒它，效果也一樣。spekterm 結束時，等待中的指令也會被丟棄。
-- agent 只能動自己這一支底下的 session。要它關掉母 session、兄弟 session 或不相關的 session，指令會被拒絕，你會看到一則通知，收件匣裡也會留下紀錄。
+- 關閉、休眠和改名，agent 只能用在自己這一支底下的 session。要它關掉母 session、兄弟 session 或不相關的 session，指令會被拒絕，你會看到一則通知，收件匣裡也會留下紀錄。
+- **agent 也可以喚醒親屬清單裡休眠中的 session**：它的母 session、兄弟 session，以及它交接出去的 session。那個 session 會立刻啟動、接續原本的對話，不會先問你；已經在執行的就維持原狀。agent 就是這樣聯絡到被你休眠的親屬。要喚醒不相關的 session，會跟其他指令一樣被拒絕。
 - 畫面不會跳動：rail 上的選取和你的鍵盤焦點都留在原處。
 
-agent 收到的指令回條（見下方）只說指令被接受或被拒絕，不說有沒有執行完。至於它交接出去的 session，agent 可以從親屬清單看到結果：不見了、沒在執行，或改了名。
+agent 收到的指令回條（見下方）只說指令被接受或被拒絕，不說有沒有執行完。agent 可以從親屬清單看到結果：不見了、沒在執行、又在執行了，或改了名。
 
 ## 把工作交給隊友
 
