@@ -157,3 +157,36 @@ test('the schedules file does not write the limits it could state as literals (h
     assert.equal(mentions(texts, value), false, `${SCHEDULES} writes ${name}'s value (${value}) as a literal; derive it from the constant.`)
   }
 })
+
+/**
+ * The repeating and commands rules files (`intro-layered-rules`): the rules moved out of the introduction keep its
+ * rule — every limit they state comes from its constant. The year bound is a single digit, so no string in that module
+ * may contain the digit at all (the check is a substring match).
+ */
+const RULES = 'src/main/handoff-rules.ts'
+const GUARDED_RULES = [
+  { name: 'MAX_REPEAT_SEARCH_YEARS', file: 'src/main/cron.ts' },
+  { name: 'MAX_FIELD_LENGTH', file: 'src/main/intake-schema.ts' },
+  { name: 'MAX_SCHEDULE_AHEAD_DAYS', file: 'src/main/handoff-delivery.ts' },
+]
+
+test('the rules files do not write the limits they state as literals (intro-layered-rules)', () => {
+  const texts = writtenNumbers(readFileSync(join(repoRoot, RULES), 'utf8'), RULES)
+  for (const { name, file } of GUARDED_RULES) {
+    const value = constantValue(file, name)
+    assert.notEqual(value, null, `${file} has no ${name}`)
+    assert.equal(mentions(texts, value), false, `${RULES} writes ${name}'s value (${value}) as a literal; derive it from the constant.`)
+  }
+})
+
+test('control: a hard-coded year bound or name limit in the rules module turns it red', () => {
+  const source = readFileSync(join(repoRoot, RULES), 'utf8')
+  const years = constantValue('src/main/cron.ts', 'MAX_REPEAT_SEARCH_YEARS')
+  const name = constantValue('src/main/intake-schema.ts', 'MAX_FIELD_LENGTH')
+  const yearsMutated = source.replace('${MAX_REPEAT_SEARCH_YEARS}', String(years))
+  const nameMutated = source.replace('${MAX_FIELD_LENGTH}', String(name))
+  assert.notEqual(yearsMutated, source, 'precondition: the module interpolates the year bound')
+  assert.notEqual(nameMutated, source, 'precondition: the module interpolates the name limit')
+  assert.ok(mentions(writtenNumbers(yearsMutated, 'mutated-years.ts'), years))
+  assert.ok(mentions(writtenNumbers(nameMutated, 'mutated-name.ts'), name))
+})

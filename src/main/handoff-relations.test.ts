@@ -5,7 +5,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, it } from 'node:test'
 
 import { configureHandoff, relationsFile, resetHandoffState } from './handoff-outbox'
-import { refreshRelations, relationsOf, relativeNamesOf, resetRelationsState, type RelationsWorld } from './handoff-relations'
+import { refreshRelations, relationsAbout, relationsOf, relativeNamesOf, resetRelationsState, type RelationsWorld } from './handoff-relations'
 import type { PersistedSession } from './session-store'
 import { TeammateSent } from './teammate-sent'
 
@@ -184,6 +184,34 @@ describe('refreshRelations', () => {
     const grown = { ...w, view: [...w.view, { session: child(C1, 'fb'), provisional: true }], running: new Set([P, C1]) }
     refreshRelations({ ...grown, agents: [P, C1] })
     assert.equal(JSON.parse(fs.readFileSync(relationsFile(P), 'utf8')).children[0].name, 'n-2222')
+  })
+
+  it('every file carries "about", which explains its fields (intro-layered-rules, session-lineage)', () => {
+    const w = world([session(P, 'fa'), child(C1, 'fb'), child(G, 'fb', C1)], [P, C1, G])
+    refreshRelations({ ...w, agents: [P, C1] })
+    for (const id of [P, C1]) {
+      const about = JSON.parse(fs.readFileSync(relationsFile(id), 'utf8')).about as string
+      assert.equal(about, relationsAbout())
+      assert.match(about, /"running": false means it has no process now: it still exists but cannot receive messages/)
+      assert.match(about, /hibernated, or spekterm has not started it again yet after a restart/)
+      assert.match(about, /comes back when the user or an agent wakes it, or when spekterm starts it again/)
+      assert.match(about, /"state" \(working, waiting, done, or idle\)/)
+      assert.match(about, /once it has reported finishing its work, a "summary"/)
+      assert.match(about, /Children nest: a child lists the sessions it handed off under its own "children", at every depth/)
+      assert.match(about, /"parentGone": true lost its direct parent/)
+      assert.match(about, /a session handed off by another session here has a parent/)
+      assert.match(about, /the teammates file explains its statuses/)
+    }
+  })
+
+  it('"about" holds no path and no session id', () => {
+    // Mutation it guards: an about that interpolates a folder path, the outbox or a session id.
+    const w = world([session(P, 'fa'), child(C1, 'fb')], [P, C1])
+    refreshRelations({ ...w, agents: [P, C1] })
+    const about = JSON.parse(fs.readFileSync(relationsFile(C1), 'utf8')).about as string
+    for (const id of [P, C1]) assert.ok(!about.includes(id), id)
+    assert.ok(!about.includes(base), 'no user data path')
+    assert.ok(!/(^|[\s(])\/[\w.-]+\//.test(about), 'no absolute path')
   })
 
   it('不再執行的 session 其檔被刪除', () => {

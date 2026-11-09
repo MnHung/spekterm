@@ -247,7 +247,11 @@ store directly would reach neither the keeper nor an open inbox), an agent's sto
 the Schedules tab for 7 days (`cancelledBy`, saved with the state). **Every automatic opening goes through `HandoffOpener`**, which waits for a window
 that has restored and lists the inbox, and opens each handoff **at most once, ever** (`firedAt`, persisted
 first) — an open request no window receives is lost. The introduction must stay under the CLI's 10,000-character
-`additionalContext` threshold; past it the agent keeps only a 2 KB preview (`docs/lessons/handoff.md` §16).
+`additionalContext` threshold; past it the agent keeps only a 2 KB preview (`docs/lessons/handoff.md` §16). **Its limits
+sit below the CLI's latent 8,000-character / 200-line cut too, and the rules of rarer actions live in files it points to**
+(`repeating.json`, `commands.json`, the relations file's `about`; `intro-layered-rules`): a new capability adds a
+sentence, not a paragraph. The threshold is measured by `npm run measure:intro` into `scripts/intro-threshold.json`,
+and **`dist:linux` refuses before the bump when the installed Claude Code is not the recorded version**.
 **session 常駐**（讓 pty 活過 app 的生命）已排入路線圖但**刻意不做** —— 見 `docs/PRD.md` §11 的
 tmux 與自寫 daemon 取捨。**不要把「重建」誤當成「常駐」**：關掉 app，pty 一定會死（master fd
 必須有人持有），跑到一半的 build 或 dev server 救不回來。
@@ -297,9 +301,12 @@ npm run dev             # electron-vite dev（開發模式）
                         #   這個變數，屆時隔離會靜默失效。
 npm run build           # 建置至 out/
 npm run dist:linux      # 換版 → 建置 → 打包 AppImage → 清掉更舊的產物（首次需要網路下載 Electron binary）
-                        #   **第一步會 bump patch 版本並 commit**（`chore(release): <v>`，不打 tag）。
+                        #   **It first checks that the installed Claude Code is the version the introduction's
+                        #   threshold was measured with** (`scripts/intro-threshold-check.mjs`; refused → run
+                        #   `npm run measure:intro`, commit the record, run again — nothing was bumped).
+                        #   **然後 bump patch 版本並 commit**（`chore(release): <v>`，不打 tag）。
                         #   要升 minor／major 用 `RELEASE_LEVEL=minor npm run dist:linux` —— **不是**
-                        #   `-- minor`：npm 把引數接在 `&&` 串的最後一步，而 bump 是第一步。
+                        #   `-- minor`：npm 把引數接在 `&&` 串的最後一步，而 bump 在最前面。
                         #   `package.json` / `package-lock.json` 任一已被改過時它**拒絕執行** ——
                         #   換版提交只能指名這兩個檔案，而遞增與你的編輯在同一個檔案裡。
 npm run dist:mac        # macOS only, on a Mac: refuses unless HEAD is the clean release commit of the declared

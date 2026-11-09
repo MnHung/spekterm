@@ -1,0 +1,65 @@
+{
+  "cliVersion": "2.1.319",
+  "measuredAt": "2026-11-09",
+  "mode": "print",
+  "model": "haiku",
+  "cases": [
+    {
+      "label": "positive control",
+      "chars": 200,
+      "lines": 1,
+      "whole": true
+    },
+    {
+      "label": "budget",
+      "chars": 7000,
+      "lines": 3,
+      "whole": true
+    },
+    {
+      "label": "hard limit",
+      "chars": 7900,
+      "lines": 3,
+      "whole": true
+    },
+    {
+      "label": "line limit",
+      "chars": 1520,
+      "lines": 190,
+      "whole": true
+    },
+    {
+      "label": "past the latent character cut",
+      "chars": 8001,
+      "lines": 3,
+      "whole": true
+    },
+    {
+      "label": "past the latent line cut",
+      "chars": 1608,
+      "lines": 201,
+      "whole": true
+    },
+    {
+      "label": "the threshold",
+      "chars": 10000,
+      "lines": 3,
+      "whole": true
+    },
+    {
+      "label": "negative control",
+      "chars": 10001,
+      "lines": 3,
+      "whole": false
+    }
+  ],
+  "informational": [
+    {
+      "label": "two hooks of 6,000 characters each",
+      "chars": 6000,
+      "lines": 3,
+      "hooks": 2,
+      "whole": true
+    }
+  ]
+}

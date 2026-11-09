@@ -632,10 +632,49 @@ by `Output too large` and a saved-file path; 301 lines (6,612 characters) and 41
 whole. The threshold is unchanged and the latent 8,000 / 200-line cut still does not apply, so the budget could rise
 to 8,500 (interactive mode was not re-run this time; in 2.1.303 it matched `-p` at every size).
 
-What the product does about it (`handoff-intro.ts`): a budget test holds a 30-folder introduction at 8,500 characters
-(8,000 until `teammate-handoff`: the longest variant then measured 7,882, and the teammate paragraph and the longer
-receipt list did not fit in the remaining 118; the test prints the margin), and a run-time hard limit of 9,000 cuts the repo list — never
-the rules — for a workspace too large for the budget, saying how many repos were left out.
+What the product did about it until `intro-layered-rules`: a budget test held a 30-folder introduction at 8,500
+characters (8,000 until `teammate-handoff`), and a run-time hard limit of 9,000 cut the repo list. By 8,474 characters
+every new capability had to squeeze the existing rules (issue #104).
+
+### Since `intro-layered-rules`: measured by a script, held by a test, checked at release
+
+**Measured with Claude Code 2.1.319 (2026-11-09) by `npm run measure:intro`:** 200, 7,000, 7,900, 8,001 and 10,000
+characters arrived whole, and so did 190 and 201 short lines; 10,001 was cut. **Two hooks of 6,000 characters each in
+one session both arrived whole**, so the threshold applies per hook, not to their sum — the user's own `SessionStart`
+hooks do not eat into the introduction's margin. The binary's latent cut takes the first 200 lines and then the first
+8,000 code units, as an OR of the two conditions (review of the change read it in the 2.1.319 binary); it still does
+not apply.
+
+How it works now:
+
+- **The limits sit below the latent cut**, not only below the threshold: `INTRO_BUDGET` 7,000 characters (the 30-folder
+  test, with a fixed long zone name — the zone's name is part of the text, so an unfixed one made the length depend on
+  the host), `INTRO_HARD_LIMIT` 7,900 characters and `INTRO_LINE_LIMIT` 190 lines, past either of which the repo list
+  is cut. A CLI update that turns the latent cut on loses nothing.
+- **The rules of rarer actions live in files the introduction points to** — `repeating.json`, `commands.json` (both
+  `handoff-rules.ts`), the relations file's own `about`, as the teammates and schedules files already did. The
+  longest introduction went from 8,474 to about 6,500 characters. A new capability adds one sentence and, if it has
+  rules, a file.
+- **`scripts/measure-intro-threshold.mjs`** injects each case with a random marker at its start and at its end, runs
+  `claude -p --model haiku --tools "" --no-session-persistence` in an empty directory, and records the result in
+  `scripts/intro-threshold.json`. No tools, or the agent reads the saved file behind a preview and reports the end
+  marker anyway; no persistence, or a transcript lands in `~/.claude/projects` and the conversation insights count
+  it. **Haiku sometimes answers NONE with both markers in its context** (2 of 5 runs of one case while this was
+  written), so each case is asked up to three times: an end marker in any reply is whole, a start marker without an
+  end marker in every reply is cut, and neither in every reply fails the run rather than reading as a cut. A run fails
+  without recording when the 200-character positive control is cut (the hook did not fire) or the 10,001-character
+  negative control arrives whole (the threshold moved — extend the sizes and measure again).
+- **`scripts/intro-threshold.test.mjs`** fails unless the record shows the budget, the hard limit and the line limit
+  whole; a case beyond the limits may be cut.
+- **`dist:linux` runs `scripts/intro-threshold-check.mjs` before the bump**: a Claude Code version other than the
+  recorded one, no `claude`, or an uncommitted record refuses the release with no commit left behind. `probe:package`
+  enters through `dist:linux`, so it inherits the check (iterate with `PROBE_PACKAGE_APPIMAGE`, which skips packaging).
+  Interactive mode is not measured by the script; in 2.1.303 it matched `-p` at every size.
+
+**Dogfood (2026-11-09, Claude Code 2.1.319, a fresh interactive session in the dev build):** asked for a weekly
+repeating handoff and for a rename of its own session, the agent read `repeating.json` and `commands.json` before
+writing either file. The pointer sentence ("Before writing one, read …") is enough for the agent to fetch the rules;
+a receipt naming the file stays the fallback for one that does not.
 
 How it was found: the change's first draft wrote "the CLI may cut it — not measured", while `docs/PRD.md` §13 had
 recorded "1 萬字, then a file and a 2,000 preview" all along. The reviewer reproduced it; the bisection is in this table.

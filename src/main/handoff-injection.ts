@@ -1,6 +1,7 @@
+import { writeHandoffRules } from './handoff-rules'
 import { INTRO_COMMAND, INTRO_ENV, OUTBOX_ENV, RECEIPTS_ENV, RELATIONS_ENV, type ReportKind, writeIntroFile } from './handoff-intro'
 import type { PersistedSession } from './session-store'
-import { introFile, outboxDir, prepareOutbox, receiptsDir, relationsFile } from './handoff-outbox'
+import { commandsFile, introFile, outboxDir, prepareOutbox, receiptsDir, relationsFile, repeatingFile } from './handoff-outbox'
 import { writeRelationsFor, type RelationsWorld } from './handoff-relations'
 import type { InjectionContribution } from './agent-injection'
 import type { WorkspaceFolder } from './workspace-store'
@@ -70,7 +71,19 @@ export function prepareHandoffInjection(
 
   const relations = relationsFile(sessionId)
   if (peer.world) writeRelationsFor(sessionId, peer.world)
-  writeIntroFile(introFile(sessionId), { folders, outbox, name: peer.name, relations, reportable: peer.reportable, teammates: teamIntro() })
+  // The rules files the introduction points to (`intro-layered-rules`): written with it, so they cannot be missing
+  // where the introduction names them.
+  writeHandoffRules()
+  writeIntroFile(introFile(sessionId), {
+    folders,
+    outbox,
+    name: peer.name,
+    relations,
+    reportable: peer.reportable,
+    teammates: teamIntro(),
+    repeating: repeatingFile(),
+    commands: commandsFile(),
+  })
 
   return {
     settings: {},
@@ -100,6 +113,7 @@ export function refreshIntros(
    */
   reportableOf: (sessionId: string) => ReportKind | undefined = () => undefined,
 ): void {
+  writeHandoffRules()
   for (const sessionId of sessionIds) {
     const outbox = outboxDir(sessionId)
     if (!outbox) continue
@@ -110,6 +124,8 @@ export function refreshIntros(
       relations: relationsFile(sessionId),
       reportable: reportableOf(sessionId),
       teammates: teamIntro(),
+      repeating: repeatingFile(),
+      commands: commandsFile(),
     })
   }
 }

@@ -1,7 +1,8 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { receiptReason } from './agent-protocol-copy'
+import { receiptReason, receiptReasonWithRules } from './agent-protocol-copy'
+import { commandsFile, repeatingFile } from './handoff-outbox'
 import { isPermanentRejection } from './intake-rejection'
 import type { SourceOutcome } from './intake-source'
 import { isProposalRecord } from './recurrence-kind'
@@ -61,6 +62,19 @@ export const MAX_RECEIPTS = 100
 /** The codes whose detail is system-written (a field name, a rule, workspace paths) and helps the agent. */
 const DETAILED = new Set(['FIELD_TYPE', 'TOO_LONG', 'SCHEDULE_INVALID', 'REPEAT_INVALID', 'TARGET_AMBIGUOUS', 'CANCEL_NOT_FOUND'])
 
+/** A session command's refusals whose rule is in the commands rules file, not the introduction. */
+const COMMAND_RULE_CODES = new Set(['CONTROL_NOT_ALLOWED', 'CONTROL_TARGET_NOT_FOUND', 'CONTROL_UNAVAILABLE', 'TOO_LONG', 'FIELD_TYPE'])
+
+/**
+ * The rules file a refusal points to (`intro-layered-rules` design D5), or null when its rule is in the introduction
+ * (or it breaks no rule: no window, a failed command). The code alone cannot tell a rename's `TOO_LONG` from a
+ * handoff's: the subject `session-control.ts` puts on every command refusal can.
+ */
+function rulesFileFor(code: string, subject: string | undefined): string | null {
+  const file = code === 'REPEAT_INVALID' ? repeatingFile() : subject === 'command' && COMMAND_RULE_CODES.has(code) ? commandsFile() : ''
+  return file || null
+}
+
 export function receiptFor(file: string, outcome: SourceOutcome, now: number): Receipt {
   const base = { file: path.basename(file), writtenAt: new Date(now).toISOString() }
   if ('failed' in outcome) return { ...base, status: 'held', code: 'READ_FAILED', reason: receiptReason('READ_FAILED') }
@@ -82,7 +96,9 @@ export function receiptFor(file: string, outcome: SourceOutcome, now: number): R
   if (code === 'DUPLICATE' && !outcome.notify) {
     return { ...base, status: 'duplicate', ...(outcome.receiptId !== undefined ? { id: outcome.receiptId } : {}) }
   }
-  const reason = DETAILED.has(code) && outcome.detail ? `${receiptReason(code)} (${outcome.detail})` : receiptReason(code)
+  const rules = rulesFileFor(code, outcome.failure?.subject)
+  const words = rules ? receiptReasonWithRules(code, rules) : receiptReason(code)
+  const reason = DETAILED.has(code) && outcome.detail ? `${words} (${outcome.detail})` : words
   if (!outcome.consume) return { ...base, status: 'held', code, reason }
   return { ...base, status: 'rejected', code, reason, permanent: isPermanentRejection({ code, notify: outcome.notify }) }
 }

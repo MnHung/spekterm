@@ -3,10 +3,10 @@ import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { after, describe, it } from 'node:test'
+import { after, before, describe, it } from 'node:test'
 
 import { testOpener } from './handoff-opener.testkit'
-import { clearOutbox, configureHandoff, outboxDir, prepareOutbox, receiptsDir, resetHandoffState } from './handoff-outbox'
+import { clearOutbox, commandsFile, configureHandoff, outboxDir, prepareOutbox, receiptsDir, repeatingFile, resetHandoffState } from './handoff-outbox'
 import { prepareHandoffInjection } from './handoff-injection'
 import { MAX_RECEIPTS, receiptFor, writeReceipt, type Receipt } from './handoff-receipt'
 import { HandoffService } from './handoff-service'
@@ -27,6 +27,53 @@ function tempDir(): string {
 
 const NOW = Date.parse('2026-10-19T12:00:00Z')
 const outcome = (o: Partial<DeliverOutcome>): DeliverOutcome => ({ ok: false, consume: true, notify: true, ...o })
+
+/**
+ * A refusal under a rule the introduction no longer states names the rules file (`handoff-receipt`,
+ * `intro-layered-rules` D5). Code × subject: the same code means a different rule for a handoff and a command.
+ */
+describe('refusals point to the rules file whose rule they broke (intro-layered-rules)', () => {
+  // Configured when these tests run, not when the file is collected: other suites configure their own roots.
+  before(() => {
+    resetHandoffState()
+    configureHandoff(tempDir())
+  })
+  const commands = (): string => commandsFile()
+  const repeating = (): string => repeatingFile()
+  const reasonOf = (o: Partial<DeliverOutcome>): string => receiptFor('/x/a.json', outcome(o), NOW).reason ?? ''
+
+  const pointing: [string, Partial<DeliverOutcome>, () => string][] = [
+    ['a repeat refused (minute */5)', { code: 'REPEAT_INVALID', detail: 'minute: one number' }, repeating],
+    ['until without repeat', { code: 'REPEAT_INVALID', detail: 'until: only with repeat' }, repeating],
+    ['a command naming a session it may not act on', { code: 'CONTROL_NOT_ALLOWED', failure: { subject: 'command' } }, commands],
+    ['a command naming no session', { code: 'CONTROL_TARGET_NOT_FOUND', failure: { subject: 'command' } }, commands],
+    ['a command needing event reporting', { code: 'CONTROL_UNAVAILABLE', consume: true, failure: { subject: 'command' } }, commands],
+    ['a rename one over the limit', { code: 'TOO_LONG', detail: 'name 201', failure: { subject: 'command' } }, commands],
+    ['a command with a wrong field', { code: 'FIELD_TYPE', detail: 'name', failure: { subject: 'command' } }, commands],
+  ]
+  for (const [label, o, file] of pointing) {
+    it(`${label}: names ${file === repeating ? 'the repeating' : 'the commands'} rules file, not the introduction`, () => {
+      const reason = reasonOf(o)
+      assert.ok(file() && reason.includes(file()), reason)
+      assert.doesNotMatch(reason, /introduction/)
+    })
+  }
+
+  const unchanged: [string, Partial<DeliverOutcome>, RegExp][] = [
+    ["a handoff's TOO_LONG keeps the introduction, which states it", { code: 'TOO_LONG', detail: 'body 20001' }, /the limits are in your introduction/],
+    ["a handoff's FIELD_TYPE", { code: 'FIELD_TYPE', detail: 'title' }, /^A field is missing or has the wrong type/],
+    ['an unknown kind', { code: 'FIELD_TYPE', detail: 'kind' }, /"kind" is not one spekterm knows/],
+    ['no window to carry a command out', { code: 'CONTROL_NO_WINDOW', failure: { subject: 'command' } }, /No spekterm window was open/],
+    ['a command that failed', { code: 'CONTROL_FAILED', failure: { subject: 'command' } }, /could not be acted on/],
+  ]
+  for (const [label, o, pattern] of unchanged) {
+    it(`${label}: names no rules file`, () => {
+      const reason = reasonOf(o)
+      assert.match(reason, pattern)
+      assert.ok(!reason.includes(commands()) && !reason.includes(repeating()), reason)
+    })
+  }
+})
 
 describe('the mapping (D8)', () => {
   it('accepted, scheduled, duplicate', () => {

@@ -89,7 +89,7 @@
   "scripts": {
     "dev": "XDG_CONFIG_HOME=$HOME/.config/spekterm-dev electron-vite dev",
     "build": "electron-vite build && node scripts/third-party-licenses.mjs",
-    "dist:linux": "node scripts/release-bump.mjs && npm run build && electron-builder --linux --publish never && node scripts/prune-release.mjs",
+    "dist:linux": "node scripts/intro-threshold-check.mjs && node scripts/release-bump.mjs && npm run build && electron-builder --linux --publish never && node scripts/prune-release.mjs",
     "release:github": "node scripts/release-github.mjs",
     "dist:mac": "node scripts/release-check.mjs && npm ci && npm run build && node scripts/package-mac.mjs && node scripts/prune-release.mjs",
     "install:desktop": "node scripts/install-desktop.mjs",
@@ -108,6 +108,7 @@
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "measure:bundle": "node scripts/measure-bundle.mjs",
+    "measure:intro": "node scripts/measure-intro-threshold.mjs",
     "capture:screenshots": "npm run build && node scripts/capture-screenshots.mjs",
     "lint": "eslint .",
     "probe:files": "node scripts/run-probe.mjs files",

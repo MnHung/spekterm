@@ -174,6 +174,16 @@ test('dist:linux 掛上換版與產物清理', () => {
 })
 
 /**
+ * The introduction's threshold check refuses before the bump (`intro-layered-rules` D7, `build-identity`): placed
+ * after it, a refused release would leave a `chore(release)` commit and a skipped version behind.
+ */
+test('dist:linux checks the introduction threshold before the version bump', () => {
+  const dist = pkg.scripts?.['dist:linux'] ?? ''
+  assert.match(dist, /intro-threshold-check/, `dist:linux does not run the threshold check: ${dist}`)
+  assert.ok(dist.indexOf('intro-threshold-check') < dist.indexOf('release-bump'), 'the check must come before the bump')
+})
+
+/**
  * 產物檔名帶版本 —— 這是「這個檔案是哪一版」的答案。
  *
  * electron-builder 的預設 `artifactName` 已含 `${version}`，所以現在**不設定**它就已滿足。

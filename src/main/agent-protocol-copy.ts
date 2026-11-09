@@ -139,6 +139,16 @@ export function phoneOriginNote(): string {
 }
 
 /**
+ * A refusal's reason when the rule it broke is in a rules file rather than the introduction (`handoff-receipt`,
+ * `intro-layered-rules` design D5): the base reason, then where the rules are. A `TOO_LONG` reason no longer says
+ * "in your introduction" there — the introduction does not state that limit.
+ */
+export function receiptReasonWithRules(code: IntakeRejection, rulesFile: string): string {
+  const base = code === 'TOO_LONG' ? 'A field is over its limit.' : receiptReason(code)
+  return `${base} The rules are in ${rulesFile}; read it before writing again.`
+}
+
+/**
  * The reason a receipt gives for a code (`handoff-receipt`). **Fixed sentences, never the delivery's text**: a
  * receipt carries nothing the agent or a third party wrote. Temporary refusals and held files say what has to
  * change, or when the file is read again. Exhaustive: a new code fails to compile until it has a reason.
@@ -183,7 +193,7 @@ export function receiptReason(code: IntakeRejection | 'READ_FAILED'): string {
     case 'SCHEDULE_INVALID':
       return '"at" breaks the scheduling rules: an ISO 8601 time with an offset, within the bound in your introduction.'
     case 'REPEAT_INVALID':
-      return '"repeat" or "until" breaks the repeating rules: five cron fields "minute hour day month weekday" with a single minute, and "until" later than now and the start, with a time between; see your introduction.'
+      return '"repeat" or "until" breaks the repeating rules: five cron fields "minute hour day month weekday" with a single minute, and "until" only with "repeat", later than now and the start, with a time between.'
     case 'TEAM_UNAVAILABLE':
       return 'The user is not on a team, or the Team feature is off, so nothing was sent and nothing waits. It can succeed once the user is on a team with the feature on; write it again then.'
     case 'TEAMMATE_NOT_FOUND':

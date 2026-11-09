@@ -4,12 +4,11 @@ import os from 'node:os'
 import path from 'node:path'
 import test, { describe } from 'node:test'
 
-import { INTRO_HARD_LIMIT, introText, writeIntroFile } from './handoff-intro'
+import { INTRO_BUDGET, INTRO_HARD_LIMIT, INTRO_LINE_LIMIT, introText, writeIntroFile } from './handoff-intro'
 import { MAX_FIELD_LENGTH, MAX_FIRST_PARTY_BODY_LENGTH } from './intake-schema'
 import { MAX_DELIVERY_BYTES } from './intake-source'
 import { MAX_REPORT_LENGTH, MAX_SCHEDULE_AHEAD_DAYS, parseScheduledAt } from './handoff-delivery'
 import { resolveTarget } from './handoff-target'
-import { MAX_REPEAT_SEARCH_YEARS } from './cron'
 import { teammatesContent, writeTeammatesFile } from './teammates-file'
 
 const folders = [
@@ -196,18 +195,18 @@ test('告知的內容給出「內容太長時怎麼辦」的做法', () => {
   })
   test('名字與關係：說明以名字經 Claude Code 的訊息功能聯絡、不在執行者收不到訊息', () => {
     assert.match(text, /SendMessage/)
-    assert.match(text, /"running": false has no process now: it still exists but cannot receive messages/)
+    assert.match(text, /A session that is not running cannot receive messages/)
+    assert.match(text, /with their current names and whether they are running/)
+    assert.match(text, /A message can also go unanswered/)
   })
-  test('relations: a relative listed as not running has no process now, may be hibernated or not yet started again after a restart, and can be woken to reach it (session-hibernation, agent-session-wake)', () => {
-    // Control: the old sentence ("is hibernated … spekterm will not start it for you") fails the first one.
-    assert.match(text, /hibernated, or spekterm has not started it again yet after a restart/)
-    assert.doesNotMatch(text, /will not\s+start it/)
-    // The prohibition is gone, replaced by the wake and when the woken session can be messaged.
+  test('relations: the field meanings are in the file\'s own "about", not here (intro-layered-rules)', () => {
+    assert.match(text, /its "about" explains every field/)
+    // Moved to `relationsAbout()` and the commands rules file: each turns this red if put back.
+    for (const moved of [/Children nest/, /"parentGone": true/, /"state" \(working/, /hibernated, or spekterm has not started it again/, /Do not wake a parent only to report/]) {
+      assert.doesNotMatch(text, moved)
+    }
+    // The old prohibition stays gone (agent-session-wake).
     assert.doesNotMatch(text, /must not try to wake/)
-    assert.match(text, /To reach it, wake it/)
-    assert.match(text, /once it is "running": true and its name shows in ListAgents/)
-    assert.match(text, /Do not wake a parent only to report/)
-    assert.match(text, /ask the user before waking it again/)
   })
   test('名字與關係：沒有名字與關係檔時不出現那一段', () => {
     assert.ok(!introText({ folders: [], outbox: '/o' }).includes('SendMessage'))
@@ -247,14 +246,8 @@ test('the teammate variant is not longer than the lineage variant (teammate-hand
   assert.ok(teammate.length <= lineage.length, `${teammate.length} > ${lineage.length}`)
 })
 
-test('告訴母 session 關係檔裡看得到子 session 的狀態與摘要', () => {
-  const text = introText({ folders, outbox: '/x', name: 'n', relations: '/r.json' })
-  assert.match(text, /"state"/)
-  assert.match(text, /"summary"/)
-})
-
-test('the session commands (agent-session-control)', async (t) => {
-  const base = { folders: [], outbox: '/o' }
+test('the session commands (agent-session-control, intro-layered-rules)', async (t) => {
+  const base = { folders: [], outbox: '/data/handoff/outbox/s1' }
 
   await t.test('every agent session is told them, not only one created by a handoff', () => {
     const text = introText(base)
@@ -262,29 +255,20 @@ test('the session commands (agent-session-control)', async (t) => {
     assert.ok(text.includes('{"kind": "hibernate"}'))
     assert.ok(text.includes('{"kind": "rename", "name": "<new label>"}'))
     assert.ok(text.includes('{"kind": "wake", "target": "<name>"}'))
+    assert.match(text, /wake \(start\) a dormant one/)
     assert.match(text, /With no "target" a command acts on your own session/)
   })
 
-  await t.test('states the end-of-turn rule, the keystroke cancel, the events requirement and the missing reply', () => {
+  await t.test('points to the commands rules file, at its location beside the outbox root', () => {
+    assert.match(introText(base), /Before writing one, read \/data\/handoff\/commands\.json - it states which sessions you can name/)
+    assert.match(introText({ ...base, commands: '/elsewhere/commands.json' }), /read \/elsewhere\/commands\.json/)
+  })
+
+  await t.test('the commands rules file is not repeated here', () => {
     const text = introText({ ...base, relations: '/r.json', name: 'alpha-1a2b' })
-    assert.match(text, /wait for the target's turn to end/)
-    assert.match(text, /Closing your own session only offers the user to close or keep it/)
-    assert.match(text, /dropped if the user types into it first/)
-    assert.match(text, /need agent event reporting on/)
-    assert.match(text, /receipt says a command was accepted, not that it was carried out/)
-    assert.match(text, /a closed session is gone, a hibernated one has "running": false/)
-    assert.match(text, /close, hibernate and rename only one in your "children" tree; wake also your parent and siblings/)
-    assert.match(text, /Wake starts a dormant one at once, without asking the user/)
-  })
-
-  await t.test('the name limit it states is the one applied', () => {
-    assert.ok(introText(base).includes(`"name" is at most ${MAX_FIELD_LENGTH} characters`))
-  })
-
-  await t.test('the relations paragraph describes the nesting and parentGone', () => {
-    const text = introText({ ...base, relations: '/r.json' })
-    assert.match(text, /Children nest/)
-    assert.match(text, /"parentGone": true/)
+    for (const moved of [/wait for the target's turn to end/, /"name" is at most/, /receipt says a command was accepted/, /only offers the user to close or keep it/, /need agent event reporting on/]) {
+      assert.doesNotMatch(text, moved)
+    }
   })
 })
 
@@ -302,12 +286,11 @@ test('every constraint is stated (scheduled-handoff D10)', async (t) => {
     ['a half-written file is read and rejected', /half-written \.json file (will be|is) read and rejected/],
     ['names match exactly and case-insensitively', /exactly \(case-insensitive\)/],
     ['partial or fuzzy matches are rejected', /Partial or fuzzy matches are rejected/],
-    ['close, hibernate and rename reach only the children tree; wake also the parent and siblings', /close, hibernate and rename only one in your "children" tree; wake also your parent and siblings/],
-    ['rename: one line', /on one\s+line/],
-    ['rename: an empty name gives naming back', /empty name gives naming back/],
-    ['rename: no messaging name changes', /No name used for messaging changes/],
-    ['hibernate keeps the session', /Hibernate ends its process but keeps it/],
     ['report again after each later request', /Report again after each/],
+    // A field refused without "repeat" is not offered in the general shape (intro-layered-rules D1).
+    ['the shape offers no field that is refused without repeat', /"repeat": "<optional>"\}/],
+    ['the repeating rules file is named before writing one', /Before writing one, read \/repeating\.json/],
+    ['the commands rules file is named before writing one', /Before writing one, read \/commands\.json/],
   ]
   for (const [label, pattern] of cases) {
     await t.test(label, () => assert.match(handoff, pattern))
@@ -315,14 +298,13 @@ test('every constraint is stated (scheduled-handoff D10)', async (t) => {
 })
 
 /**
- * The budget (`agent-handoff-source`, D10): 30 folders under three directories, paths as long as a real user
- * data directory gives, the longest variant (a session created by a handoff). Past ~10,000 characters the CLI
- * replaces the whole introduction with a short preview; this keeps the margin visible to the next change that
- * adds a paragraph. Control group (tasks 7.4): fixed-length padding added to the text turns it red.
- * Measured 8,276 after `teammate-handoff-return` (whose teammate report variant is not longer than this one).
+ * The budget (`agent-handoff-source`, `intro-layered-rules` D6): 30 folders under three directories, paths as long
+ * as a real user data directory gives, the longest variant (a session created by a handoff, on a team), and a long
+ * zone name fixed, since the zone's name is part of the text. The CLI replaces a context past its threshold with a
+ * short preview, and carries a latent cut at 8,000 characters / 200 lines; this keeps the margin visible to the next
+ * change that adds a sentence. Control group: fixed-length padding added to the text turns it red.
+ * Measured 8,493 before `intro-layered-rules` moved the rarer actions' rules into rules files, 6,520 after.
  */
-const BUDGET = 8_500
-
 function realisticInput(count: number): Parameters<typeof introText>[0] {
   const dirs = ['/home/alex/git', '/home/alex/git/acme-workspace', '/home/alex/src/personal']
   // Names of about 16 characters, as in a real workspace (measured average 15.7).
@@ -337,13 +319,19 @@ function realisticInput(count: number): Parameters<typeof introText>[0] {
     reportable: 'lineage',
     // On a team with the feature on (`teammate-handoff`): the longest variant.
     teammates: '/home/alex/.config/Spekterm/handoff/teammates.json',
+    timeZone: 'America/Argentina/Buenos_Aires',
   }
+}
+
+function lineCount(text: string): number {
+  return text.split('\n').length
 }
 
 test('the introduction stays within its budget for 30 folders', () => {
   const text = introText(realisticInput(30))
-  console.log(`introduction: ${text.length} characters, budget ${BUDGET}, margin ${BUDGET - text.length}`)
-  assert.ok(text.length <= BUDGET, `${text.length} > ${BUDGET}`)
+  console.log(`introduction: ${text.length} characters, budget ${INTRO_BUDGET}, margin ${INTRO_BUDGET - text.length}; ${lineCount(text)} lines`)
+  assert.ok(text.length <= INTRO_BUDGET, `${text.length} > ${INTRO_BUDGET}`)
+  assert.ok(lineCount(text) <= INTRO_LINE_LIMIT, `${lineCount(text)} lines > ${INTRO_LINE_LIMIT}`)
   assert.ok(!text.includes('more not listed'), 'precondition: 30 folders are all listed')
 })
 
@@ -351,6 +339,7 @@ test('a very large workspace keeps every rule within the hard limit, and says ho
   const input = realisticInput(200)
   const text = introText(input)
   assert.ok(text.length <= INTRO_HARD_LIMIT, `${text.length} > ${INTRO_HARD_LIMIT}`)
+  assert.ok(lineCount(text) <= INTRO_LINE_LIMIT, `${lineCount(text)} lines > ${INTRO_LINE_LIMIT}`)
   const left = /\((\d+) more not listed/.exec(text)
   assert.ok(left, 'the left-out count is stated')
   const listed = text.split('\n').filter((line) => /^ {4}\S/.test(line)).length
@@ -360,24 +349,28 @@ test('a very large workspace keeps every rule within the hard limit, and says ho
   assert.match(text, /Partial or fuzzy matches are rejected/)
 })
 
-test('the introduction states repeat, its syntax, its zone, approval, and missed times (recurring-handoff)', () => {
-  const text = introText({ folders, outbox: '/data/handoff/s1', timeZone: 'Asia/Taipei' })
-  assert.match(text, /"repeat": "<optional>", "until": "<optional>"/)
-  assert.match(text, /repeat: cron "minute hour day month weekday" in Asia\/Taipei/)
-  assert.match(text, /"at" is its start and "until" \(format of "at", no day bound\) its end, both optional/)
-  assert.match(text, /\* or a list of n, a-b, \*\/s, a-b\/s; JAN-DEC, SUN-SAT; weekday 0 or 7 is Sunday/)
-  assert.match(text, /day and weekday both set: either matches/)
-  assert.match(text, /Rejected: minute not one number, seconds, @macros, L W # \?/)
-  assert.match(text, /"until" without "repeat", not after now and the start, or with no time before it/)
-  assert.match(text, /The user approves it first; then each time opens a new session until it ends or is stopped/)
-  assert.match(text, /It opens only while spekterm runs; times missed while closed run once at the next start/)
-  assert.match(text, /proposed {2}- a repeating handoff awaiting the user's approval/)
+test('a workspace of 300 three-character repo names is cut by lines, keeping every rule (intro-layered-rules D6)', () => {
+  const input = { ...realisticInput(30), folders: Array.from({ length: 300 }, (_, i) => ({ name: 'r', path: `/w/r${i.toString(36).padStart(2, '0')}` })) }
+  const text = introText(input)
+  assert.ok(lineCount(text) <= INTRO_LINE_LIMIT, `${lineCount(text)} lines > ${INTRO_LINE_LIMIT}`)
+  // Precondition: the lines bound, not the characters.
+  assert.ok(text.length < INTRO_HARD_LIMIT - 300, `${text.length}: the character limit bound instead`)
+  assert.ok(/\((\d+) more not listed/.test(text), 'the left-out count is stated')
+  assert.match(text, /Report again after each later request you finish\.$/)
+  assert.match(text, /Partial or fuzzy matches are rejected/)
 })
 
-test('the stated year bound is the one the schedule search applies', () => {
-  const text = introText({ folders, outbox: '/data/handoff/s1' })
-  const stated = Number(/no time in (\d+) years/.exec(text)?.[1])
-  assert.equal(stated, MAX_REPEAT_SEARCH_YEARS)
+test('the introduction states repeat, its end, its zone, approval and missed times, and points to the repeating rules file (recurring-handoff, intro-layered-rules)', () => {
+  const text = introText({ folders, outbox: '/data/handoff/outbox/s1', timeZone: 'Asia/Taipei' })
+  assert.match(text, /"repeat": "<optional>"\}/)
+  assert.match(text, /repeat: a cron schedule in Asia\/Taipei, with "until" as its end; the user approves it before anything opens/)
+  assert.match(text, /It opens only while spekterm runs; times missed while closed run once at the next start/)
+  assert.match(text, /Before writing one, read \/data\/handoff\/repeating\.json - it states the syntax and every rule that refuses one/)
+  assert.match(text, /proposed {2}- a repeating handoff awaiting the user's approval/)
+  // Moved to the repeating rules file; each turns this red if put back.
+  for (const moved of [/"until": "<optional>"/, /minute hour day month weekday/, /JAN-DEC/, /@macros/, /no time in \d+ years/]) {
+    assert.doesNotMatch(text, moved)
+  }
 })
 
 test('the zone is the desktop zone when none is passed', () => {
