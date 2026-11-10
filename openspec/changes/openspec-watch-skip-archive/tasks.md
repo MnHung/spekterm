@@ -19,7 +19,7 @@
 ## 2. Verification
 
 - [x] 2.1 `npm test`, `npm run typecheck`, `npm run lint` green
-- [ ] 2.2 `npm run probe:openspec` green on Linux (it needs `xvfb-run`, so it is run by a maintainer on Linux, not on
+- [x] 2.2 `npm run probe:openspec` green on Linux (it needs `xvfb-run`, so it is run by a maintainer on Linux, not on
   the authoring Mac)
 - [x] 2.3 On macOS, the watcher-level measurement of design Context repeated against a real repository with a large
   archive: descriptors before and after, reported in the PR
