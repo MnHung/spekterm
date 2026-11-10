@@ -6,13 +6,14 @@ import { MAX_FIELD_LENGTH } from './intake-schema'
 
 /** The session commands' shapes (`agent-session-control`, design D1). */
 
-test('the three command kinds are told from a handoff, a report and an unknown kind', () => {
+test('the four command kinds are told from a handoff, a report and an unknown kind', () => {
   assert.equal(outboxKindOf('{"kind":"close"}'), 'close')
+  assert.equal(outboxKindOf('{"kind":"wake","target":"x"}'), 'wake')
   assert.equal(outboxKindOf('{"kind":"hibernate","target":"x"}'), 'hibernate')
   assert.equal(outboxKindOf('{"kind":"rename","name":"n"}'), 'rename')
   assert.equal(outboxKindOf('{"kind":"report","summary":"s"}'), 'report')
   assert.equal(outboxKindOf('{"target":"t","body":"b"}'), 'handoff')
-  assert.equal(outboxKindOf('{"kind":"wake"}'), 'unknown')
+  assert.equal(outboxKindOf('{"kind":"sleep"}'), 'unknown')
   assert.equal(outboxKindOf('{"kind":["close"]}'), 'unknown')
 })
 
@@ -51,5 +52,20 @@ test('the name limit is counted in code points, and a longer name is refused', (
     ok: false,
     reason: 'TOO_LONG',
     length: MAX_FIELD_LENGTH + 1,
+  })
+})
+
+test('a wake reads only its target (agent-session-wake)', () => {
+  assert.deepEqual(parseCommand('wake', '{"kind":"wake","target":"beta-1a2b"}'), {
+    ok: true,
+    command: { kind: 'wake', target: 'beta-1a2b' },
+  })
+  assert.deepEqual(parseCommand('wake', '{"kind":"wake"}'), { ok: true, command: { kind: 'wake' } })
+  assert.deepEqual(parseCommand('wake', '{"kind":"wake","target":""}'), { ok: false, reason: 'FIELD_TYPE', field: 'target' })
+  assert.deepEqual(parseCommand('wake', '{"kind":"wake","target":["p"]}'), { ok: false, reason: 'FIELD_TYPE', field: 'target' })
+  // A name, a source or anything else has no effect.
+  assert.deepEqual(parseCommand('wake', '{"kind":"wake","target":"p-1","name":"x","source":"other"}'), {
+    ok: true,
+    command: { kind: 'wake', target: 'p-1' },
   })
 })

@@ -68,8 +68,9 @@ import { agentCancels, HandoffCanceller } from './handoff-cancel'
 import { listView } from './intake-projection'
 import { bodyOf } from './intake-schema'
 import { schedulesContent, writeSchedulesFile } from './schedules-file'
+import { writeHandoffRules } from './handoff-rules'
 import { configureTeamIntro, configureTeammateReports, refreshIntros, reportKindOf, teamIntro } from './handoff-injection'
-import { configureTeammateHandoffs, refreshRelations } from './handoff-relations'
+import { configureTeammateHandoffs, refreshRelations, relationsOf, relativeNamesOf } from './handoff-relations'
 import { anyWindowReceives, HandoffOpener, OPENER_INTERVAL_MS, whenAnnounced } from './handoff-opener'
 import { ENDED_SOURCE_ID, HandoffService, registerHandoffService } from './handoff-service'
 import { HandoffCompletion } from './handoff-completion'
@@ -932,6 +933,8 @@ void app.whenReady().then(async () => {
    * 只能經參數供應。
    */
   configureHandoff(app.getPath('userData'))
+  // The rules files the introduction points to (`intro-layered-rules`); rewritten at every intro write point too.
+  writeHandoffRules()
 
   /**
    * The schedules file (`handoff-cancel`, design D6): what an agent can cancel, from the Schedules tab's own lists.
@@ -1133,6 +1136,8 @@ void app.whenReady().then(async () => {
   }
   const sessionControl = new SessionControl({
     sessions: commandWorld,
+    // The wake's reach is the relations file's own output (`agent-session-wake` D1).
+    relativeNames: (sourceId) => relativeNamesOf(relationsOf(sourceId, currentRelationsWorld(store, sessionStore))),
     running: (sessionId) => runningAgents().includes(sessionId),
     refreshWait: (sessionId) => void refreshWait(sessionId),
     inTurn: (sessionId) => inTurnOf(sessionId),

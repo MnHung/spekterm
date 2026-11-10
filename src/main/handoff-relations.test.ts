@@ -5,7 +5,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, it } from 'node:test'
 
 import { configureHandoff, relationsFile, resetHandoffState } from './handoff-outbox'
-import { refreshRelations, relationsOf, resetRelationsState, type RelationsWorld } from './handoff-relations'
+import { refreshRelations, relationsAbout, relationsOf, relativeNamesOf, resetRelationsState, type RelationsWorld } from './handoff-relations'
 import type { PersistedSession } from './session-store'
 import { TeammateSent } from './teammate-sent'
 
@@ -186,6 +186,34 @@ describe('refreshRelations', () => {
     assert.equal(JSON.parse(fs.readFileSync(relationsFile(P), 'utf8')).children[0].name, 'n-2222')
   })
 
+  it('every file carries "about", which explains its fields (intro-layered-rules, session-lineage)', () => {
+    const w = world([session(P, 'fa'), child(C1, 'fb'), child(G, 'fb', C1)], [P, C1, G])
+    refreshRelations({ ...w, agents: [P, C1] })
+    for (const id of [P, C1]) {
+      const about = JSON.parse(fs.readFileSync(relationsFile(id), 'utf8')).about as string
+      assert.equal(about, relationsAbout())
+      assert.match(about, /"running": false means it has no process now: it still exists but cannot receive messages/)
+      assert.match(about, /hibernated, or spekterm has not started it again yet after a restart/)
+      assert.match(about, /comes back when the user or an agent wakes it, or when spekterm starts it again/)
+      assert.match(about, /"state" \(working, waiting, done, or idle\)/)
+      assert.match(about, /once it has reported finishing its work, a "summary"/)
+      assert.match(about, /Children nest: a child lists the sessions it handed off under its own "children", at every depth/)
+      assert.match(about, /"parentGone": true lost its direct parent/)
+      assert.match(about, /a session handed off by another session here has a parent/)
+      assert.match(about, /the teammates file explains its statuses/)
+    }
+  })
+
+  it('"about" holds no path and no session id', () => {
+    // Mutation it guards: an about that interpolates a folder path, the outbox or a session id.
+    const w = world([session(P, 'fa'), child(C1, 'fb')], [P, C1])
+    refreshRelations({ ...w, agents: [P, C1] })
+    const about = JSON.parse(fs.readFileSync(relationsFile(C1), 'utf8')).about as string
+    for (const id of [P, C1]) assert.ok(!about.includes(id), id)
+    assert.ok(!about.includes(base), 'no user data path')
+    assert.ok(!/(^|[\s(])\/[\w.-]+\//.test(about), 'no absolute path')
+  })
+
   it('不再執行的 session 其檔被刪除', () => {
     const w = world([session(P, 'fa'), child(C1, 'fb')], [P, C1])
     refreshRelations({ ...w, agents: [P, C1] })
@@ -255,3 +283,31 @@ describe('teammate handoffs in the sending session\'s relations (teammate-handof
   })
 })
 
+
+describe('relativeNamesOf (agent-session-wake D1)', () => {
+  const D = '55555555-5555-4555-8555-555555555555'
+  const K = '66666666-6666-4666-8666-666666666666'
+
+  it('lists the parent, the siblings and every descendant, nested at any depth', () => {
+    const sessions = [session(P, 'fa'), child(C1, 'fb'), child(C2, 'fb'), child(G, 'fa', C1), child(D, 'fa', G), child(K, 'fa', C2)]
+    assert.deepEqual([...relativeNamesOf(relationsOf(C1, world(sessions)))].sort(), ['n-1111', 'n-3333', 'n-4444', 'n-5555'])
+  })
+
+  it("does not list a sibling's child or the source itself", () => {
+    const sessions = [session(P, 'fa'), child(C1, 'fb'), child(C2, 'fb'), child(K, 'fa', C2)]
+    const names = relativeNamesOf(relationsOf(C1, world(sessions)))
+    assert.ok(!names.has('n-6666'))
+    assert.ok(!names.has('n-2222'))
+  })
+
+  it('a descendant whose direct parent is gone is still listed; a closed parent has no name', () => {
+    // C1's folder left the workspace: C1 does not exist, G hangs under P marked parentGone.
+    const sessions = [session(P, 'fa'), child(C1, 'fgone'), child(G, 'fa', C1)]
+    assert.deepEqual([...relativeNamesOf(relationsOf(P, world(sessions)))], ['n-4444'])
+    assert.deepEqual([...relativeNamesOf(relationsOf(G, world([child(G, 'fa', C1)])))], [])
+  })
+
+  it('no relations, no names', () => {
+    assert.equal(relativeNamesOf(null).size, 0)
+  })
+})

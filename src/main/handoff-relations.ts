@@ -213,6 +213,45 @@ function descendantTree(
   return build(selfId)
 }
 
+/**
+ * The fixed names a relations file lists: the parent (a closed parent has none), each sibling, and every session in
+ * the descendant tree, at every depth (`agent-session-wake` D1). The wake's reach is this set, so "listed in the
+ * relations file" and "may be woken" are one computation.
+ */
+export function relativeNamesOf(relations: Relations | null): Set<string> {
+  const names = new Set<string>()
+  if (!relations) return names
+  const add = (entry: RelatedSession): void => {
+    if (entry.name) names.add(entry.name)
+    for (const child of entry.children ?? []) add(child)
+  }
+  if (relations.parent && !('closed' in relations.parent)) add(relations.parent)
+  for (const sibling of relations.siblings) add(sibling)
+  for (const child of relations.children) add(child)
+  return names
+}
+
+/**
+ * What the relations file's fields mean, carried in the file itself as `about` (`intro-layered-rules` design D3,
+ * `session-lineage`). The agent reads this file to use any relation, so the explanation is where it is used; the
+ * introduction only says where the file is.
+ *
+ * **No path, no session id, no third-party text** (`session-lineage`): the teammates file is named, not located —
+ * the introduction gives its location.
+ */
+export function relationsAbout(): string {
+  return [
+    'Your relatives in spekterm, kept up to date.',
+    '"self" is you. "parent" is the session that handed this one off (null if none: a session handed off by another session here has a parent; "closed": true if it no longer exists).',
+    '"children" are the sessions you handed off; "siblings" are the other sessions your parent handed off.',
+    'Each relative has its "name" for Claude Code\'s session messaging, its "repo", its "title" and "running".',
+    '"running": false means it has no process now: it still exists but cannot receive messages. It was hibernated, or spekterm has not started it again yet after a restart; it comes back when the user or an agent wakes it, or when spekterm starts it again.',
+    'Each child and sibling also has a "state" (working, waiting, done, or idle) and, once it has reported finishing its work, a "summary".',
+    'Children nest: a child lists the sessions it handed off under its own "children", at every depth. A descendant marked "parentGone": true lost its direct parent (closed, or its repo left the workspace) and is listed under its nearest ancestor that still exists.',
+    '"teammateHandoffs", when present, lists the handoffs you sent to teammates; the teammates file explains its statuses.',
+  ].join(' ')
+}
+
 /** 最近一次寫出的內容 —— 只寫有變的檔。 */
 const written = new Map<string, string>()
 
@@ -229,7 +268,7 @@ export function writeRelationsFor(sessionId: string, world: RelationsWorld): str
   if (!file) return null
   const relations = relationsOf(sessionId, { ...world, running: new Set([...world.running, sessionId]) })
   if (!relations) return null
-  const content = `${JSON.stringify(relations, null, 2)}\n`
+  const content = `${JSON.stringify({ about: relationsAbout(), ...relations }, null, 2)}\n`
   try {
     if (written.get(sessionId) !== content) {
       writeAtomic(file, content)

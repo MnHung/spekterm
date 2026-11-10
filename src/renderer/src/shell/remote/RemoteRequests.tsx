@@ -5,7 +5,8 @@ import { useSessions } from '../terminal/sessions'
 
 /**
  * Carries out a paired device's session actions (`remote-protocol`, design D4 of `mobile-remote-bridge`), and an
- * agent's session commands (`agent-session-control`): close, hibernate and rename arrive through the same request,
+ * agent's session commands (`agent-session-control`, `agent-session-wake`): close, hibernate, rename and wake arrive
+ * through the same request,
  * already decided by the main process (who, whether, when), and run here the same quiet way.
  *
  * The renderer owns the session list, so the main process asks it (`workspace:remote:request`) and waits for

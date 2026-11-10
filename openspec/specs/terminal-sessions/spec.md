@@ -13,7 +13,7 @@ folder 的全域 session）使用者的家目錄**、與 renderer 雙向串流
 
 **但「session」不等於「pty」**：由 `session-persistence` 重建出來的 session 是**休眠**的 —— 它有完整
 的身分（名字、順序）與畫面，卻**還沒有 pty**. One that was running when its ptys were last ended starts
-again on its own right after the restore; any other starts one only when the user explicitly wakes it
+again on its own right after the restore; any other starts one only when the user explicitly wakes it or an agent's wake command reaches it
 (see `session-hibernation`, which also lets a running session go back to that state)。本規格的
 各項要求，凡涉及 pty 者，皆指運作中的 session。
 

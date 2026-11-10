@@ -79,6 +79,20 @@ export function schedulesFile(): string {
   return handoffRootPath ? path.join(handoffRootPath, 'schedules.json') : ''
 }
 
+/**
+ * The repeating rules file (`intro-layered-rules`): every rule that refuses a repeating handoff, read by an agent
+ * before it writes one. One for every session, at the handoff root — never inside an outbox, where it would be read as
+ * a delivery.
+ */
+export function repeatingFile(): string {
+  return handoffRootPath ? path.join(handoffRootPath, 'repeating.json') : ''
+}
+
+/** The commands rules file (`intro-layered-rules`): every rule of a session command, read before writing one. */
+export function commandsFile(): string {
+  return handoffRootPath ? path.join(handoffRootPath, 'commands.json') : ''
+}
+
 /** 某個 session 的自我介紹檔。**在 outbox 之外** —— 放進去會被當成一份投遞。 */
 export function introFile(sessionId: string): string {
   return handoffRootPath ? path.join(handoffRootPath, 'intro', `${sessionId}.json`) : ''

@@ -80,7 +80,7 @@ agent 完全起不來時，spekterm 不會一個個 session 輪流試。如果 s
 
 ## 休眠
 
-偶爾才用的 session，不需要一直佔著執行中的行程。把 session **休眠**，就會結束它的行程，讓它原地休眠。重啟之後它也維持休眠，直到你按 **喚醒**（或在它有焦點時按 `Enter`）。
+偶爾才用的 session，不需要一直佔著執行中的行程。把 session **休眠**，就會結束它的行程，讓它原地休眠。重啟之後它也維持休眠，直到你按 **喚醒**（或在它有焦點時按 `Enter`），或有相關的 agent 為了聯絡它而喚醒它（[交接](/zh-tw/docs/using/handoffs/#請-agent-關閉休眠或改名-session)）。
 
 - **手動**：按 `Ctrl+Shift+H`，或在分頁或 rail 列的選單裡選 **休眠**。
 - **自動**：閒置 24 小時的 session 會自動休眠。要改時間或關掉這項功能，到 **設定 → Agent 與 session → 讓閒置的 session 休眠**。畫面上正在顯示的 session 絕不會自動休眠，正在工作的 agent 與正在跑工作的 shell 也不會。在 macOS 上，閒置的 shell 永遠不會自動休眠，但仍可手動休眠。

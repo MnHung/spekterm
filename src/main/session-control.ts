@@ -9,8 +9,8 @@ import type { RendererOutcome } from './remote-host'
 import type { PersistedSession } from './session-store'
 
 /**
- * An agent's session commands: close, hibernate or rename its own session or a descendant
- * (`agent-session-control`).
+ * An agent's session commands: close, hibernate or rename its own session or a descendant, and wake a dormant session
+ * its relations file lists (`agent-session-control`, `agent-session-wake`).
  *
  * Electron-free; everything it reads or does is injected (`index.ts` wires the real ones), so every branch is
  * tested by facts rather than by a window.
@@ -19,7 +19,9 @@ import type { PersistedSession } from './session-store'
  *
  * 1. **Who** (design D2): the target is the source, or an existing session whose fixed name matches exactly and
  *    whose chain of ancestors holds the source. The chain is walked over every record; existence only filters
- *    who may be named. Nothing in the command's contents says who sent it: the drop point does.
+ *    who may be named. Nothing in the command's contents says who sent it: the drop point does. **A wake reaches
+ *    further**: any name the source's relations file lists (`relativeNames`, the relations file's own output, so
+ *    "listed" and "may be woken" are one computation — `agent-session-wake` D1).
  * 2. **Whether it still applies** (D11): a close or hibernate written before the target's process last started
  *    or ended (a wake, a hibernate, a quit) yields to that later act, silently.
  * 3. **When** (D3): a rename at once; a close or hibernate at once on a target at rest, otherwise when its turn
@@ -62,6 +64,11 @@ export interface SessionControlDeps {
   whenReady: () => Promise<GateResult>
   /** Asks the window to carry an action out (`requestRenderer`), quietly. */
   request: ControlRequest
+  /**
+   * The fixed names the source's relations file lists: its parent, its siblings and every session in its descendant
+   * tree (`agent-session-wake` D1). Taken from the relations file's own computation, never re-derived here.
+   */
+  relativeNames: (sourceId: string) => ReadonlySet<string>
   /** The source session's rail item and label, for the trace (`failure.origin`); `null` when it is gone. */
   describe: (sessionId: string) => string | null
   /**
@@ -203,6 +210,8 @@ export class SessionControl {
       subject: 'command',
     }
 
+    if (command.kind === 'wake') return this.#deliverWake(sourceId, source, named, command, failure, mtimeMs)
+
     let target: PersistedSession
     if (!source) {
       // S is gone (the usual case on its drop point's final read). Only an existing descendant is still acted on;
@@ -223,7 +232,7 @@ export class SessionControl {
       void this.#carryOut(target.id, command, failure, undefined)
       return DONE
     }
-    const ending = command as SessionCommand & { kind: 'close' | 'hibernate' }
+    const ending: Pending['command'] = { ...command, kind: command.kind }
     // Written before the target's last start or end: the user's later act wins (D11). No time: cannot tell.
     if (mtimeMs === undefined || this.#stale(target.id, mtimeMs)) return DONE
 
@@ -242,6 +251,31 @@ export class SessionControl {
       return DONE
     }
     this.#wait(target.id, ending, failure, mtimeMs, self)
+    return DONE
+  }
+
+  /**
+   * A wake (`agent-session-wake` D2): judged by the relations file's names, carried out at once — a dormant session
+   * has no turn to wait for, and nothing ends, so agent events are not needed.
+   */
+  #deliverWake(
+    sourceId: string,
+    source: PersistedSession | undefined,
+    named: PersistedSession | undefined,
+    command: SessionCommand,
+    failure: FailureContext,
+    mtimeMs: number | undefined,
+  ): DeliverOutcome {
+    // Nothing to reach the target for once the source is gone; the source itself is running.
+    if (!source || command.target === undefined || command.target === source.peerName) return DONE
+    if (!named) return { ...this.#deps.reject('CONTROL_TARGET_NOT_FOUND', command.target, undefined, failure), failure }
+    if (!this.#deps.relativeNames(sourceId).has(command.target)) {
+      return { ...this.#deps.reject('CONTROL_NOT_ALLOWED', command.target, undefined, failure), failure }
+    }
+    // Written before the target's last start or end, or before this run: the later act wins (D4).
+    if (mtimeMs === undefined || this.#stale(named.id, mtimeMs)) return DONE
+    if (this.#deps.running(named.id)) return DONE
+    void this.#carryOut(named.id, command, failure, mtimeMs)
     return DONE
   }
 
@@ -290,6 +324,11 @@ export class SessionControl {
     let action: HostAction
     if (command.kind === 'rename') {
       action = { kind: 'rename', sessionId, name: command.name ?? '' }
+    } else if (command.kind === 'wake') {
+      if (mtimeMs !== undefined && this.#stale(sessionId, mtimeMs)) return
+      // Started in between (by the user, a device or another wake): what was asked for holds.
+      if (this.#deps.running(sessionId)) return
+      action = { kind: 'wake', sessionId }
     } else {
       if (mtimeMs !== undefined && this.#stale(sessionId, mtimeMs)) return
       const running = this.#deps.running(sessionId)
@@ -315,7 +354,9 @@ export class SessionControl {
     // Only a failed offer takes the offer back: a failed rename or hibernate of an offered session leaves the card
     // where it is, so the offer stays one fact for the desktop and devices (`remote-close-offer` D1).
     if (action.kind === 'offer-close') this.#removeOffer(sessionId)
-    if (command.kind !== 'rename') this.#deps.runs.cancelCommandEnd(sessionId)
+    // Only an end this command announced is taken back: a wake announced none, and clearing here would take another
+    // command's expected end on the same target with it (`agent-session-wake` D2).
+    if (command.kind === 'close' || command.kind === 'hibernate') this.#deps.runs.cancelCommandEnd(sessionId)
     const windowGone = outcome.code === 'NO_WINDOW' || outcome.code === 'TIMEOUT'
     this.#fail(windowGone ? 'CONTROL_NO_WINDOW' : 'CONTROL_FAILED', outcome.code, failure)
   }

@@ -295,7 +295,8 @@ agent 在錯的地方動手，且使用者以為它在對的地方。
 使用者取的名字、分頁順序、pty 最近一次宣告的終端標題，以及 claude 目標的對話識別碼。A restored global
 session SHALL follow the same rule as any other restored session (see `session-persistence`): one that was
 running when the application closed starts again on its own, and one that was dormant then is dormant and SHALL
-start its pty only when the user explicitly wakes it.
+start its pty only when the user explicitly wakes it or an agent's wake command reaches it (see
+`agent-session-control`).
 
 持久化的內容 SHALL 以「不隸屬任何 folder」為一個明確表示的狀態，SHALL NOT 以某個保留的 folder
 識別碼字串偽裝成隸屬於某個 folder —— 後者會使每一處「以識別碼查找 folder」的程式碼靜默地查無此

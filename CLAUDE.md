@@ -30,7 +30,8 @@ OpenSpec 結構的側欄，讓使用者不必另外開 IDE 就能一邊駕駛 ag
     續接、shell 於最後 cwd 重生並重播畫面）、休眠喚醒、終端偏好（字型／size／行高／GPU 開關）。
   **Hibernation** (`session-hibernation`): a running session can go back to dormant — by hand
   (`Ctrl+Shift+H`, tab or rail menu) or after an idle threshold (default 24 h, Settings) — and
-  **every dormant session starts only on an explicit Wake**, never on display. Hibernation is a
+  **every dormant session starts only on an explicit Wake** (the user's, a paired device's, or an agent's wake
+  command), never on display. Hibernation is a
   per-session `dispose`, not a `kill`: the record, drop point and lineage stay. The shell idle test and
   why are in `docs/lessons/terminal.md`.
   **The one exception** (`restore-running-sessions`): a session that was running when its ptys were last
@@ -97,6 +98,10 @@ OpenSpec 結構的側欄，讓使用者不必另外開 IDE 就能一邊駕駛 ag
   with Close / Keep, the content readable underneath. **The main process owns the offer** and a paired phone sees
   and answers it (`remote-close-offer`): any new way to answer it must reach `SessionControl`, not only the card. "In a turn" is **not** the wait state's `ready` (see
   `docs/lessons/handoff.md`, "Session commands").
+  **An agent can wake a dormant session its relations file lists** — parent, siblings, descendants
+  (`agent-session-wake`, `kind: "wake"`): at once, quietly, with no confirmation (the user's decision), so it can then
+  message it. **Its reach is the relations file's own output** (`relativeNamesOf`), never a second derivation of
+  "who is a sibling".
 - **Settings** (`settings-sections`) — one dialog with sections (General, Terminal, Agents & sessions,
   Integrations, Team, Remote access, About) and **one save model: a change applies when it is made** (a choice at
   once, a typed value on Enter or blur, Esc restores). The only exceptions are a Slack token and the remote port,
@@ -242,7 +247,11 @@ store directly would reach neither the keeper nor an open inbox), an agent's sto
 the Schedules tab for 7 days (`cancelledBy`, saved with the state). **Every automatic opening goes through `HandoffOpener`**, which waits for a window
 that has restored and lists the inbox, and opens each handoff **at most once, ever** (`firedAt`, persisted
 first) — an open request no window receives is lost. The introduction must stay under the CLI's 10,000-character
-`additionalContext` threshold; past it the agent keeps only a 2 KB preview (`docs/lessons/handoff.md` §16).
+`additionalContext` threshold; past it the agent keeps only a 2 KB preview (`docs/lessons/handoff.md` §16). **Its limits
+sit below the CLI's latent 8,000-character / 200-line cut too, and the rules of rarer actions live in files it points to**
+(`repeating.json`, `commands.json`, the relations file's `about`; `intro-layered-rules`): a new capability adds a
+sentence, not a paragraph. The threshold is measured by `npm run measure:intro` into `scripts/intro-threshold.json`,
+and **`dist:linux` refuses before the bump when the installed Claude Code is not the recorded version**.
 **session 常駐**（讓 pty 活過 app 的生命）已排入路線圖但**刻意不做** —— 見 `docs/PRD.md` §11 的
 tmux 與自寫 daemon 取捨。**不要把「重建」誤當成「常駐」**：關掉 app，pty 一定會死（master fd
 必須有人持有），跑到一半的 build 或 dev server 救不回來。
@@ -292,9 +301,12 @@ npm run dev             # electron-vite dev（開發模式）
                         #   這個變數，屆時隔離會靜默失效。
 npm run build           # 建置至 out/
 npm run dist:linux      # 換版 → 建置 → 打包 AppImage → 清掉更舊的產物（首次需要網路下載 Electron binary）
-                        #   **第一步會 bump patch 版本並 commit**（`chore(release): <v>`，不打 tag）。
+                        #   **It first checks that the installed Claude Code is the version the introduction's
+                        #   threshold was measured with** (`scripts/intro-threshold-check.mjs`; refused → run
+                        #   `npm run measure:intro`, commit the record, run again — nothing was bumped).
+                        #   **然後 bump patch 版本並 commit**（`chore(release): <v>`，不打 tag）。
                         #   要升 minor／major 用 `RELEASE_LEVEL=minor npm run dist:linux` —— **不是**
-                        #   `-- minor`：npm 把引數接在 `&&` 串的最後一步，而 bump 是第一步。
+                        #   `-- minor`：npm 把引數接在 `&&` 串的最後一步，而 bump 在最前面。
                         #   `package.json` / `package-lock.json` 任一已被改過時它**拒絕執行** ——
                         #   換版提交只能指名這兩個檔案，而遞增與你的編輯在同一個檔案裡。
 npm run dist:mac        # macOS only, on a Mac: refuses unless HEAD is the clean release commit of the declared

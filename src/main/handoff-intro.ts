@@ -3,7 +3,6 @@ import path from 'node:path'
 
 import { MAX_FIELD_LENGTH, MAX_FIRST_PARTY_BODY_LENGTH } from './intake-schema'
 import { MAX_DELIVERY_BYTES } from './intake-source'
-import { MAX_REPEAT_SEARCH_YEARS } from './cron'
 import { MAX_REPORT_LENGTH, MAX_SCHEDULE_AHEAD_DAYS } from './handoff-delivery'
 import { receiptsDir } from './handoff-outbox'
 import type { WorkspaceFolder } from './workspace-store'
@@ -85,17 +84,33 @@ export interface IntroInput {
   teammates?: string
   /** The schedules file (`handoff-cancel`). Absent: beside the outbox root, where `schedulesFile()` puts it. */
   schedules?: string
+  /** The repeating rules file (`intro-layered-rules`). Absent: beside the outbox root, where `repeatingFile()` puts it. */
+  repeating?: string
+  /** The commands rules file (`intro-layered-rules`). Absent: beside the outbox root, where `commandsFile()` puts it. */
+  commands?: string
 }
 
 /**
- * The introduction's hard limit, in characters (`agent-handoff-source`, `scheduled-handoff` design D10).
+ * The introduction's limits (`agent-handoff-source`, `intro-layered-rules` design D6). All inclusive.
  *
- * Measured with Claude Code 2.1.303, in `-p` and interactive mode alike: 10,000 characters reach the agent whole;
- * 10,001 are replaced by a file pointer and a preview of the first ~2,000 characters — the agent then keeps only
- * the opening, and every rule after it is gone at once (`docs/lessons/handoff.md` §16). A workspace whose full
- * list would cross this limit gets a shortened list instead (`introText`).
+ * The CLI replaces an injected context over 10,000 characters with a file pointer and a ~2,000-character preview,
+ * and its binary carries a further cut at 8,000 characters / 200 lines that did not apply when measured
+ * (`docs/lessons/handoff.md` §16; `scripts/intro-threshold.json` records the latest measurement, and
+ * `scripts/intro-threshold.test.mjs` holds these limits under it). Both limits sit below that latent cut, so a CLI
+ * update that turns it on loses nothing.
+ *
+ * - `INTRO_BUDGET`: what the longest variant for a 30-folder workspace may take (the budget test).
+ * - `INTRO_HARD_LIMIT` / `INTRO_LINE_LIMIT`: what no introduction may exceed; past either, the repo list is cut.
+ *
+ * A line is counted as `split('\n').length`, the way the CLI counts it.
  */
-export const INTRO_HARD_LIMIT = 9_000
+export const INTRO_BUDGET = 7_000
+export const INTRO_HARD_LIMIT = 7_900
+export const INTRO_LINE_LIMIT = 190
+
+function fits(text: string): boolean {
+  return text.length <= INTRO_HARD_LIMIT && text.split('\n').length <= INTRO_LINE_LIMIT
+}
 
 /**
  * 組出要放進 agent 脈絡的那段文字。
@@ -103,23 +118,26 @@ export const INTRO_HARD_LIMIT = 9_000
  * **目標可以是名稱或絕對路徑，而這件事一定要講** —— 顯示名稱取自路徑的最後一段，同名是真實
  * 可達的，而歧義對 agent 是一條死路：它不會自己想到換一種寫法。
  *
- * **The list is cut, never the rules**: over `INTRO_HARD_LIMIT`, the repos that fit are listed in workspace
- * order, with how many were left out. Losing the list's tail costs some targets; crossing the CLI's threshold
- * costs the whole introduction.
+ * **The list is cut, never the rules**: past `INTRO_HARD_LIMIT` characters or `INTRO_LINE_LIMIT` lines, the repos
+ * that fit are listed in workspace order, with how many were left out. Losing the list's tail costs some targets;
+ * crossing the CLI's threshold costs the whole introduction.
  */
 export function introText(input: IntroInput): string {
   const full = composeIntro(input, input.folders.length)
-  if (full.length <= INTRO_HARD_LIMIT) return full
+  if (fits(full)) return full
   let shown = input.folders.length
   let text = full
-  while (shown > 0 && text.length > INTRO_HARD_LIMIT) {
+  while (shown > 0 && !fits(text)) {
     shown -= 1
     text = composeIntro(input, shown)
   }
   return text
 }
 
-function composeIntro({ folders, outbox, receipts, name, relations, reportable, timeZone, teammates, schedules }: IntroInput, shown: number): string {
+function composeIntro(
+  { folders, outbox, receipts, name, relations, reportable, timeZone, teammates, schedules, repeating, commands }: IntroInput,
+  shown: number,
+): string {
   /**
    * **數字由實際生效的常數推導，不寫死。**
    *
@@ -133,7 +151,11 @@ function composeIntro({ folders, outbox, receipts, name, relations, reportable, 
   const deliveryKb = Math.floor(MAX_DELIVERY_BYTES / 1024)
   const receiptsPath = receipts ?? receiptsDir(path.basename(outbox))
   // `<root>/outbox/<session>` → `<root>/schedules.json`, as `schedulesFile()` places it.
-  const schedulesPath = schedules ?? path.join(path.dirname(path.dirname(outbox)), 'schedules.json')
+  // `<root>/outbox/<session>` → `<root>/<file>`, as `handoff-outbox.ts` places the files beside the outbox root.
+  const handoffRoot = path.dirname(path.dirname(outbox))
+  const schedulesPath = schedules ?? path.join(handoffRoot, 'schedules.json')
+  const repeatingPath = repeating ?? path.join(handoffRoot, 'repeating.json')
+  const commandsPath = commands ?? path.join(handoffRoot, 'commands.json')
   const zone = timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone
   const lines = [
     'You are running inside spekterm, a desktop workspace that hosts this terminal session.',
@@ -145,7 +167,7 @@ function composeIntro({ folders, outbox, receipts, name, relations, reportable, 
     'A half-written .json file is read and rejected.',
     '',
     'Shape:',
-    '  {"target": "<repo name or absolute path>", "title": "<one line>", "body": "<the handoff>", "at": "<optional>", "repeat": "<optional>", "until": "<optional>"}',
+    '  {"target": "<repo name or absolute path>", "title": "<one line>", "body": "<the handoff>", "at": "<optional>", "repeat": "<optional>"}',
     '',
     'Limits - a delivery that breaks any of these is rejected:',
     `  title: at most ${MAX_FIELD_LENGTH} characters.`,
@@ -154,10 +176,8 @@ function composeIntro({ folders, outbox, receipts, name, relations, reportable, 
     '  If the work needs more, write the detail to a file in the target repo and point to it from the body.',
     `  at: leave it out to open the handoff now. To open it later, an ISO 8601 time with an offset (2027-01-15T09:00:00+01:00, or Z). No offset, a date that does not exist, or more than ${MAX_SCHEDULE_AHEAD_DAYS} days ahead is rejected; a time not later than now opens at once.`,
     '      A scheduled handoff opens only while spekterm runs: if its time passed while spekterm was closed, it opens at the next start. It always opens a new session.',
-    `  repeat: cron "minute hour day month weekday" in ${zone}, e.g. "0 21 * * 3" (Wed 21:00); then "at" is its start and "until" (format of "at", no day bound) its end, both optional.`,
-    '      Fields: * or a list of n, a-b, */s, a-b/s; JAN-DEC, SUN-SAT; weekday 0 or 7 is Sunday; day and weekday both set: either matches.',
-    `      Rejected: minute not one number, seconds, @macros, L W # ?, no time in ${MAX_REPEAT_SEARCH_YEARS} years; "until" without "repeat", not after now and the start, or with no time before it.`,
-    '      The user approves it first; then each time opens a new session until it ends or is stopped. It opens only while spekterm runs; times missed while closed run once at the next start.',
+    `  repeat: a cron schedule in ${zone}, with "until" as its end; the user approves it before anything opens. It opens only while spekterm runs; times missed while closed run once at the next start.`,
+    `      Before writing one, read ${repeatingPath} - it states the syntax and every rule that refuses one.`,
     '',
     'The target must match one of the repos below exactly (case-insensitive) by name, or by its absolute path.',
     'Names are not unique; if two repos share a name, use the absolute path. Partial or fuzzy matches are rejected.',
@@ -183,7 +203,7 @@ function composeIntro({ folders, outbox, receipts, name, relations, reportable, 
     'Until you have read the receipt, say that you wrote the handoff, not that it was delivered.',
     `To cancel or change a scheduled or repeating handoff (any session's), read ${schedulesPath}: it lists them, with ids, and states how.`,
     ...peerLines(name, relations),
-    ...commandLines(Boolean(relations)),
+    ...commandLines(commandsPath),
     ...(reportable ? reportLines(reportable) : []),
   ]
   return lines.join('\n')
@@ -228,26 +248,16 @@ function teammateLines(teammates: string | undefined): string[] {
 /**
  * The session commands (`agent-session-control`). **Told to every agent session**: every agent can act on itself.
  *
- * The limit is derived from the constant the judgement uses (`scripts/handoff-intro-source.test.mjs` forbids the
- * literal): an unstated constraint costs a refused command.
+ * Only that they exist, their shapes, the default target and where the rules are: the commands rules file
+ * (`handoff-rules.ts`) states which sessions may be named, when a command takes effect, the rename limit and the
+ * wake's follow-up (`intro-layered-rules` design D1).
  */
-function commandLines(hasRelations: boolean): string[] {
+function commandLines(commandsPath: string): string[] {
   return [
     '',
-    'You can also ask spekterm to close, hibernate or rename a session: write one of these into your outbox, by the same rules:',
-    '  {"kind": "close"}',
-    '  {"kind": "hibernate"}',
-    '  {"kind": "rename", "name": "<new label>"}',
-    hasRelations
-      ? 'With no "target" it acts on your own session. Add "target": "<name>" to act on a session you handed off, or one they handed off: use a name from the "children" tree of your relations file.'
-      : 'With no "target" it acts on your own session. Add "target": "<name>" to act on a session you handed off, or one they handed off, by its name.',
-    'Your parent, your siblings and any other session are refused.',
-    'Close ends the session and removes it. Hibernate ends its process but keeps it, dormant, until the user wakes it.',
-    'Both wait until the target finishes its current turn, so make a command on your own session your last action.',
-    'Closing your own session does not close it: once your reply ends, the user is offered to close or keep it, and it stays open until they choose.',
-    'If the user types into the target before a command is carried out, it is dropped. Close and hibernate of a running session need agent event reporting to be on.',
-    `Rename takes effect at once and changes only the label. "name" is at most ${MAX_FIELD_LENGTH} characters, on one line; an empty name gives naming back to the terminal title. No name used for messaging changes.`,
-    'A command\'s receipt says it was accepted, not that it was carried out. For a session you handed off, your relations file shows the result: a closed one is gone, a hibernated one has "running": false, a renamed one shows the new "title".',
+    'You can also ask spekterm to close, hibernate or rename a session, or wake (start) a dormant one: write one of these into your outbox, by the same rules:',
+    '  {"kind": "close"}  {"kind": "hibernate"}  {"kind": "rename", "name": "<new label>"}  {"kind": "wake", "target": "<name>"}',
+    `With no "target" a command acts on your own session. Before writing one, read ${commandsPath} - it states which sessions you can name and every rule that refuses or delays a command.`,
   ]
 }
 
@@ -295,6 +305,9 @@ function teammateReportLines(): string[] {
  * 此前這裡有一句「使用者送出第一則 prompt 之前不要傳訊息給剛交接出去的 session」—— 那時第一則
  * prompt 由使用者送出，而一則過早的訊息會讓那則交接被當成已送出。自 `handoff-session-lifecycle`
  * 起第一則 prompt 被代為送出，那句話的前提不在了。
+ *
+ * What each field means (not running, state, summary, nesting, a lost parent) is in the file's own `about`
+ * (`handoff-relations.ts`, `intro-layered-rules` design D3): the agent reads the file to use any of it.
  */
 function peerLines(name: string | undefined, relations: string | undefined): string[] {
   if (!name && !relations) return []
@@ -305,12 +318,9 @@ function peerLines(name: string | undefined, relations: string | undefined): str
       ? [
           'Your parent, your children and your siblings (other sessions your parent handed off) are listed, with their current names and whether they are running, in:',
           `  ${relations}`,
-          'It is kept up to date, including sessions created after you started. If another session here handed this one off, it has a parent.',
-          "To contact one, use Claude Code's own session messaging (ListAgents / SendMessage), addressed by the name in that file; spekterm does not carry the message.",
-          'A session listed with "running": false has no process now: it still exists but cannot receive messages. It was hibernated, or spekterm has not started it again yet after a restart; it comes back when the user wakes it or spekterm starts it again, and you must not try to wake it yourself.',
+          'It is kept up to date, including sessions created after you started; its "about" explains every field.',
+          "To contact one, use Claude Code's own session messaging (ListAgents / SendMessage), addressed by the name in that file; spekterm does not carry the message. A session that is not running cannot receive messages.",
           'A message can also go unanswered - if you need a reply, ask for one.',
-          'Each child and sibling also has a "state" (working, waiting, done, or idle) and, once it has reported finishing its work, a "summary".',
-          'Children nest: a child lists the sessions it handed off under its own "children", at every depth. A descendant marked "parentGone": true lost its direct parent (closed, or its repo left the workspace) and is listed under its nearest ancestor that still exists.',
         ]
       : []),
   ]
